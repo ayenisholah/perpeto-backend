@@ -6,7 +6,7 @@ The backend is the only component allowed to evaluate opportunities, hold venue 
 
 ## Current status
 
-Milestone 0 is in progress. The repository is an executable foundation, not a trading system. No venue connector or live-order path exists, and staging must remain in `PAPER` mode. See [PROGRESS.md](docs/PROGRESS.md) for evidence and blockers.
+Milestone M1A is in progress. The repository has social-auth contracts, persistence schema, and domain invariants, but the Rust runtime remains health-only and is not a trading system. No venue connector or live-order path exists, and staging must remain in `PAPER` mode. See [PROGRESS.md](docs/PROGRESS.md) for evidence and blockers.
 
 ## Authoritative documents
 
@@ -17,6 +17,8 @@ Read these before changing code:
 3. [TRACEABILITY.md](docs/TRACEABILITY.md)
 4. [IMPLEMENTATION.md](docs/IMPLEMENTATION.md)
 5. [AGENTS.md](AGENTS.md)
+
+API consumers should also read [API.md](docs/API.md) and the normative [OpenAPI 3.1 contract](schemas/openapi.yaml).
 
 If these disagree, stop and resolve the conflict using the precedence defined in `AGENTS.md`.
 
