@@ -7,7 +7,8 @@ use std::{
     str::FromStr,
 };
 
-const BLOCKED_ENTRY: &str = r#"{"status":"BLOCKED","reasons":["M0_SCAFFOLD_NO_TRADING_CAPABILITY"]}"#;
+const BLOCKED_ENTRY: &str =
+    r#"{"status":"BLOCKED","reasons":["M0_SCAFFOLD_NO_TRADING_CAPABILITY"]}"#;
 
 fn main() -> ExitCode {
     if env::args().any(|argument| argument == "--health-check") {
@@ -64,7 +65,10 @@ fn respond(stream: &mut TcpStream) {
     let first_line = String::from_utf8_lossy(&request[..length]);
     let path = first_line.split_whitespace().nth(1).unwrap_or("/");
     let (status, body) = match path {
-        "/livez" | "/readyz" => ("200 OK", r#"{"status":"OK","mode":"PAPER","stage":"M0_SCAFFOLD"}"#),
+        "/livez" | "/readyz" => (
+            "200 OK",
+            r#"{"status":"OK","mode":"PAPER","stage":"M0_SCAFFOLD"}"#,
+        ),
         "/entryz" => ("503 Service Unavailable", BLOCKED_ENTRY),
         _ => ("404 Not Found", r#"{"error":"NOT_FOUND"}"#),
     };

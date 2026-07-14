@@ -11,3 +11,7 @@ All notable repository changes are recorded here using Keep a Changelog categori
 ### Security
 
 - Staging deployment validates paper mode and uses a pinned SSH host key; runtime trading secrets remain outside GitHub Actions.
+
+### Fixed
+
+- Applied canonical Rust formatting and completed the M0 OpenAPI metadata, response, and explicit public-health security declarations required by contract linting.

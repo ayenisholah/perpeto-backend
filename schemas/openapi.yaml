@@ -3,9 +3,21 @@ info:
   title: Signex Control API
   version: 0.1.0
   description: M0 health-only contract. Trading resources are intentionally absent.
+  license:
+    name: Proprietary
+    url: https://github.com/ayenisholah/signex-backend#license
+servers:
+  - url: https://{host}
+    description: Owner-managed Signex deployment
+    variables:
+      host:
+        default: staging.signex.invalid
+        description: Deployment-specific API hostname
+security: []
 paths:
   /livez:
     get:
+      summary: Check process liveness
       operationId: getLiveness
       responses:
         "200":
@@ -14,8 +26,11 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Health"
+        "429":
+          $ref: "#/components/responses/RateLimited"
   /readyz:
     get:
+      summary: Check core service readiness
       operationId: getReadiness
       responses:
         "200":
@@ -24,13 +39,31 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Health"
+        "429":
+          $ref: "#/components/responses/RateLimited"
   /entryz:
     get:
+      summary: Check per-route trading entry readiness
       operationId: getEntryReadiness
       responses:
+        "200":
+          description: Entry readiness has been evaluated.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EntryReadiness"
         "503":
           description: Trading entry is blocked in M0.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EntryReadiness"
+        "429":
+          $ref: "#/components/responses/RateLimited"
 components:
+  responses:
+    RateLimited:
+      description: Request rate limit exceeded.
   schemas:
     Health:
       type: object
@@ -43,3 +76,14 @@ components:
           const: PAPER
         stage:
           const: M0_SCAFFOLD
+    EntryReadiness:
+      type: object
+      additionalProperties: false
+      required: [status, reasons]
+      properties:
+        status:
+          enum: [ENTRY_READY, DEGRADED, BLOCKED]
+        reasons:
+          type: array
+          items:
+            type: string
