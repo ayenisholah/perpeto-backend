@@ -19,3 +19,4 @@ All notable repository changes are recorded here using Keep a Changelog categori
 ### Changed
 
 - Moved project-control documentation under `docs/` and recorded the temporary solo-maintainer administrator bypass policy.
+- Isolated the paper staging API on host loopback port 8081, aligned PostgreSQL staging with the specification-pinned 18.4 image digest and data layout, and made deployment wait for dependency health.
