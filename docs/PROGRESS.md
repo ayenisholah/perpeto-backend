@@ -12,6 +12,8 @@
 - Backend documentation hierarchy and decision log established.
 - Executable Rust workspace and health-only service scaffolds created.
 - Initial OpenAPI/event contracts and GitHub automation added.
+- Public GitHub repository, required checks, branch protection, staging environment, and disabled-by-default automation switches configured.
+- Backend CI, container build, SBOM/provenance publication, and public GHCR delivery verified green.
 
 ## Not completed
 
@@ -22,8 +24,8 @@
 ## Blockers
 
 - Local Rust and Docker toolchains are unavailable; compilation and image validation depend on GitHub Actions.
-- GitHub CLI authentication is required before branch protection, Actions permissions, environments, variables, and secrets can be configured.
 - VPS environment values and runtime configuration must be supplied before staging deployment.
+- A least-privilege cross-repository token is required before documentation and API-update automation can be enabled.
 
 ## Next verified task
 

@@ -15,3 +15,7 @@ All notable repository changes are recorded here using Keep a Changelog categori
 ### Fixed
 
 - Applied canonical Rust formatting and completed the M0 OpenAPI metadata, response, and explicit public-health security declarations required by contract linting.
+
+### Changed
+
+- Moved project-control documentation under `docs/` and recorded the temporary solo-maintainer administrator bypass policy.
