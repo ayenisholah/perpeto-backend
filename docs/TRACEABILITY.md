@@ -7,7 +7,9 @@
 | Spec 6 risk management | risk reservations and circuit breakers | Precedence and kill-switch property tests | Not started |
 | Spec 8 architecture | workspace, services and connector boundary | Compile checks and architecture tests | Scaffolded |
 | Spec 10 API contracts | OpenAPI and event schemas | Schema lint and compatibility diff | Scaffolded |
-| Spec 14 security | auth, secret store and signer policy | Security tests, scanning and external review | Not started |
+| Spec 10.2 / DEC-0007 social auth | provider-verification adapters, auth domain, PostgreSQL repositories and API | Provider/replay/bootstrap/approval/linking/deletion integration tests | Contract, schema and domain invariants implemented; runtime adapters pending |
+| Spec 11.3 / DEC-0007 mobile auth | native providers, auth state machine, Secure Store and route guards | State-machine, storage-failure, cancellation, accessibility and iPhone E2E | In progress |
+| Spec 14 security | auth, secret store and signer policy | Security tests, scanning and external review | Auth invariant tests added; cryptographic implementation pending |
 | Spec 15 deployment | Compose and staging deployment | Compose validation and paper-mode smoke test | Scaffolded |
 | Spec 17 acceptance | CI and certification evidence | Required checks and signed evidence | In progress |
 | Spec 18 CI/CD | GitHub Actions and GHCR | Workflow runs, SBOM, provenance and staging smoke | Scaffolded |

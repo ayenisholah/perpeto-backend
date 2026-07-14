@@ -36,9 +36,9 @@ jobs:
           VERSION="${VERSION#v}"
           npm pkg set "name=@${GITHUB_REPOSITORY_OWNER,,}/signex-api-client"
           npm version "$VERSION" --no-git-tag-version
-          cp -R ../../schemas .
       - run: npm ci
-      - run: npm run build
+      - run: npm test
+      - run: npm run verify:package
       - run: npm publish
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

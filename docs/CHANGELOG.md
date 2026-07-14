@@ -7,10 +7,14 @@ All notable repository changes are recorded here using Keep a Changelog categori
 ### Added
 
 - Initial backend repository governance, Rust workspace scaffold, API contract seed, container build, CI, public GHCR publishing, documentation synchronization, and paper-only staging deployment automation.
+- Accepted the Google/Apple-only authentication decision, M1A persistence migration and domain invariants for pending approval, privileged MFA, one-use bootstrap/challenges, explicit identity linking, refresh-family reuse detection, final-Owner protection, and deletion.
+- Added the additive OpenAPI and TypeScript authentication contract as client version `0.2.0`.
+- Added API consumer documentation covering versioning, bearer security, RFC 9457 problem details, lifecycle semantics, endpoint groups, and contract-versus-runtime status.
 
 ### Security
 
 - Staging deployment validates paper mode and uses a pinned SSH host key; runtime trading secrets remain outside GitHub Actions.
+- Provider identity is keyed by immutable subject rather than email; access is pending by default, refresh credentials are device-bound/rotating, and retained deletion evidence uses an audit pseudonym.
 
 ### Fixed
 
@@ -19,3 +23,5 @@ All notable repository changes are recorded here using Keep a Changelog categori
 ### Changed
 
 - Moved project-control documentation under `docs/` and recorded the temporary solo-maintainer administrator bypass policy.
+- Hardened the versioned API client to reject incompatible health payloads and verify compiled code and schemas before publication.
+- Isolated the paper staging API on host loopback port 8081, aligned PostgreSQL staging with the specification-pinned 18.4 image digest and data layout, and made deployment wait for dependency health.
