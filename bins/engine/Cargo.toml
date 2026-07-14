@@ -1,0 +1,12 @@
+[package]
+name = "funding-arb-engine"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+funding-arb-domain = { path = "../../crates/funding-arb-domain" }
+
+[lints]
+workspace = true

@@ -1,0 +1,69 @@
+name: Deploy Staging
+
+on:
+  workflow_run:
+    workflows: ["Backend Container"]
+    branches: [main]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      image_sha:
+        description: Full source commit SHA to deploy
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: signex-staging-deployment
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: vars.STAGING_ENABLED == 'true' && (github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success')
+    environment: staging
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Resolve source revision
+        id: source
+        shell: bash
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_run" ]]; then
+            echo "sha=${{ github.event.workflow_run.head_sha }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "sha=${{ inputs.image_sha }}" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ steps.source.outputs.sha }}
+      - name: Configure pinned SSH identity
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.STAGING_SSH_PRIVATE_KEY }}
+          KNOWN_HOSTS: ${{ vars.STAGING_KNOWN_HOSTS }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+      - name: Upload versioned deployment files
+        env:
+          HOST: ${{ vars.STAGING_HOST }}
+          PORT: ${{ vars.STAGING_PORT }}
+          USER: ${{ vars.STAGING_USER }}
+          DEPLOY_PATH: ${{ vars.STAGING_DEPLOY_PATH }}
+        run: |
+          ssh -p "$PORT" "$USER@$HOST" "test -d '$DEPLOY_PATH' && mkdir -p '$DEPLOY_PATH/deploy/compose' '$DEPLOY_PATH/scripts'"
+          scp -P "$PORT" deploy/compose/docker-compose.staging.yml "$USER@$HOST:$DEPLOY_PATH/deploy/compose/"
+          scp -P "$PORT" scripts/deploy-staging.sh "$USER@$HOST:$DEPLOY_PATH/scripts/"
+      - name: Deploy and verify paper staging
+        env:
+          HOST: ${{ vars.STAGING_HOST }}
+          PORT: ${{ vars.STAGING_PORT }}
+          USER: ${{ vars.STAGING_USER }}
+          DEPLOY_PATH: ${{ vars.STAGING_DEPLOY_PATH }}
+          IMAGE: ghcr.io/${{ github.repository }}:sha-${{ steps.source.outputs.sha }}
+        run: |
+          ssh -p "$PORT" "$USER@$HOST" "cd '$DEPLOY_PATH' && chmod 700 scripts/deploy-staging.sh && SIGNEX_IMAGE='$IMAGE' bash scripts/deploy-staging.sh"

@@ -1,0 +1,52 @@
+name: Synchronize Shared Documents
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - docs/PRODUCT_SPEC.md
+      - docs/OVERVIEW.md
+      - AGENTS.md
+      - docs/DECISION.md
+      - docs/MILESTONE.md
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  sync:
+    if: vars.DOC_SYNC_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      GH_TOKEN: ${{ secrets.CROSS_REPO_TOKEN }}
+      TARGET: ${{ github.repository_owner }}/signex-mobile
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          path: source
+      - name: Clone mobile repository
+        run: |
+          gh auth setup-git
+          gh repo clone "$TARGET" target
+      - name: Copy canonical shared documents
+        run: |
+          mkdir -p target/docs
+          cp source/docs/PRODUCT_SPEC.md source/docs/OVERVIEW.md source/docs/DECISION.md source/docs/MILESTONE.md target/docs/
+          cp source/AGENTS.md target/AGENTS.md
+      - name: Open synchronization pull request
+        working-directory: target
+        run: |
+          if git diff --quiet; then
+            echo "shared documents already match"
+            exit 0
+          fi
+          branch="automation/shared-docs-${{ github.run_id }}"
+          git config user.name "signex-docs-bot"
+          git config user.email "signex-docs-bot@users.noreply.github.com"
+          git switch -c "$branch"
+          git add docs/PRODUCT_SPEC.md docs/OVERVIEW.md AGENTS.md docs/DECISION.md docs/MILESTONE.md
+          git commit -m "docs: synchronize shared project documents"
+          git push --set-upstream origin "$branch"
+          gh pr create --repo "$TARGET" --base main --head "$branch" --title "docs: synchronize shared project documents" --body "Automated synchronization from ${{ github.repository }}@${{ github.sha }}."

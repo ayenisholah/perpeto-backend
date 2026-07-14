@@ -1,0 +1,56 @@
+name: signex-staging
+
+x-service-security: &service-security
+  read_only: true
+  cap_drop: ["ALL"]
+  security_opt: ["no-new-privileges:true"]
+  restart: unless-stopped
+  init: true
+
+services:
+  api:
+    <<: *service-security
+    image: ${SIGNEX_IMAGE:?SIGNEX_IMAGE is required}
+    entrypoint: ["funding-arb-api"]
+    env_file: ["../../runtime.env"]
+    ports: ["127.0.0.1:8080:8080"]
+    tmpfs: ["/tmp:rw,noexec,nosuid,size=16m"]
+    healthcheck:
+      test: ["CMD", "funding-arb-api", "--health-check"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+
+  engine:
+    <<: *service-security
+    image: ${SIGNEX_IMAGE:?SIGNEX_IMAGE is required}
+    entrypoint: ["funding-arb-engine"]
+    env_file: ["../../runtime.env"]
+    tmpfs: ["/tmp:rw,noexec,nosuid,size=16m"]
+
+  reconciler:
+    <<: *service-security
+    image: ${SIGNEX_IMAGE:?SIGNEX_IMAGE is required}
+    entrypoint: ["funding-arb-reconciler"]
+    env_file: ["../../runtime.env"]
+
+  worker:
+    <<: *service-security
+    image: ${SIGNEX_IMAGE:?SIGNEX_IMAGE is required}
+    entrypoint: ["funding-arb-worker"]
+    env_file: ["../../runtime.env"]
+
+  postgres:
+    image: postgres:17.5-bookworm
+    restart: unless-stopped
+    env_file: ["../../runtime.env"]
+    volumes: ["postgres-data:/var/lib/postgresql/data"]
+
+  redis:
+    image: redis:7.4.5-bookworm
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "no", "--save", ""]
+    tmpfs: ["/data:rw,noexec,nosuid,size=256m"]
+
+volumes:
+  postgres-data:

@@ -1,0 +1,45 @@
+openapi: 3.1.0
+info:
+  title: Signex Control API
+  version: 0.1.0
+  description: M0 health-only contract. Trading resources are intentionally absent.
+paths:
+  /livez:
+    get:
+      operationId: getLiveness
+      responses:
+        "200":
+          description: Process event loop is alive.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Health"
+  /readyz:
+    get:
+      operationId: getReadiness
+      responses:
+        "200":
+          description: Scaffold dependencies are ready.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Health"
+  /entryz:
+    get:
+      operationId: getEntryReadiness
+      responses:
+        "503":
+          description: Trading entry is blocked in M0.
+components:
+  schemas:
+    Health:
+      type: object
+      additionalProperties: false
+      required: [status, mode, stage]
+      properties:
+        status:
+          const: OK
+        mode:
+          const: PAPER
+        stage:
+          const: M0_SCAFFOLD

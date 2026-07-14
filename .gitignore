@@ -1,0 +1,11 @@
+/target/
+node_modules/
+packages/api-client/dist/
+.env
+runtime.env
+*.pem
+*.key
+*.log
+.DS_Store
+.idea/
+.vscode/
