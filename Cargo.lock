@@ -5,7 +5,9 @@ version = 4
 [[package]]
 name = "funding-arb-api"
 version = "0.1.0"
-dependencies = ["funding-arb-domain"]
+dependencies = [
+ "funding-arb-domain",
+]
 
 [[package]]
 name = "funding-arb-domain"
@@ -14,7 +16,9 @@ version = "0.1.0"
 [[package]]
 name = "funding-arb-engine"
 version = "0.1.0"
-dependencies = ["funding-arb-domain"]
+dependencies = [
+ "funding-arb-domain",
+]
 
 [[package]]
 name = "funding-arb-migrate"

@@ -5,6 +5,8 @@
 
 use std::{fmt, str::FromStr};
 
+pub mod auth;
+
 /// Deployment trading mode. The initial scaffold supports paper mode only.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum TradingMode {

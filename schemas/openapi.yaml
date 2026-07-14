@@ -1,8 +1,8 @@
 openapi: 3.1.0
 info:
   title: Signex Control API
-  version: 0.1.0
-  description: M0 health-only contract. Trading resources are intentionally absent.
+  version: 0.2.0
+  description: M1A social identity, MFA, and secure-session contract. Trading remains unavailable.
   license:
     name: Proprietary
     url: https://github.com/ayenisholah/signex-backend#license
@@ -12,78 +12,616 @@ servers:
     variables:
       host:
         default: staging.signex.invalid
-        description: Deployment-specific API hostname
-security: []
+security:
+  - bearerAuth: []
+tags:
+  - name: Health
+    description: Public process, dependency, and paper-entry readiness probes.
+  - name: Social authentication
+    description: One-use Apple and Google authorization challenges and server-side proof exchange.
+  - name: MFA
+    description: Signex TOTP enrollment, recovery-code acknowledgement, verification, and privileged step-up.
+  - name: Sessions
+    description: Memory access tokens and rotating, device-bound refresh-session lifecycle.
+  - name: Identities
+    description: Explicit provider linking and unlinking; email never merges accounts.
+  - name: Access requests
+    description: Owner review of isolated pending social registrations.
+  - name: Account
+    description: Current-user status and privacy-preserving account deletion.
+  - name: Provider notifications
+    description: Signed, idempotent identity-provider account-change callbacks.
 paths:
   /livez:
     get:
+      tags: [Health]
+      security: []
       summary: Check process liveness
       operationId: getLiveness
       responses:
-        "200":
-          description: Process event loop is alive.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Health"
-        "429":
-          $ref: "#/components/responses/RateLimited"
+        "200": { $ref: "#/components/responses/HealthResponse" }
+        "429": { $ref: "#/components/responses/ProblemResponse" }
   /readyz:
     get:
+      tags: [Health]
+      security: []
       summary: Check core service readiness
       operationId: getReadiness
       responses:
-        "200":
-          description: Scaffold dependencies are ready.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Health"
-        "429":
-          $ref: "#/components/responses/RateLimited"
+        "200": { $ref: "#/components/responses/HealthResponse" }
+        "429": { $ref: "#/components/responses/ProblemResponse" }
   /entryz:
     get:
-      summary: Check per-route trading entry readiness
+      tags: [Health]
+      security: []
+      summary: Check trading entry readiness
       operationId: getEntryReadiness
       responses:
         "200":
-          description: Entry readiness has been evaluated.
+          description: Entry readiness was evaluated.
           content:
             application/json:
-              schema:
-                $ref: "#/components/schemas/EntryReadiness"
+              schema: { $ref: "#/components/schemas/EntryReadiness" }
+        "429": { $ref: "#/components/responses/ProblemResponse" }
         "503":
-          description: Trading entry is blocked in M0.
+          description: Trading entry remains blocked during M1A.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EntryReadiness" }
+  /api/v1/auth/social/challenges:
+    post:
+      tags: [Social authentication]
+      security: []
+      summary: Create a short-lived one-use social authorization challenge
+      operationId: createSocialChallenge
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateSocialChallengeRequest" }
+      responses:
+        "201":
+          description: Challenge created.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SocialChallenge" }
+        "400": { $ref: "#/components/responses/ProblemResponse" }
+        "429": { $ref: "#/components/responses/ProblemResponse" }
+  /api/v1/auth/social/exchange:
+    post:
+      tags: [Social authentication]
+      security: []
+      summary: Verify a provider response and return exactly one authentication next state
+      operationId: exchangeSocialAuthorization
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SocialExchangeRequest" }
+      responses:
+        "200":
+          description: Provider proof accepted.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AuthTransition" }
+        "400": { $ref: "#/components/responses/ProblemResponse" }
+        "401": { $ref: "#/components/responses/ProblemResponse" }
+        "409": { $ref: "#/components/responses/ProblemResponse" }
+  /api/v1/auth/bootstrap:
+    post:
+      tags: [Account]
+      summary: Consume the one-use deployment token for the first socially authenticated Owner
+      operationId: bootstrapFirstOwner
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [deployment_token]
+              properties:
+                deployment_token: { type: string, minLength: 32, writeOnly: true }
+      responses:
+        "200":
+          description: Owner role assigned; MFA enrollment is required.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AuthTransition" }
+        "401": { $ref: "#/components/responses/ProblemResponse" }
+        "409": { $ref: "#/components/responses/ProblemResponse" }
+  /api/v1/auth/mfa/enroll:
+    post:
+      tags: [MFA]
+      summary: Begin TOTP enrollment
+      operationId: enrollMfa
+      responses:
+        "201":
+          description: Enrollment secret and URI returned once.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MfaEnrollment" }
+        "409": { $ref: "#/components/responses/ProblemResponse" }
+  /api/v1/auth/mfa/confirm:
+    post:
+      tags: [MFA]
+      summary: Confirm TOTP enrollment and issue recovery codes once
+      operationId: confirmMfa
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/MfaCodeRequest" }
+      responses:
+        "200":
+          description: Enrollment confirmed.
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/EntryReadiness"
-        "429":
-          $ref: "#/components/responses/RateLimited"
+                type: object
+                additionalProperties: false
+                required: [recovery_codes]
+                properties:
+                  recovery_codes:
+                    type: array
+                    minItems: 8
+                    items: { type: string }
+        "401": { $ref: "#/components/responses/ProblemResponse" }
+  /api/v1/auth/mfa/verify:
+    post:
+      tags: [MFA]
+      summary: Complete a TOTP or one-use recovery-code challenge
+      operationId: verifyMfa
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/MfaCodeRequest" }
+      responses:
+        "200":
+          description: Session created.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SessionCredentials" }
+        "401": { $ref: "#/components/responses/ProblemResponse" }
+        "423": { $ref: "#/components/responses/ProblemResponse" }
+  /api/v1/auth/mfa/recovery-codes/acknowledge:
+    post:
+      tags: [MFA]
+      summary: Acknowledge that the newly issued recovery-code set was saved
+      operationId: acknowledgeRecoveryCodes
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [challenge_token, code_set_digest]
+              properties:
+                challenge_token: { type: string, writeOnly: true }
+                code_set_digest:
+                  type: string
+                  pattern: "^[a-f0-9]{64}$"
+                  writeOnly: true
+                  description: Lowercase SHA-256 hex of the UTF-8 compact JSON recovery-code array in issued order.
+      responses:
+        "200":
+          description: Privileged role activated and session created.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SessionCredentials" }
+        "401": { $ref: "#/components/responses/ProblemResponse" }
+  /api/v1/auth/refresh:
+    post:
+      tags: [Sessions]
+      security: []
+      summary: Rotate a device-bound refresh token once
+      operationId: refreshSession
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RefreshRequest" }
+      responses:
+        "200":
+          description: Token rotated.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SessionCredentials" }
+        "401": { $ref: "#/components/responses/ProblemResponse" }
+        "409": { $ref: "#/components/responses/ProblemResponse" }
+  /api/v1/auth/step-up:
+    post:
+      tags: [MFA]
+      summary: Verify TOTP and issue a five-minute action-bound proof
+      operationId: createStepUpProof
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/StepUpRequest" }
+      responses:
+        "201":
+          description: Proof issued.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/StepUpProof" }
+        "401": { $ref: "#/components/responses/ProblemResponse" }
+  /api/v1/auth/logout:
+    post:
+      tags: [Sessions]
+      summary: Revoke the current session
+      operationId: logout
+      responses:
+        "204": { description: Session revoked. }
+        "401": { $ref: "#/components/responses/ProblemResponse" }
+  /api/v1/auth/me:
+    get:
+      tags: [Account]
+      summary: Read the caller's minimal identity and authentication status
+      operationId: getCurrentUser
+      responses:
+        "200":
+          description: Current user.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CurrentUser" }
+        "401": { $ref: "#/components/responses/ProblemResponse" }
+  /api/v1/auth/sessions:
+    get:
+      tags: [Sessions]
+      summary: List the caller's devices and sessions
+      operationId: listSessions
+      responses:
+        "200":
+          description: Sessions.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Session" }
+        "401": { $ref: "#/components/responses/ProblemResponse" }
+  /api/v1/auth/sessions/{session_id}:
+    delete:
+      tags: [Sessions]
+      summary: Revoke one session or device remotely
+      operationId: revokeSession
+      parameters:
+        - $ref: "#/components/parameters/SessionId"
+      responses:
+        "204": { description: Session revoked. }
+        "404": { $ref: "#/components/responses/ProblemResponse" }
+  /api/v1/auth/identities:
+    get:
+      tags: [Identities]
+      summary: List linked social identities without exposing provider tokens
+      operationId: listSocialIdentities
+      responses:
+        "200":
+          description: Linked identities.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/LinkedIdentity" }
+        "401": { $ref: "#/components/responses/ProblemResponse" }
+  /api/v1/auth/identities/link:
+    post:
+      tags: [Identities]
+      summary: Link an identity after fresh provider authentication and privileged TOTP
+      operationId: linkSocialIdentity
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [challenge_id, authorization_code, identity_token, code_verifier]
+              properties:
+                challenge_id: { type: string, format: uuid }
+                authorization_code: { type: string, writeOnly: true }
+                identity_token: { type: string, writeOnly: true }
+                code_verifier: { type: string, minLength: 43, maxLength: 128, writeOnly: true }
+                totp_code: { type: string, pattern: "^[0-9]{6}$", writeOnly: true }
+      responses:
+        "201":
+          description: Identity linked.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LinkedIdentity" }
+        "401": { $ref: "#/components/responses/ProblemResponse" }
+        "409": { $ref: "#/components/responses/ProblemResponse" }
+  /api/v1/auth/identities/{provider}:
+    delete:
+      tags: [Identities]
+      summary: Unlink a provider unless it is the final identity
+      operationId: unlinkSocialIdentity
+      parameters:
+        - $ref: "#/components/parameters/Provider"
+      responses:
+        "204": { description: Identity unlinked. }
+        "409": { $ref: "#/components/responses/ProblemResponse" }
+  /api/v1/access-requests:
+    get:
+      tags: [Access requests]
+      summary: List pending social registrations (Owner only)
+      operationId: listAccessRequests
+      responses:
+        "200":
+          description: Pending requests.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/AccessRequest" }
+        "403": { $ref: "#/components/responses/ProblemResponse" }
+  /api/v1/access-requests/{user_id}/approve:
+    post:
+      tags: [Access requests]
+      summary: Approve a pending account with Viewer access (Owner only)
+      operationId: approveAccessRequest
+      parameters:
+        - $ref: "#/components/parameters/UserId"
+      responses:
+        "200":
+          description: Viewer access granted.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CurrentUser" }
+        "403": { $ref: "#/components/responses/ProblemResponse" }
+        "409": { $ref: "#/components/responses/ProblemResponse" }
+  /api/v1/account:
+    delete:
+      tags: [Account]
+      summary: Delete the current account, erase PII, and revoke provider credentials and sessions
+      operationId: deleteAccount
+      responses:
+        "204": { description: Account deleted and audit actor pseudonymized. }
+        "409": { $ref: "#/components/responses/ProblemResponse" }
+  /api/v1/auth/apple/notifications:
+    post:
+      tags: [Provider notifications]
+      security: []
+      summary: Process a signed Sign in with Apple server notification
+      operationId: processAppleServerNotification
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [payload]
+              properties:
+                payload: { type: string, writeOnly: true }
+      responses:
+        "204": { description: Valid notification processed idempotently. }
+        "401": { $ref: "#/components/responses/ProblemResponse" }
 components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  parameters:
+    SessionId:
+      in: path
+      name: session_id
+      required: true
+      schema: { type: string, format: uuid }
+    UserId:
+      in: path
+      name: user_id
+      required: true
+      schema: { type: string, format: uuid }
+    Provider:
+      in: path
+      name: provider
+      required: true
+      schema: { $ref: "#/components/schemas/SocialProvider" }
   responses:
-    RateLimited:
-      description: Request rate limit exceeded.
+    HealthResponse:
+      description: Service is healthy.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Health" }
+    ProblemResponse:
+      description: Request rejected without exposing authentication secrets.
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }
   schemas:
+    SocialProvider:
+      type: string
+      enum: [APPLE, GOOGLE]
+    AuthNextState:
+      type: string
+      enum: [PENDING_APPROVAL, MFA_REQUIRED, MFA_ENROLLMENT_REQUIRED, AUTHENTICATED]
+    UserStatus:
+      type: string
+      enum: [PENDING, ACTIVE, SUSPENDED, DELETED]
+    Role:
+      type: string
+      enum: [VIEWER, OWNER, TRADER, APPROVER]
+    CreateSocialChallengeRequest:
+      type: object
+      additionalProperties: false
+      required: [provider, redirect_uri, code_challenge, purpose]
+      properties:
+        provider: { $ref: "#/components/schemas/SocialProvider" }
+        purpose: { type: string, enum: [SIGN_IN, LINK_IDENTITY] }
+        redirect_uri: { type: string, format: uri }
+        code_challenge: { type: string, minLength: 43, maxLength: 128 }
+    SocialChallenge:
+      type: object
+      additionalProperties: false
+      required: [id, provider, state, nonce, expires_at]
+      properties:
+        id: { type: string, format: uuid }
+        provider: { $ref: "#/components/schemas/SocialProvider" }
+        state: { type: string, minLength: 32 }
+        nonce: { type: string, minLength: 32 }
+        expires_at: { type: string, format: date-time }
+    SocialExchangeRequest:
+      type: object
+      additionalProperties: false
+      required: [challenge_id, authorization_code, identity_token, code_verifier, device]
+      properties:
+        challenge_id: { type: string, format: uuid }
+        authorization_code: { type: string, writeOnly: true }
+        identity_token: { type: string, writeOnly: true }
+        code_verifier: { type: string, minLength: 43, maxLength: 128, writeOnly: true }
+        apple_profile:
+          type: object
+          additionalProperties: false
+          properties:
+            display_name: { type: string, maxLength: 200 }
+        device: { $ref: "#/components/schemas/DeviceRegistration" }
+    DeviceRegistration:
+      type: object
+      additionalProperties: false
+      required: [installation_id, platform, app_version, display_name]
+      properties:
+        installation_id: { type: string, minLength: 16, writeOnly: true }
+        platform: { const: IOS }
+        app_version: { type: string }
+        display_name: { type: string, maxLength: 100 }
+    AuthTransition:
+      type: object
+      additionalProperties: false
+      required: [next, user]
+      properties:
+        next: { $ref: "#/components/schemas/AuthNextState" }
+        user: { $ref: "#/components/schemas/CurrentUser" }
+        challenge_token: { type: string, writeOnly: true }
+        session: { $ref: "#/components/schemas/SessionCredentials" }
+    CurrentUser:
+      type: object
+      additionalProperties: false
+      required: [id, status, roles, linked_providers, mfa_enrolled]
+      properties:
+        id: { type: string, format: uuid }
+        status: { $ref: "#/components/schemas/UserStatus" }
+        display_name: { type: [string, "null"] }
+        email: { type: [string, "null"], format: email }
+        roles:
+          type: array
+          uniqueItems: true
+          items: { $ref: "#/components/schemas/Role" }
+        linked_providers:
+          type: array
+          uniqueItems: true
+          items: { $ref: "#/components/schemas/SocialProvider" }
+        mfa_enrolled: { type: boolean }
+    MfaEnrollment:
+      type: object
+      additionalProperties: false
+      required: [method_id, secret, otpauth_uri]
+      properties:
+        method_id: { type: string, format: uuid }
+        secret: { type: string, writeOnly: true }
+        otpauth_uri: { type: string, writeOnly: true }
+    MfaCodeRequest:
+      type: object
+      additionalProperties: false
+      required: [challenge_token, code]
+      properties:
+        challenge_token: { type: string, writeOnly: true }
+        code: { type: string, minLength: 6, maxLength: 64, writeOnly: true }
+        recovery_code: { type: boolean, default: false }
+        recovery_codes_acknowledged: { type: boolean, default: false }
+    RefreshRequest:
+      type: object
+      additionalProperties: false
+      required: [refresh_token, device_id]
+      properties:
+        refresh_token: { type: string, minLength: 43, writeOnly: true }
+        device_id: { type: string, format: uuid }
+    SessionCredentials:
+      type: object
+      additionalProperties: false
+      required: [access_token, access_token_expires_at, refresh_token, session_id, device_id]
+      properties:
+        access_token: { type: string, writeOnly: true }
+        access_token_expires_at: { type: string, format: date-time }
+        refresh_token: { type: string, writeOnly: true }
+        session_id: { type: string, format: uuid }
+        device_id: { type: string, format: uuid }
+    Session:
+      type: object
+      additionalProperties: false
+      required: [id, device_id, device_name, current, created_at, last_seen_at]
+      properties:
+        id: { type: string, format: uuid }
+        device_id: { type: string, format: uuid }
+        device_name: { type: string }
+        current: { type: boolean }
+        created_at: { type: string, format: date-time }
+        last_seen_at: { type: string, format: date-time }
+    LinkedIdentity:
+      type: object
+      additionalProperties: false
+      required: [provider, linked_at, last_authenticated_at]
+      properties:
+        provider: { $ref: "#/components/schemas/SocialProvider" }
+        profile_email: { type: [string, "null"], format: email }
+        linked_at: { type: string, format: date-time }
+        last_authenticated_at: { type: string, format: date-time }
+    AccessRequest:
+      type: object
+      additionalProperties: false
+      required: [user_id, provider, requested_at]
+      properties:
+        user_id: { type: string, format: uuid }
+        provider: { $ref: "#/components/schemas/SocialProvider" }
+        display_name: { type: [string, "null"] }
+        email: { type: [string, "null"], format: email }
+        requested_at: { type: string, format: date-time }
+    StepUpRequest:
+      type: object
+      additionalProperties: false
+      required: [action, totp_code]
+      properties:
+        action: { type: string, minLength: 1 }
+        resource_id: { type: string }
+        resource_version: { type: integer, minimum: 1 }
+        command_digest: { type: string, pattern: "^[a-f0-9]{64}$" }
+        totp_code: { type: string, pattern: "^[0-9]{6}$", writeOnly: true }
+    StepUpProof:
+      type: object
+      additionalProperties: false
+      required: [proof, expires_at]
+      properties:
+        proof: { type: string, writeOnly: true }
+        expires_at: { type: string, format: date-time }
     Health:
       type: object
       additionalProperties: false
       required: [status, mode, stage]
       properties:
-        status:
-          const: OK
-        mode:
-          const: PAPER
-        stage:
-          const: M0_SCAFFOLD
+        status: { const: OK }
+        mode: { const: PAPER }
+        stage: { enum: [M0_SCAFFOLD, M1_AUTH] }
     EntryReadiness:
       type: object
       additionalProperties: false
       required: [status, reasons]
       properties:
-        status:
-          enum: [ENTRY_READY, DEGRADED, BLOCKED]
+        status: { const: BLOCKED }
         reasons:
           type: array
-          items:
-            type: string
+          items: { type: string }
+    Problem:
+      type: object
+      description: RFC 9457 problem details with a stable Signex code and correlation request ID.
+      additionalProperties: false
+      required: [type, title, status, code, request_id]
+      properties:
+        type: { type: string, format: uri }
+        title: { type: string }
+        status: { type: integer, minimum: 400, maximum: 599 }
+        code: { type: string }
+        request_id: { type: string, format: uuid }
+        instance: { type: string, format: uri-reference }
