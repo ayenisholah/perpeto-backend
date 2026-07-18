@@ -78,11 +78,10 @@ async fn run() -> ExitCode {
     if let (Some(hash), Some(expiry)) = (
         config.bootstrap_token_hash.as_ref(),
         config.bootstrap_token_expires_at.as_ref(),
-    ) {
-        if let Err(error) = repo.seed_bootstrap(hash, expiry).await {
-            eprintln!("failed to seed bootstrap state: {error}");
-            return ExitCode::FAILURE;
-        }
+    ) && let Err(error) = repo.seed_bootstrap(hash, expiry).await
+    {
+        eprintln!("failed to seed bootstrap state: {error}");
+        return ExitCode::FAILURE;
     }
 
     let verifier = Arc::new(LiveIdentityVerifier::new(
