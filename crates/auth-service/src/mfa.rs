@@ -65,7 +65,7 @@ pub fn verify_totp(
 
 fn totp_at(secret: &[u8], step: u64) -> String {
     type HmacSha1 = Hmac<Sha1>;
-    let mut mac = HmacSha1::new_from_slice(secret).expect("HMAC accepts any key length");
+    let mut mac = <HmacSha1 as Mac>::new_from_slice(secret).expect("HMAC accepts any key length");
     mac.update(&step.to_be_bytes());
     let digest = mac.finalize().into_bytes();
     let offset = (digest[digest.len() - 1] & 0x0f) as usize;
