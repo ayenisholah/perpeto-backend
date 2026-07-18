@@ -1,5 +1,3 @@
-BEGIN;
-
 CREATE TYPE user_status AS ENUM ('PENDING', 'ACTIVE', 'SUSPENDED', 'DELETED');
 CREATE TYPE social_provider AS ENUM ('APPLE', 'GOOGLE');
 CREATE TYPE user_role AS ENUM ('VIEWER', 'OWNER', 'TRADER', 'APPROVER');
@@ -186,5 +184,3 @@ CREATE INDEX identities_user_idx ON provider_identities(user_id) WHERE revoked_a
 CREATE INDEX sessions_user_active_idx ON sessions(user_id, created_at DESC) WHERE state = 'ACTIVE';
 CREATE INDEX challenges_expiry_idx ON social_challenges(expires_at) WHERE consumed_at IS NULL;
 CREATE INDEX audit_actor_time_idx ON audit_events(actor_id, occurred_at DESC);
-
-COMMIT;

@@ -27,6 +27,22 @@ jobs:
   rust:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: signex
+          POSTGRES_PASSWORD: signex
+          POSTGRES_DB: signex
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U signex"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgres://signex:signex@localhost:5432/signex
     steps:
       - uses: actions/checkout@v6
       - name: Install pinned Rust toolchain
@@ -37,6 +53,8 @@ jobs:
         run: cargo fmt --all -- --check
       - name: Run Clippy
         run: cargo clippy --locked --workspace --all-targets -- -D warnings
+      - name: Apply database migrations
+        run: cargo run --locked --bin funding-arb-migrate
       - name: Run tests
         run: cargo test --locked --workspace
 

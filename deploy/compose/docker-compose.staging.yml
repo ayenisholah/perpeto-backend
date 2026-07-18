@@ -8,6 +8,16 @@ x-service-security: &service-security
   init: true
 
 services:
+  migrate:
+    <<: *service-security
+    image: ${SIGNEX_IMAGE:?SIGNEX_IMAGE is required}
+    entrypoint: ["funding-arb-migrate"]
+    env_file: ["../../runtime.env"]
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
   api:
     <<: *service-security
     image: ${SIGNEX_IMAGE:?SIGNEX_IMAGE is required}
@@ -15,6 +25,11 @@ services:
     env_file: ["../../runtime.env"]
     ports: ["127.0.0.1:8081:8080"]
     tmpfs: ["/tmp:rw,noexec,nosuid,size=16m"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     healthcheck:
       test: ["CMD", "funding-arb-api", "--health-check"]
       interval: 10s
