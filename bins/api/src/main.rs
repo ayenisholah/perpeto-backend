@@ -1,80 +1,137 @@
-use funding_arb_domain::TradingMode;
-use std::{
-    env,
-    io::{Read, Write},
-    net::{TcpListener, TcpStream},
-    process::ExitCode,
-    str::FromStr,
-};
+mod handlers;
+mod middleware;
+mod problem;
+mod routes;
+mod state;
 
-const BLOCKED_ENTRY: &str =
-    r#"{"status":"BLOCKED","reasons":["M0_SCAFFOLD_NO_TRADING_CAPABILITY"]}"#;
+use std::io::{Read, Write};
+use std::net::TcpStream;
+use std::process::ExitCode;
+use std::str::FromStr;
+use std::sync::Arc;
+use std::{env, thread, time::Duration};
+
+use funding_arb_auth_service::{AuthConfig, AuthService, LiveIdentityVerifier, Repo};
+use funding_arb_domain::TradingMode;
+use sqlx::postgres::PgPoolOptions;
+
+use crate::routes::build_router;
+use crate::state::AppState;
 
 fn main() -> ExitCode {
     if env::args().any(|argument| argument == "--health-check") {
         return health_check();
     }
 
-    let mode = env::var("SIGNEX_MODE").unwrap_or_else(|_| String::from("PAPER"));
-    let Ok(mode) = TradingMode::from_str(&mode) else {
-        eprintln!("invalid SIGNEX_MODE");
-        return ExitCode::FAILURE;
-    };
-    if !mode.is_paper() {
-        eprintln!("live mode is unavailable in the M0 scaffold");
-        return ExitCode::FAILURE;
-    }
-
-    let address = env::var("SIGNEX_API_BIND").unwrap_or_else(|_| String::from("0.0.0.0:8080"));
-    let listener = match TcpListener::bind(&address) {
-        Ok(listener) => listener,
+    let runtime = match tokio::runtime::Runtime::new() {
+        Ok(runtime) => runtime,
         Err(error) => {
-            eprintln!("failed to bind {address}: {error}");
+            eprintln!("failed to start async runtime: {error}");
             return ExitCode::FAILURE;
         }
     };
-    println!("Signex scaffold API listening on {address} in PAPER mode");
-    for stream in listener.incoming() {
-        match stream {
-            Ok(mut stream) => respond(&mut stream),
-            Err(error) => eprintln!("connection failed: {error}"),
+    runtime.block_on(run())
+}
+
+async fn run() -> ExitCode {
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
+        )
+        .init();
+
+    let mode = env::var("SIGNEX_MODE").unwrap_or_else(|_| String::from("PAPER"));
+    match TradingMode::from_str(&mode) {
+        Ok(mode) if mode.is_paper() => {}
+        Ok(_) => {
+            eprintln!("live mode is unavailable in the M1 auth milestone");
+            return ExitCode::FAILURE;
+        }
+        Err(_) => {
+            eprintln!("invalid SIGNEX_MODE");
+            return ExitCode::FAILURE;
         }
     }
-    ExitCode::SUCCESS
+
+    let config = match AuthConfig::from_env() {
+        Ok(config) => config,
+        Err(error) => {
+            eprintln!("{error}");
+            return ExitCode::FAILURE;
+        }
+    };
+
+    let pool = match PgPoolOptions::new()
+        .max_connections(10)
+        .connect(&config.database_url)
+        .await
+    {
+        Ok(pool) => pool,
+        Err(error) => {
+            eprintln!("failed to connect to the database: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let repo = Repo::new(pool);
+
+    if let (Some(hash), Some(expiry)) = (
+        config.bootstrap_token_hash.as_ref(),
+        config.bootstrap_token_expires_at.as_ref(),
+    ) {
+        if let Err(error) = repo.seed_bootstrap(hash, expiry).await {
+            eprintln!("failed to seed bootstrap state: {error}");
+            return ExitCode::FAILURE;
+        }
+    }
+
+    let verifier = Arc::new(LiveIdentityVerifier::new(
+        config.apple_bundle_id.clone(),
+        config.google_client_ids.clone(),
+    ));
+    let service = AuthService::new(repo, &config, verifier);
+    let router = build_router(AppState { service });
+
+    let listener = match tokio::net::TcpListener::bind(&config.bind_address).await {
+        Ok(listener) => listener,
+        Err(error) => {
+            eprintln!("failed to bind {}: {error}", config.bind_address);
+            return ExitCode::FAILURE;
+        }
+    };
+    println!(
+        "Signex auth API listening on {} in PAPER mode (M1_AUTH)",
+        config.bind_address,
+    );
+    match axum::serve(listener, router).await {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(error) => {
+            eprintln!("server error: {error}");
+            ExitCode::FAILURE
+        }
+    }
 }
 
 fn health_check() -> ExitCode {
-    match TcpStream::connect("127.0.0.1:8080") {
+    let address = env::var("SIGNEX_API_BIND").unwrap_or_else(|_| String::from("0.0.0.0:8080"));
+    let port = address.rsplit(':').next().unwrap_or("8080");
+    let target = format!("127.0.0.1:{port}");
+    match TcpStream::connect(&target) {
         Ok(mut stream) => {
             let request = b"GET /livez HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n";
-            if stream.write_all(request).is_ok() {
-                ExitCode::SUCCESS
-            } else {
-                ExitCode::FAILURE
+            if stream.write_all(request).is_err() {
+                return ExitCode::FAILURE;
+            }
+            let _ = stream.set_read_timeout(Some(Duration::from_secs(2)));
+            let mut buffer = [0_u8; 64];
+            thread::sleep(Duration::from_millis(20));
+            match stream.read(&mut buffer) {
+                Ok(length) if String::from_utf8_lossy(&buffer[..length]).contains("200") => {
+                    ExitCode::SUCCESS
+                }
+                _ => ExitCode::FAILURE,
             }
         }
         Err(_) => ExitCode::FAILURE,
     }
-}
-
-fn respond(stream: &mut TcpStream) {
-    let mut request = [0_u8; 2048];
-    let Ok(length) = stream.read(&mut request) else {
-        return;
-    };
-    let first_line = String::from_utf8_lossy(&request[..length]);
-    let path = first_line.split_whitespace().nth(1).unwrap_or("/");
-    let (status, body) = match path {
-        "/livez" | "/readyz" => (
-            "200 OK",
-            r#"{"status":"OK","mode":"PAPER","stage":"M0_SCAFFOLD"}"#,
-        ),
-        "/entryz" => ("503 Service Unavailable", BLOCKED_ENTRY),
-        _ => ("404 Not Found", r#"{"error":"NOT_FOUND"}"#),
-    };
-    let response = format!(
-        "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nCache-Control: no-store\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-        body.len()
-    );
-    let _ = stream.write_all(response.as_bytes());
 }
