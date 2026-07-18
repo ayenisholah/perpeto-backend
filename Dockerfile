@@ -4,6 +4,7 @@ WORKDIR /workspace
 COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
 COPY crates ./crates
 COPY bins ./bins
+COPY migrations ./migrations
 RUN cargo build --locked --release --workspace
 
 FROM debian:bookworm-slim AS runtime
