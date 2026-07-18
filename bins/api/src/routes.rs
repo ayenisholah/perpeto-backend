@@ -8,7 +8,6 @@ use crate::middleware::require_auth;
 use crate::state::AppState;
 
 /// Build the application router.
-#[must_use]
 pub fn build_router(state: AppState) -> Router {
     let protected = Router::new()
         .route("/api/v1/auth/me", get(handlers::me))
