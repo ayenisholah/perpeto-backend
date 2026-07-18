@@ -19,6 +19,12 @@ use funding_arb_auth_service::tokens::{encode_base64url, sha256};
 use funding_arb_auth_service::{AuthService, Repo};
 use sqlx::PgPool;
 use sqlx::postgres::PgPoolOptions;
+use tokio::sync::Mutex;
+
+// These tests share one database and truncate between scenarios, so they must
+// not run concurrently. Cargo runs tests in a binary in parallel by default;
+// this lock serializes them.
+static TEST_LOCK: Mutex<()> = Mutex::const_new(());
 
 struct FakeVerifier {
     identity: VerifiedIdentity,
@@ -128,6 +134,7 @@ async fn sign_in(
 
 #[tokio::test]
 async fn new_user_reaches_pending_with_session() {
+    let _guard = TEST_LOCK.lock().await;
     let Some((service, _pool)) = setup("google-sub-pending", "dev-token").await else {
         eprintln!("DATABASE_URL not set; skipping");
         return;
@@ -146,6 +153,7 @@ async fn new_user_reaches_pending_with_session() {
 
 #[tokio::test]
 async fn refresh_rotates_and_detects_reuse() {
+    let _guard = TEST_LOCK.lock().await;
     let Some((service, _pool)) = setup("google-sub-refresh", "dev-token").await else {
         eprintln!("DATABASE_URL not set; skipping");
         return;
@@ -183,6 +191,7 @@ async fn refresh_rotates_and_detects_reuse() {
 
 #[tokio::test]
 async fn challenge_cannot_be_replayed() {
+    let _guard = TEST_LOCK.lock().await;
     let Some((service, _pool)) = setup("google-sub-replay", "dev-token").await else {
         eprintln!("DATABASE_URL not set; skipping");
         return;
@@ -216,6 +225,7 @@ async fn challenge_cannot_be_replayed() {
 
 #[tokio::test]
 async fn bootstrap_promotes_first_owner_to_mfa_enrollment() {
+    let _guard = TEST_LOCK.lock().await;
     let Some((service, _pool)) = setup("google-sub-owner", "top-secret-deploy-token").await else {
         eprintln!("DATABASE_URL not set; skipping");
         return;
