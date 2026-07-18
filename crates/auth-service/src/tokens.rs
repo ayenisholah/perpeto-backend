@@ -16,7 +16,7 @@ const ACCESS_TTL_SECONDS: i64 = 15 * 60;
 const CHALLENGE_TTL_SECONDS: i64 = 10 * 60;
 
 /// Claims embedded in an access token.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct AccessClaims {
     /// Subject (user id).
     pub sub: String,
@@ -35,7 +35,7 @@ pub struct AccessClaims {
 }
 
 /// Claims embedded in a short-lived MFA challenge token.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct ChallengeClaims {
     pub sub: String,
     /// Device id the eventual session should be bound to.
