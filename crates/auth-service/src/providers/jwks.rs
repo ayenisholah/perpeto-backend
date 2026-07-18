@@ -55,12 +55,11 @@ impl JwksCache {
     /// Returns [`AuthError::ProviderProofInvalid`] if the key id is unknown even
     /// after a refresh, or [`AuthError::Internal`] on transport failures.
     pub async fn decoding_key(&self, kid: &str) -> Result<DecodingKey, AuthError> {
-        if let Some(entry) = self.entry.read().await.as_ref() {
-            if entry.fetched_at.elapsed() < CACHE_TTL {
-                if let Some(key) = entry.keys.get(kid) {
-                    return Ok(key.clone());
-                }
-            }
+        if let Some(entry) = self.entry.read().await.as_ref()
+            && entry.fetched_at.elapsed() < CACHE_TTL
+            && let Some(key) = entry.keys.get(kid)
+        {
+            return Ok(key.clone());
         }
         self.refresh().await?;
         self.entry
@@ -84,10 +83,10 @@ impl JwksCache {
             .map_err(|error| AuthError::Internal(format!("jwks decode failed: {error}")))?;
         let mut keys = HashMap::new();
         for jwk in set.keys {
-            if let Some(alg) = &jwk.alg {
-                if alg != "RS256" {
-                    continue;
-                }
+            if let Some(alg) = &jwk.alg
+                && alg != "RS256"
+            {
+                continue;
             }
             if let Ok(key) = DecodingKey::from_rsa_components(&jwk.n, &jwk.e) {
                 keys.insert(jwk.kid, key);

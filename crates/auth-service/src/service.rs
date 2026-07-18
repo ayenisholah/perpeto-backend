@@ -685,11 +685,10 @@ fn from_epoch(epoch_seconds: i64) -> chrono::DateTime<chrono::Utc> {
 }
 
 fn decode_hex_32(value: &str) -> Option<[u8; 32]> {
-    let bytes = decode_base64url(value).ok();
-    if let Some(bytes) = bytes {
-        if let Ok(array) = <[u8; 32]>::try_from(bytes.as_slice()) {
-            return Some(array);
-        }
+    if let Some(bytes) = decode_base64url(value).ok()
+        && let Ok(array) = <[u8; 32]>::try_from(bytes.as_slice())
+    {
+        return Some(array);
     }
     let trimmed = value.trim();
     if trimmed.len() != 64 {

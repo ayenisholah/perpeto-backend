@@ -92,15 +92,15 @@ impl AuthConfig {
         let apple_bundle_id = required("SIGNEX_APPLE_BUNDLE_ID")?;
 
         let mut google_client_ids = Vec::new();
-        if let Ok(value) = env::var("SIGNEX_GOOGLE_IOS_CLIENT_ID") {
-            if !value.trim().is_empty() {
-                google_client_ids.push(value.trim().to_owned());
-            }
+        if let Ok(value) = env::var("SIGNEX_GOOGLE_IOS_CLIENT_ID")
+            && !value.trim().is_empty()
+        {
+            google_client_ids.push(value.trim().to_owned());
         }
-        if let Ok(value) = env::var("SIGNEX_GOOGLE_WEB_CLIENT_ID") {
-            if !value.trim().is_empty() {
-                google_client_ids.push(value.trim().to_owned());
-            }
+        if let Ok(value) = env::var("SIGNEX_GOOGLE_WEB_CLIENT_ID")
+            && !value.trim().is_empty()
+        {
+            google_client_ids.push(value.trim().to_owned());
         }
 
         let bootstrap_token_hash = match env::var("SIGNEX_BOOTSTRAP_TOKEN_HASH") {

@@ -51,10 +51,10 @@ pub fn verify_totp(
         if step < 0 {
             continue;
         }
-        if let Some(last) = last_accepted_timestep {
-            if step <= last {
-                continue;
-            }
+        if let Some(last) = last_accepted_timestep
+            && step <= last
+        {
+            continue;
         }
         if constant_time_eq(&totp_at(&secret, step as u64), code) {
             return Ok(Some(step));
