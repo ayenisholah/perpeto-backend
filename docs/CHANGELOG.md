@@ -6,6 +6,7 @@ All notable repository changes are recorded here using Keep a Changelog categori
 
 ### Added
 
+- Interim open-registration mode (DEC-0009) behind `SIGNEX_OPEN_REGISTRATION` (default off): on the shared v1 backend, each new Apple/Google sign-in is admitted immediately as an active account with the full `OWNER`/`TRADER`/`APPROVER` role set and no TOTP MFA, replacing the pending-approval gate. The strict DEC-0007 flow, approval endpoints, and bootstrap-Owner path are unchanged when the flag is off; version 2 restores gating with per-user backend isolation.
 - M1 authentication HTTP runtime (`funding-arb-auth-service` crate plus an `axum` binary) implementing social challenge issuance, Apple/Google identity-token exchange with JWKS verification and PKCE, PENDING isolation, deployment-token Owner bootstrap, refresh rotation with reuse detection, TOTP enrollment/verification and recovery codes, session and identity listing, Owner access approval, and account deletion, all keyed by `(provider, provider_subject)` and never by email (DEC-0007, DEC-0008).
 - A working `funding-arb-migrate` binary that applies `migrations/` via the `sqlx` migrator, a `migrate` compose service gating the API on completed migrations, and a Postgres-backed CI job running the database auth-flow tests.
 - Initial backend repository governance, Rust workspace scaffold, API contract seed, container build, CI, public GHCR publishing, documentation synchronization, and paper-only staging deployment automation.

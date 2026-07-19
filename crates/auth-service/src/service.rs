@@ -65,6 +65,7 @@ pub struct AuthService {
     signer: TokenSigner,
     verifier: Arc<dyn IdentityTokenVerifier>,
     mfa_key: Option<[u8; 32]>,
+    open_registration: bool,
 }
 
 impl AuthService {
@@ -76,6 +77,7 @@ impl AuthService {
             signer: TokenSigner::new(config.token_signing_seed, config.token_issuer.clone()),
             verifier,
             mfa_key: config.mfa_encryption_key,
+            open_registration: config.open_registration,
         }
     }
 
@@ -236,6 +238,7 @@ impl AuthService {
                 &device_upsert,
                 None,
                 None,
+                self.open_registration,
             )
             .await?;
         let next = self.compute_next(&outcome.user).await?;
@@ -648,6 +651,11 @@ impl AuthService {
     async fn compute_next(&self, user: &UserProjection) -> AuthResult<NextState> {
         if user.status != "ACTIVE" {
             return Ok(NextState::PendingApproval);
+        }
+        // Open registration (DEC-0009) waives MFA for the shared v1 backend: an
+        // active user goes straight in regardless of privileged roles.
+        if self.open_registration {
+            return Ok(NextState::Authenticated);
         }
         let privileged = user
             .roles

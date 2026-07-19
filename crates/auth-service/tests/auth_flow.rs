@@ -41,7 +41,7 @@ impl IdentityTokenVerifier for FakeVerifier {
     }
 }
 
-fn test_config(database_url: String, bootstrap_token: &str) -> AuthConfig {
+fn test_config(database_url: String, bootstrap_token: &str, open_registration: bool) -> AuthConfig {
     AuthConfig {
         database_url,
         bind_address: "127.0.0.1:0".to_owned(),
@@ -52,6 +52,7 @@ fn test_config(database_url: String, bootstrap_token: &str) -> AuthConfig {
         bootstrap_token_hash: Some(sha256(bootstrap_token.as_bytes())),
         bootstrap_token_expires_at: Some("2999-01-01T00:00:00Z".to_owned()),
         mfa_encryption_key: Some([22_u8; 32]),
+        open_registration,
     }
 }
 
@@ -68,6 +69,14 @@ async fn reset(pool: &PgPool) {
 }
 
 async fn setup(subject: &str, bootstrap_token: &str) -> Option<(AuthService, PgPool)> {
+    setup_with(subject, bootstrap_token, false).await
+}
+
+async fn setup_with(
+    subject: &str,
+    bootstrap_token: &str,
+    open_registration: bool,
+) -> Option<(AuthService, PgPool)> {
     let database_url = std::env::var("DATABASE_URL").ok()?;
     let pool = PgPoolOptions::new()
         .max_connections(5)
@@ -80,7 +89,7 @@ async fn setup(subject: &str, bootstrap_token: &str) -> Option<(AuthService, PgP
         .expect("migrate");
     reset(&pool).await;
 
-    let config = test_config(database_url, bootstrap_token);
+    let config = test_config(database_url, bootstrap_token, open_registration);
     let verifier = Arc::new(FakeVerifier {
         identity: VerifiedIdentity {
             subject: subject.to_owned(),
@@ -148,6 +157,33 @@ async fn new_user_reaches_pending_with_session() {
     assert_eq!(
         transition.user.status,
         funding_arb_auth_service::dto::UserStatus::Pending
+    );
+}
+
+#[tokio::test]
+async fn open_registration_admits_new_user_to_full_access() {
+    use funding_arb_auth_service::dto::{Role, UserStatus};
+    let _guard = TEST_LOCK.lock().await;
+    let Some((service, _pool)) = setup_with("google-sub-open", "dev-token", true).await else {
+        eprintln!("DATABASE_URL not set; skipping");
+        return;
+    };
+    let transition = sign_in(&service, "google-sub-open").await;
+    assert_eq!(transition.next, NextState::Authenticated);
+    assert!(
+        transition.session.is_some(),
+        "authenticated users get a session"
+    );
+    assert_eq!(transition.user.status, UserStatus::Active);
+    for role in [Role::Owner, Role::Trader, Role::Approver] {
+        assert!(
+            transition.user.roles.contains(&role),
+            "expected full-access role {role:?}"
+        );
+    }
+    assert!(
+        transition.challenge_token.is_none(),
+        "no MFA challenge under open registration"
     );
 }
 

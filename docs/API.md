@@ -22,7 +22,7 @@ The API is rooted at `/api/v1`. `/livez`, `/readyz`, and `/entryz` are public in
 1. Create a one-use social challenge with `POST /api/v1/auth/social/challenges`.
 2. Complete native Apple or Google authorization and submit the code, identity token, PKCE verifier, challenge ID, and iOS device registration to `POST /api/v1/auth/social/exchange`.
 3. Follow exactly one returned state: `PENDING_APPROVAL`, `MFA_REQUIRED`, `MFA_ENROLLMENT_REQUIRED`, or `AUTHENTICATED`.
-4. A first deployment Owner consumes the one-use bootstrap token. Other registrations remain isolated until Owner approval grants Viewer.
+4. A first deployment Owner consumes the one-use bootstrap token. Other registrations remain isolated until Owner approval grants Viewer. Deployments with `SIGNEX_OPEN_REGISTRATION` enabled (the shared v1 backend, DEC-0009) instead return `AUTHENTICATED` immediately with full access and no MFA.
 5. Owner, Trader, and Approver complete TOTP enrollment and bind recovery-code acknowledgement before role activation.
 6. Store only the opaque refresh token in device-only Secure Store. Rotate it once through `/auth/refresh`; reuse revokes the whole family.
 

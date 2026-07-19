@@ -156,6 +156,7 @@ impl Repo {
         device: &DeviceUpsert,
         session_id: Option<&str>,
         refresh_token_hash: Option<&[u8]>,
+        auto_approve: bool,
     ) -> AuthResult<ExchangeOutcome> {
         let challenge_uuid = parse_uuid(challenge_id)?;
         let mut tx = self.pool.begin().await?;
@@ -204,13 +205,18 @@ impl Repo {
             }
             None => {
                 let new_user = Uuid::new_v4();
+                // Open registration (DEC-0009) admits new users to full access
+                // immediately; otherwise they start PENDING an Owner's approval.
+                let status = if auto_approve { "ACTIVE" } else { "PENDING" };
                 sqlx::query(
-                    "INSERT INTO users (id, status, email, display_name) \
-                     VALUES ($1, 'PENDING', $2, $3)",
+                    "INSERT INTO users (id, status, email, display_name, approved_at) \
+                     VALUES ($1, $2::user_status, $3, $4, CASE WHEN $5 THEN now() END)",
                 )
                 .bind(new_user)
+                .bind(status)
                 .bind(&identity.email)
                 .bind(&identity.display_name)
+                .bind(auto_approve)
                 .execute(&mut *tx)
                 .await?;
                 sqlx::query(
@@ -228,6 +234,18 @@ impl Repo {
                 .bind(&identity.display_name)
                 .execute(&mut *tx)
                 .await?;
+                if auto_approve {
+                    for role in ["OWNER", "TRADER", "APPROVER"] {
+                        sqlx::query(
+                            "INSERT INTO user_roles (user_id, role, active, activated_at) \
+                             VALUES ($1, $2::user_role, true, now())",
+                        )
+                        .bind(new_user)
+                        .bind(role)
+                        .execute(&mut *tx)
+                        .await?;
+                    }
+                }
                 new_user.to_string()
             }
         };

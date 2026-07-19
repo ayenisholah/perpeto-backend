@@ -20,7 +20,7 @@
 
 ## Not completed
 
-- The social-auth runtime adapters (provider JWKS/code exchange, Ed25519 JWT signing, PostgreSQL repository, TOTP cryptography, and HTTP handlers) are not implemented; the API service still exposes only health/readiness at runtime.
+- The social-auth runtime adapters are implemented and deployed (`funding-arb-auth-service` + `axum` API). The shared v1 backend runs with `SIGNEX_OPEN_REGISTRATION` enabled (DEC-0009), so new sign-ins get immediate full access; per-user backend isolation and the restored gated-approval/MFA flow are the v2 objective.
 - No venue connector, scanner, risk engine, execution engine, ledger, or production-ready trading API exists.
 - No venue has any certification evidence.
 - Live trading is unavailable by design.
