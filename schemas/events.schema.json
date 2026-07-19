@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.perpeto.invalid/events/0.1.0",
+  "title": "Perpeto M0 Event Envelope",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["event_id", "event_type", "occurred_at", "schema_version", "payload"],
+  "properties": {
+    "event_id": { "type": "string", "format": "uuid" },
+    "event_type": { "const": "system.health" },
+    "occurred_at": { "type": "string", "format": "date-time" },
+    "schema_version": { "const": "0.1.0" },
+    "payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status"],
+      "properties": { "status": { "enum": ["OK", "DEGRADED", "BLOCKED"] } }
+    }
+  }
+}

@@ -1,0 +1,30 @@
+{
+  "name": "@ayenisholah/perpeto-api-client",
+  "version": "0.2.0",
+  "description": "Versioned Perpeto API and event contract client",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist",
+    "schemas"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "npm run build && node --test test/*.test.mjs",
+    "stage:schemas": "node scripts/stage-schemas.mjs",
+    "prepack": "npm run build && npm run stage:schemas",
+    "verify:package": "npm run stage:schemas && node scripts/verify-package.mjs"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://npm.pkg.github.com"
+  },
+  "devDependencies": {
+    "typescript": "7.0.2"
+  },
+  "engines": {
+    "node": ">=22.13"
+  }
+}

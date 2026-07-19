@@ -1,0 +1,81 @@
+name: perpeto-staging
+
+x-service-security: &service-security
+  read_only: true
+  cap_drop: ["ALL"]
+  security_opt: ["no-new-privileges:true"]
+  restart: unless-stopped
+  init: true
+
+services:
+  migrate:
+    <<: *service-security
+    image: ${PERPETO_IMAGE:?PERPETO_IMAGE is required}
+    entrypoint: ["funding-arb-migrate"]
+    env_file: ["../../runtime.env"]
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  api:
+    <<: *service-security
+    image: ${PERPETO_IMAGE:?PERPETO_IMAGE is required}
+    entrypoint: ["funding-arb-api"]
+    env_file: ["../../runtime.env"]
+    ports: ["127.0.0.1:8081:8080"]
+    tmpfs: ["/tmp:rw,noexec,nosuid,size=16m"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "funding-arb-api", "--health-check"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+
+  engine:
+    <<: *service-security
+    image: ${PERPETO_IMAGE:?PERPETO_IMAGE is required}
+    entrypoint: ["funding-arb-engine"]
+    env_file: ["../../runtime.env"]
+    tmpfs: ["/tmp:rw,noexec,nosuid,size=16m"]
+
+  reconciler:
+    <<: *service-security
+    image: ${PERPETO_IMAGE:?PERPETO_IMAGE is required}
+    entrypoint: ["funding-arb-reconciler"]
+    env_file: ["../../runtime.env"]
+
+  worker:
+    <<: *service-security
+    image: ${PERPETO_IMAGE:?PERPETO_IMAGE is required}
+    entrypoint: ["funding-arb-worker"]
+    env_file: ["../../runtime.env"]
+
+  postgres:
+    image: postgres:18.4-bookworm@sha256:7cfd7f5e307dbd8cf5d88761b22934c042a749362c0ab7efc41805572d58b3a3
+    restart: unless-stopped
+    env_file: ["../../runtime.env"]
+    volumes: ["postgres18-data:/var/lib/postgresql"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+
+  redis:
+    image: redis:7.4.5-bookworm
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "no", "--save", ""]
+    tmpfs: ["/data:rw,noexec,nosuid,size=256m"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+
+volumes:
+  postgres18-data:
