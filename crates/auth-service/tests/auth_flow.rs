@@ -188,6 +188,40 @@ async fn open_registration_admits_new_user_to_full_access() {
 }
 
 #[tokio::test]
+async fn deleted_identity_reregisters_as_a_fresh_account() {
+    let _guard = TEST_LOCK.lock().await;
+    let Some((service, pool)) = setup_with("google-sub-rereg", "dev-token", true).await else {
+        eprintln!("DATABASE_URL not set; skipping");
+        return;
+    };
+    let first = sign_in(&service, "google-sub-rereg").await;
+    let old_id = first.user.id.clone();
+
+    // Simulate a prior account deletion (identity revoked, user tombstoned).
+    sqlx::query(
+        "UPDATE users SET status='DELETED', email=NULL, display_name=NULL, \
+         deletion_pseudonym=gen_random_uuid(), deleted_at=now() WHERE id=$1::uuid",
+    )
+    .bind(&old_id)
+    .execute(&pool)
+    .await
+    .expect("tombstone user");
+    sqlx::query("UPDATE provider_identities SET revoked_at=now() WHERE user_id=$1::uuid")
+        .bind(&old_id)
+        .execute(&pool)
+        .await
+        .expect("revoke identity");
+
+    // Signing in again with the same provider subject creates a fresh account.
+    let second = sign_in(&service, "google-sub-rereg").await;
+    assert_eq!(second.next, NextState::Authenticated);
+    assert_ne!(
+        second.user.id, old_id,
+        "re-registration must not reuse the deleted user"
+    );
+}
+
+#[tokio::test]
 async fn refresh_rotates_and_detects_reuse() {
     let _guard = TEST_LOCK.lock().await;
     let Some((service, _pool)) = setup("google-sub-refresh", "dev-token").await else {

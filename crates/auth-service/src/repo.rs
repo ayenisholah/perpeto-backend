@@ -178,17 +178,21 @@ impl Repo {
             .execute(&mut *tx)
             .await?;
 
-        let existing_user: Option<String> = sqlx::query_scalar(
-            "SELECT user_id::text FROM provider_identities \
-             WHERE provider = $1::social_provider AND provider_subject = $2",
+        let existing = sqlx::query(
+            "SELECT pi.user_id::text AS user_id, u.status::text AS status \
+             FROM provider_identities pi JOIN users u ON u.id = pi.user_id \
+             WHERE pi.provider = $1::social_provider AND pi.provider_subject = $2",
         )
         .bind(&identity.provider)
         .bind(&identity.subject)
         .fetch_optional(&mut *tx)
         .await?;
+        let existing_user: Option<(String, String)> =
+            existing.map(|row| (row.get("user_id"), row.get("status")));
 
         let user_id = match existing_user {
-            Some(user_id) => {
+            // A live account keeps its identity row; refresh the mutable profile.
+            Some((user_id, status)) if status != "DELETED" => {
                 sqlx::query(
                     "UPDATE provider_identities \
                      SET last_authenticated_at = now(), profile_email = $3, \
@@ -203,22 +207,29 @@ impl Repo {
                 .await?;
                 user_id
             }
-            None => {
-                let new_user = Uuid::new_v4();
-                // Open registration (DEC-0009) admits new users to full access
-                // immediately; otherwise they start PENDING an Owner's approval.
-                let status = if auto_approve { "ACTIVE" } else { "PENDING" };
+            // The identity was previously deleted: register a fresh account and
+            // re-point the (unique) identity row to it, clearing the revocation.
+            Some(_deleted) => {
+                let new_user = insert_new_user(&mut tx, identity, auto_approve).await?;
                 sqlx::query(
-                    "INSERT INTO users (id, status, email, display_name, approved_at) \
-                     VALUES ($1, $2::user_status, $3, $4, CASE WHEN $5 THEN now() END)",
+                    "UPDATE provider_identities \
+                     SET user_id = $3, revoked_at = NULL, linked_at = now(), \
+                         last_authenticated_at = now(), profile_email = $4, \
+                         profile_is_private_relay = $5, profile_display_name = $6 \
+                     WHERE provider = $1::social_provider AND provider_subject = $2",
                 )
+                .bind(&identity.provider)
+                .bind(&identity.subject)
                 .bind(new_user)
-                .bind(status)
                 .bind(&identity.email)
+                .bind(identity.is_private_relay)
                 .bind(&identity.display_name)
-                .bind(auto_approve)
                 .execute(&mut *tx)
                 .await?;
+                new_user.to_string()
+            }
+            None => {
+                let new_user = insert_new_user(&mut tx, identity, auto_approve).await?;
                 sqlx::query(
                     "INSERT INTO provider_identities \
                      (id, user_id, provider, provider_subject, profile_email, \
@@ -234,18 +245,6 @@ impl Repo {
                 .bind(&identity.display_name)
                 .execute(&mut *tx)
                 .await?;
-                if auto_approve {
-                    for role in ["OWNER", "TRADER", "APPROVER"] {
-                        sqlx::query(
-                            "INSERT INTO user_roles (user_id, role, active, activated_at) \
-                             VALUES ($1, $2::user_role, true, now())",
-                        )
-                        .bind(new_user)
-                        .bind(role)
-                        .execute(&mut *tx)
-                        .await?;
-                    }
-                }
                 new_user.to_string()
             }
         };
@@ -961,6 +960,43 @@ pub fn to_rfc3339(value: DateTime<Utc>) -> String {
 
 fn parse_uuid(value: &str) -> AuthResult<Uuid> {
     Uuid::parse_str(value).map_err(|_| AuthError::BadRequest("identifier is not a valid UUID"))
+}
+
+/// Insert a fresh user (and, under open registration, the full privileged role
+/// set), returning the new id. Does not touch `provider_identities`.
+async fn insert_new_user(
+    conn: &mut sqlx::PgConnection,
+    identity: &IdentityUpsert,
+    auto_approve: bool,
+) -> AuthResult<Uuid> {
+    let new_user = Uuid::new_v4();
+    // Open registration (DEC-0009) admits new users to full access immediately;
+    // otherwise they start PENDING an Owner's approval.
+    let status = if auto_approve { "ACTIVE" } else { "PENDING" };
+    sqlx::query(
+        "INSERT INTO users (id, status, email, display_name, approved_at) \
+         VALUES ($1, $2::user_status, $3, $4, CASE WHEN $5 THEN now() END)",
+    )
+    .bind(new_user)
+    .bind(status)
+    .bind(&identity.email)
+    .bind(&identity.display_name)
+    .bind(auto_approve)
+    .execute(&mut *conn)
+    .await?;
+    if auto_approve {
+        for role in ["OWNER", "TRADER", "APPROVER"] {
+            sqlx::query(
+                "INSERT INTO user_roles (user_id, role, active, activated_at) \
+                 VALUES ($1, $2::user_role, true, now())",
+            )
+            .bind(new_user)
+            .bind(role)
+            .execute(&mut *conn)
+            .await?;
+        }
+    }
+    Ok(new_user)
 }
 
 async fn insert_session<'e, E>(
