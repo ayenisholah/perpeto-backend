@@ -6,6 +6,7 @@ import {
   PerpetoClient,
   isAuthTransition,
   isHealth,
+  isOpportunity,
   isOpportunityScan,
 } from "../dist/index.js";
 
@@ -169,6 +170,7 @@ describe("opportunity scan contract", () => {
         route_id: "PERP_PERP:BINANCE>BYBIT:BTC",
         route_type: "PERP_PERP",
         underlying: "BTC",
+        funding_direction: "POSITIVE",
         long_venue: "BINANCE",
         short_venue: "BYBIT",
         gross_funding_apr: 0.36,
@@ -176,10 +178,34 @@ describe("opportunity scan contract", () => {
         exit_cost: 0.04,
         carry_cost: 0.02,
         risk_buffer: 0.036,
+        break_even_funding: 0.136,
         net_apr: 0.22,
         expected_net_pnl: 1180.5,
         profitability_probability: 0.72,
+        entry_basis_bps: 5,
+        leverage: 2,
+        required_capital: 105000,
         available_capacity: 140000,
+        reserved_notional: 100000,
+        reserved_capital: 75000,
+        capital_fraction: 0.075,
+        within_limits: true,
+        long_leg: {
+          venue: "BINANCE",
+          predicted_rate: 0.1,
+          p10_rate: 0.05,
+          p90_rate: 0.15,
+          direction_probability: 0.9,
+          next_funding_at: "2026-07-19T08:00:00Z",
+        },
+        short_leg: {
+          venue: "BYBIT",
+          predicted_rate: 0.46,
+          p10_rate: 0.34,
+          p90_rate: 0.58,
+          direction_probability: 0.88,
+          next_funding_at: "2026-07-19T08:00:00Z",
+        },
         next_funding_at: "2026-07-19T08:00:00Z",
       },
     ],
@@ -218,5 +244,43 @@ describe("opportunity scan contract", () => {
       fetchImplementation: async () => Response.json({ scanned_at: 5 }),
     });
     await assert.rejects(client.listOpportunities(), /contract is incompatible/u);
+  });
+
+  it("fetches a single opportunity by route id", async () => {
+    let requestedUrl;
+    const client = new PerpetoClient({
+      baseUrl: "https://perpeto.test",
+      getAccessToken: () => "ephemeral",
+      fetchImplementation: async (url) => {
+        requestedUrl = String(url);
+        return Response.json(scan.opportunities[0]);
+      },
+    });
+    const opportunity = await client.getOpportunity("PERP_PERP:BINANCE>BYBIT:BTC");
+    assert.equal(isOpportunity(opportunity), true);
+    assert.equal(opportunity.within_limits, true);
+    assert.equal(opportunity.long_leg.venue, "BINANCE");
+    assert.match(requestedUrl, /\/api\/v1\/opportunities\/PERP_PERP/u);
+  });
+
+  it("reads the active risk limits", async () => {
+    const limits = {
+      reference_equity: 1000000,
+      max_portfolio_fraction: 0.7,
+      max_opportunity_fraction: 0.1,
+      max_underlying_fraction: 0.2,
+      max_venue_fraction: 0.35,
+      max_leverage: 2,
+      min_profitability: 0.7,
+      min_net_apr: 0.15,
+      max_entry_basis_bps: 100,
+      min_depth_multiple: 5,
+    };
+    const client = new PerpetoClient({
+      baseUrl: "https://perpeto.test",
+      getAccessToken: () => "ephemeral",
+      fetchImplementation: async () => Response.json(limits),
+    });
+    assert.deepEqual(await client.getRiskLimits(), limits);
   });
 });

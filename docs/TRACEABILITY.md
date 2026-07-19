@@ -4,10 +4,10 @@
 |---|---|---|---|
 | Spec 3.2 numeric rules | `funding-arb-domain` `rust_decimal` rate/APR math | Unit tests for forecast, costing and ranking | In progress (M2-S1) |
 | Spec 4.4 funding forecast | `funding-arb-domain::forecast` transparent non-ML predictor | Forecast determinism and p10/p90 band unit tests | In progress (M2-S1) |
-| Spec 4.5–4.6 opportunity ranking and scanner | `funding-arb-domain::opportunity` + `funding-arb-scanner-service` fixtures/engine | Ranking, eligibility-gate and scan-determinism tests | In progress (M2-S1) |
-| Spec 4.5 opportunity feed API | `GET /api/v1/opportunities`, OpenAPI 0.3.0, `PerpetoClient.listOpportunities` | Client contract tests plus Postgres scan→read integration | In progress (M2-S1) |
+| Spec 4.5–4.6 opportunity ranking, scanner and filters | `funding-arb-domain::opportunity` + `funding-arb-scanner-service`; API filters/sort | Ranking, eligibility-gate, scan-determinism and filter/sort tests | In progress (M2-S2) |
+| Spec 4.5 / 11.6 opportunity feed and detail API | `GET /api/v1/opportunities`, `/{route_id}`, `/risk/limits`; OpenAPI 0.4.0; `PerpetoClient` | Client contract tests plus Postgres scan→read/detail integration | In progress (M2-S2) |
 | Spec 5 execution guarantees | execution state machine and reconciler | Restart, retry, partial-fill and unknown-outcome tests | Not started |
-| Spec 6 risk management | risk reservations and circuit breakers | Precedence and kill-switch property tests | Not started |
+| Spec 6 risk management | `funding-arb-domain::risk` `RiskLimits` (safe-starter defaults) as scanner gates + paper reservations; `GET /api/v1/risk/limits` | Gate, reservation and default-template unit tests | In progress (M2-S2, limit model + gates; live reservations and circuit breakers deferred to the execution slice) |
 | Spec 8 architecture | workspace, services and connector boundary | Compile checks and architecture tests | Scaffolded |
 | Spec 10 API contracts | OpenAPI and event schemas | Schema lint and compatibility diff | Scaffolded |
 | Spec 10.2 / DEC-0007 / DEC-0008 social auth | provider-verification adapters, auth domain, PostgreSQL repositories and `axum` API | Provider/replay/bootstrap/approval/linking/deletion integration tests | Runtime adapters (`funding-arb-auth-service`), HTTP endpoints, and Postgres-backed CI auth-flow tests implemented; identity relinking and real-device E2E pending |

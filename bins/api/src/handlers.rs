@@ -2,7 +2,7 @@
 
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
-use axum::response::IntoResponse;
+use axum::response::{IntoResponse, Response};
 use axum::{Extension, Json};
 use funding_arb_auth_service::AuthError;
 use funding_arb_auth_service::dto::{
@@ -10,8 +10,10 @@ use funding_arb_auth_service::dto::{
     MfaConfirmRequest, MfaVerifyRequest, RefreshRequest,
 };
 use funding_arb_auth_service::service::CallerContext;
-use funding_arb_scanner_service::OpportunityScanDto;
+use funding_arb_domain::risk::RiskLimits;
+use funding_arb_scanner_service::{OpportunityScanDto, RiskLimitsDto};
 use serde::Deserialize;
+use chrono::{DateTime, Utc};
 
 use crate::problem::ApiError;
 use crate::state::AppState;
@@ -196,17 +198,33 @@ pub async fn acknowledge_recovery(
     Ok(Json(state.service.acknowledge_recovery(request).await?))
 }
 
-/// Optional filters for the opportunity scan feed.
+/// Optional filters and sort for the opportunity scan feed (PRODUCT_SPEC §4.6).
 #[derive(Debug, Deserialize)]
 pub struct OpportunityQuery {
     /// `SPOT_PERP` or `PERP_PERP` (case-insensitive).
     pub route_type: Option<String>,
     /// A venue that must appear on either leg (case-insensitive).
     pub venue: Option<String>,
-    /// Minimum net APR (fraction, e.g. `0.05`).
+    /// The underlying asset, e.g. `BTC` (case-insensitive).
+    pub underlying: Option<String>,
+    /// `POSITIVE` or `NEGATIVE` funding capture (case-insensitive).
+    pub funding_direction: Option<String>,
+    /// Minimum net APR (fraction, e.g. `0.15`).
     pub min_net_apr: Option<f64>,
     /// Minimum profitability probability, `[0, 1]`.
     pub min_probability: Option<f64>,
+    /// Maximum entry basis magnitude, in basis points.
+    pub max_basis_bps: Option<f64>,
+    /// Maximum seconds until the next funding settlement.
+    pub max_time_to_funding_secs: Option<i64>,
+    /// Sort: `default`, `net_apr`, `next_funding`, `probability`, `capacity`, `expected_pnl`.
+    pub sort: Option<String>,
+}
+
+fn seconds_to_funding(next_funding_at: &str, now: DateTime<Utc>) -> Option<i64> {
+    DateTime::parse_from_rfc3339(next_funding_at)
+        .ok()
+        .map(|parsed| parsed.with_timezone(&Utc).signed_duration_since(now).num_seconds())
 }
 
 /// `GET /api/v1/opportunities` — the latest ranked paper scan (read-only).
@@ -236,6 +254,14 @@ pub async fn list_opportunities(
         scan.opportunities
             .retain(|opportunity| opportunity.long_venue == wanted || opportunity.short_venue == wanted);
     }
+    if let Some(underlying) = filter.underlying.as_deref() {
+        let wanted = underlying.to_ascii_uppercase();
+        scan.opportunities.retain(|opportunity| opportunity.underlying == wanted);
+    }
+    if let Some(direction) = filter.funding_direction.as_deref() {
+        let wanted = direction.to_ascii_uppercase();
+        scan.opportunities.retain(|opportunity| opportunity.funding_direction == wanted);
+    }
     if let Some(minimum) = filter.min_net_apr {
         scan.opportunities.retain(|opportunity| opportunity.net_apr >= minimum);
     }
@@ -243,6 +269,63 @@ pub async fn list_opportunities(
         scan.opportunities
             .retain(|opportunity| opportunity.profitability_probability >= minimum);
     }
+    if let Some(maximum) = filter.max_basis_bps {
+        scan.opportunities.retain(|opportunity| opportunity.entry_basis_bps <= maximum);
+    }
+    if let Some(maximum) = filter.max_time_to_funding_secs {
+        let now = Utc::now();
+        scan.opportunities.retain(|opportunity| {
+            seconds_to_funding(&opportunity.next_funding_at, now).is_none_or(|secs| secs <= maximum)
+        });
+    }
+
+    match filter.sort.as_deref() {
+        Some("net_apr") => scan.opportunities.sort_by(|a, b| b.net_apr.total_cmp(&a.net_apr)),
+        Some("next_funding") => scan
+            .opportunities
+            .sort_by(|a, b| a.next_funding_at.cmp(&b.next_funding_at)),
+        Some("probability") => scan
+            .opportunities
+            .sort_by(|a, b| b.profitability_probability.total_cmp(&a.profitability_probability)),
+        Some("capacity") => scan
+            .opportunities
+            .sort_by(|a, b| b.available_capacity.total_cmp(&a.available_capacity)),
+        Some("expected_pnl") => scan
+            .opportunities
+            .sort_by(|a, b| b.expected_net_pnl.total_cmp(&a.expected_net_pnl)),
+        _ => {} // default: persisted rank order
+    }
 
     Ok(Json(scan))
+}
+
+/// `GET /api/v1/opportunities/{route_id}` — full detail for one opportunity.
+pub async fn get_opportunity(
+    State(state): State<AppState>,
+    Extension(caller): Extension<CallerContext>,
+    Path(route_id): Path<String>,
+) -> Result<Response, ApiError> {
+    caller.require_active()?;
+    let found = state
+        .scanner
+        .opportunity(&route_id)
+        .await
+        .map_err(|error| ApiError(AuthError::Internal(error.to_string())))?;
+    match found {
+        Some(opportunity) => Ok(Json(opportunity).into_response()),
+        None => Ok((
+            StatusCode::NOT_FOUND,
+            [(axum::http::header::CONTENT_TYPE, "application/problem+json")],
+            r#"{"type":"about:blank","title":"Opportunity not found","status":404,"code":"OPPORTUNITY_NOT_FOUND"}"#,
+        )
+            .into_response()),
+    }
+}
+
+/// `GET /api/v1/risk/limits` — the active §6.2 safe-starter risk limits.
+pub async fn get_risk_limits(
+    Extension(caller): Extension<CallerContext>,
+) -> Result<impl IntoResponse, ApiError> {
+    caller.require_active()?;
+    Ok(Json(RiskLimitsDto::from_domain(&RiskLimits::default())))
 }

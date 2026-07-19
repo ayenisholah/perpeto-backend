@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Perpeto Control API
-  version: 0.3.0
+  version: 0.4.0
   description: >-
     M1A social identity, MFA, and secure-session contract plus the M2 read-only
     paper opportunity scanner. Trade execution remains unavailable.
@@ -399,6 +399,14 @@ paths:
           required: false
           schema: { $ref: "#/components/schemas/Venue" }
         - in: query
+          name: underlying
+          required: false
+          schema: { type: string }
+        - in: query
+          name: funding_direction
+          required: false
+          schema: { $ref: "#/components/schemas/FundingDirection" }
+        - in: query
           name: min_net_apr
           required: false
           schema: { type: number }
@@ -406,12 +414,58 @@ paths:
           name: min_probability
           required: false
           schema: { type: number, minimum: 0, maximum: 1 }
+        - in: query
+          name: max_basis_bps
+          required: false
+          schema: { type: number }
+        - in: query
+          name: max_time_to_funding_secs
+          required: false
+          schema: { type: integer, format: int64 }
+        - in: query
+          name: sort
+          required: false
+          schema:
+            type: string
+            enum: [default, net_apr, next_funding, probability, capacity, expected_pnl]
       responses:
         "200":
           description: The latest scan snapshot (empty when no scan has run yet).
           content:
             application/json:
               schema: { $ref: "#/components/schemas/OpportunityScan" }
+        "401": { $ref: "#/components/responses/ProblemResponse" }
+        "403": { $ref: "#/components/responses/ProblemResponse" }
+  /api/v1/opportunities/{route_id}:
+    get:
+      tags: [Opportunities]
+      summary: Fetch full detail for one opportunity from the latest scan
+      operationId: getOpportunity
+      parameters:
+        - in: path
+          name: route_id
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: The opportunity detail.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Opportunity" }
+        "401": { $ref: "#/components/responses/ProblemResponse" }
+        "403": { $ref: "#/components/responses/ProblemResponse" }
+        "404": { $ref: "#/components/responses/ProblemResponse" }
+  /api/v1/risk/limits:
+    get:
+      tags: [Opportunities]
+      summary: Read the active safe-starter risk limits
+      operationId: getRiskLimits
+      responses:
+        "200":
+          description: The active organization risk limits.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RiskLimits" }
         "401": { $ref: "#/components/responses/ProblemResponse" }
         "403": { $ref: "#/components/responses/ProblemResponse" }
   /api/v1/auth/apple/notifications:
@@ -485,6 +539,45 @@ components:
     RouteType:
       type: string
       enum: [SPOT_PERP, PERP_PERP]
+    FundingDirection:
+      type: string
+      enum: [POSITIVE, NEGATIVE]
+    OpportunityLeg:
+      type: object
+      additionalProperties: false
+      required: [venue, predicted_rate, p10_rate, p90_rate, direction_probability, next_funding_at]
+      properties:
+        venue: { $ref: "#/components/schemas/Venue" }
+        predicted_rate: { type: number }
+        p10_rate: { type: number }
+        p90_rate: { type: number }
+        direction_probability: { type: number, minimum: 0, maximum: 1 }
+        next_funding_at: { type: string, format: date-time }
+    RiskLimits:
+      type: object
+      additionalProperties: false
+      required:
+        - reference_equity
+        - max_portfolio_fraction
+        - max_opportunity_fraction
+        - max_underlying_fraction
+        - max_venue_fraction
+        - max_leverage
+        - min_profitability
+        - min_net_apr
+        - max_entry_basis_bps
+        - min_depth_multiple
+      properties:
+        reference_equity: { type: number }
+        max_portfolio_fraction: { type: number }
+        max_opportunity_fraction: { type: number }
+        max_underlying_fraction: { type: number }
+        max_venue_fraction: { type: number }
+        max_leverage: { type: number }
+        min_profitability: { type: number }
+        min_net_apr: { type: number }
+        max_entry_basis_bps: { type: number }
+        min_depth_multiple: { type: number }
     Opportunity:
       type: object
       additionalProperties: false
@@ -492,6 +585,7 @@ components:
         - route_id
         - route_type
         - underlying
+        - funding_direction
         - long_venue
         - short_venue
         - gross_funding_apr
@@ -499,15 +593,26 @@ components:
         - exit_cost
         - carry_cost
         - risk_buffer
+        - break_even_funding
         - net_apr
         - expected_net_pnl
         - profitability_probability
+        - entry_basis_bps
+        - leverage
+        - required_capital
         - available_capacity
+        - reserved_notional
+        - reserved_capital
+        - capital_fraction
+        - within_limits
+        - long_leg
+        - short_leg
         - next_funding_at
       properties:
         route_id: { type: string }
         route_type: { $ref: "#/components/schemas/RouteType" }
         underlying: { type: string }
+        funding_direction: { $ref: "#/components/schemas/FundingDirection" }
         long_venue: { $ref: "#/components/schemas/Venue" }
         short_venue: { $ref: "#/components/schemas/Venue" }
         gross_funding_apr: { type: number }
@@ -515,10 +620,20 @@ components:
         exit_cost: { type: number }
         carry_cost: { type: number }
         risk_buffer: { type: number }
+        break_even_funding: { type: number }
         net_apr: { type: number }
         expected_net_pnl: { type: number }
         profitability_probability: { type: number, minimum: 0, maximum: 1 }
+        entry_basis_bps: { type: number }
+        leverage: { type: number }
+        required_capital: { type: number }
         available_capacity: { type: number }
+        reserved_notional: { type: number }
+        reserved_capital: { type: number }
+        capital_fraction: { type: number }
+        within_limits: { type: boolean }
+        long_leg: { $ref: "#/components/schemas/OpportunityLeg" }
+        short_leg: { $ref: "#/components/schemas/OpportunityLeg" }
         next_funding_at: { type: string, format: date-time }
     OpportunityScan:
       type: object

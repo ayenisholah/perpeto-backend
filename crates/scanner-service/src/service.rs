@@ -1,9 +1,10 @@
 //! The deterministic funding-arbitrage scanner.
 //!
 //! Loads fixture markets, forecasts each leg, enumerates two-leg routes per
-//! underlying (perp-perp across venue pairs and spot-perp), costs and ranks
-//! them. Pure and reproducible — the only non-determinism is the `scanned_at`
-//! stamp the caller supplies.
+//! underlying (perp-perp across venue pairs and spot-perp), costs, gates them
+//! against the risk limits, ranks, and attaches a per-opportunity risk
+//! reservation. Pure and reproducible — the only non-determinism is the
+//! `scanned_at` stamp the caller supplies.
 
 use std::collections::BTreeSet;
 
@@ -11,8 +12,18 @@ use chrono::{DateTime, Utc};
 use funding_arb_domain::forecast::{ForecastConfig, MODEL_VERSION, forecast};
 use funding_arb_domain::market::RouteType;
 use funding_arb_domain::opportunity::{CostModel, Opportunity, RouteLeg, rank};
+use funding_arb_domain::risk::{RiskAssessment, RiskLimits};
 
 use crate::fixtures::{self, FixtureError, InstrumentKind, MarketLeg};
+
+/// A ranked opportunity with its risk reservation.
+#[derive(Clone, Debug)]
+pub struct RankedOpportunity {
+    /// The costed opportunity.
+    pub opportunity: Opportunity,
+    /// The paper risk reservation and limit status.
+    pub assessment: RiskAssessment,
+}
 
 /// The output of one scan: a ranked opportunity set with provenance.
 #[derive(Clone, Debug)]
@@ -21,17 +32,19 @@ pub struct ScanResult {
     pub scanned_at: DateTime<Utc>,
     /// The forecasting model version used.
     pub model_version: &'static str,
-    /// Eligible opportunities in ranked order.
-    pub opportunities: Vec<Opportunity>,
+    /// Eligible opportunities in ranked order, with risk assessments.
+    pub opportunities: Vec<RankedOpportunity>,
 }
 
-/// The deterministic scanner: fixtures → forecasts → ranked opportunities.
+/// The deterministic scanner: fixtures → forecasts → risk-gated ranked opportunities.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Scanner {
     /// Forecasting parameters.
     pub forecast_config: ForecastConfig,
-    /// Cost and eligibility parameters.
+    /// Cost parameters.
     pub cost_model: CostModel,
+    /// Risk limits (eligibility gates + reservation sizing).
+    pub risk_limits: RiskLimits,
 }
 
 impl Scanner {
@@ -41,7 +54,14 @@ impl Scanner {
     /// Returns [`FixtureError`] if the embedded market fixtures cannot load.
     pub fn scan(&self, now: DateTime<Utc>) -> Result<ScanResult, FixtureError> {
         let legs = fixtures::load()?;
-        let opportunities = rank(self.build_opportunities(&legs), &self.cost_model);
+        let ranked = rank(self.build_opportunities(&legs), &self.risk_limits);
+        let opportunities = ranked
+            .into_iter()
+            .map(|opportunity| {
+                let assessment = self.risk_limits.assess(&opportunity);
+                RankedOpportunity { opportunity, assessment }
+            })
+            .collect();
         Ok(ScanResult {
             scanned_at: now,
             model_version: MODEL_VERSION,
@@ -122,20 +142,25 @@ mod tests {
     use chrono::{TimeZone, Utc};
 
     #[test]
-    fn scan_is_deterministic_and_ranked() {
+    fn scan_is_deterministic_ranked_and_within_limits() {
         let scanner = Scanner::default();
         let now = Utc.with_ymd_and_hms(2026, 7, 19, 0, 0, 0).unwrap();
         let first = scanner.scan(now).expect("fixtures load");
         let second = scanner.scan(now).expect("fixtures load");
 
         assert!(!first.opportunities.is_empty());
-        let ids: Vec<&str> = first.opportunities.iter().map(|o| o.route_id.as_str()).collect();
-        let ids2: Vec<&str> = second.opportunities.iter().map(|o| o.route_id.as_str()).collect();
+        let ids: Vec<&str> = first.opportunities.iter().map(|o| o.opportunity.route_id.as_str()).collect();
+        let ids2: Vec<&str> = second.opportunities.iter().map(|o| o.opportunity.route_id.as_str()).collect();
         assert_eq!(ids, ids2, "scan output must be deterministic");
 
         for pair in first.opportunities.windows(2) {
-            assert!(pair[0].net_apr >= pair[1].net_apr, "opportunities must be net-APR ranked");
+            assert!(
+                pair[0].opportunity.net_apr >= pair[1].opportunity.net_apr,
+                "opportunities must be net-APR ranked",
+            );
         }
-        assert!(first.opportunities.iter().all(|o| o.net_apr > rust_decimal::Decimal::ZERO));
+        // Every ranked opportunity clears the hard risk gates and carries a reservation.
+        assert!(first.opportunities.iter().all(|o| o.assessment.within_limits));
+        assert!(first.opportunities.iter().all(|o| o.assessment.reserved_notional > rust_decimal::Decimal::ZERO));
     }
 }

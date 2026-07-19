@@ -31,6 +31,8 @@ pub struct FundingForecast {
     pub p90_rate: Decimal,
     /// Probability the settlement rate keeps its predicted sign, in `[0.5, 1]`.
     pub direction_probability: Decimal,
+    /// The perpetual premium `(mark - index) / index` at observation time.
+    pub premium: Decimal,
     /// When funding next settles.
     pub next_funding_at: DateTime<Utc>,
     /// The forecasting model version.
@@ -93,6 +95,7 @@ pub fn forecast(observation: &FundingObservation, config: &ForecastConfig) -> Fu
         p10_rate: predicted - half_band,
         p90_rate: predicted + half_band,
         direction_probability,
+        premium: observation.premium(),
         next_funding_at: observation.next_funding_at,
         model_version: MODEL_VERSION,
         input_freshness: observation.observed_at,

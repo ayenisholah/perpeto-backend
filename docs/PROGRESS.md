@@ -2,7 +2,7 @@
 
 ## Snapshot
 
-- Milestone: M2 Slice 1 — deterministic opportunity scanner feed (M1A auth complete)
+- Milestone: M2 Slice 2 — opportunity detail, full filters, and risk reservations (M1A auth + Slice 1 scanner complete)
 - Overall state: In progress
 - Last verified: 2026-07-19
 
@@ -15,9 +15,10 @@
 - Public GitHub repository, required checks, branch protection, staging environment, and disabled-by-default automation switches configured.
 - Backend CI, container build, SBOM/provenance publication, and public GHCR delivery verified green.
 - M0 API-client packaging is deterministic and locally verifies compiled code plus bundled schemas.
-- Accepted DEC-0007 and replaced the password flow in the canonical specification with Google/Apple identity and Signex-authoritative approval, MFA, sessions, and revocation.
+- Accepted DEC-0007 and replaced the password flow in the canonical specification with Google/Apple identity and Perpeto-authoritative approval, MFA, sessions, and revocation.
 - Added the M1A PostgreSQL schema, authentication invariant model/tests, OpenAPI 0.2.0 contract, and typed TypeScript client.
 - Started M2 Slice 1: `funding-arb-domain` market/forecast/opportunity types with a transparent non-ML forecaster and PRODUCT_SPEC §4.5 ranking (unit-tested); a `funding-arb-scanner-service` crate driven by deterministic fixtures with Postgres persistence (`0003_market_scan.sql`); the engine as a paper scan loop; a read-only `GET /api/v1/opportunities` endpoint; and the additive OpenAPI 0.3.0 / `@ayenisholah/perpeto-api-client@0.3.0` contract with a mobile Scanner screen.
+- Started M2 Slice 2: richer opportunities (break-even funding, required capital, entry basis, leverage, per-leg forecast) and a `funding-arb-domain::risk` `RiskLimits` model (§6.2 safe-starter defaults) applied as scanner eligibility gates with per-opportunity paper reservations; the full §4.6 filter/sort set, `GET /api/v1/opportunities/{route_id}` detail, and `GET /api/v1/risk/limits`; OpenAPI 0.4.0 / client `0.4.0`; and a mobile filter/sort control, opportunity-detail sheet, and risk-limits card.
 
 ## Not completed
 

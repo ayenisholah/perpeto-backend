@@ -9,6 +9,6 @@ pub mod fixtures;
 pub mod repo;
 pub mod service;
 
-pub use dto::{OpportunityDto, OpportunityScanDto};
+pub use dto::{LegDto, OpportunityDto, OpportunityScanDto, RiskLimitsDto};
 pub use repo::ScannerRepo;
-pub use service::{ScanResult, Scanner};
+pub use service::{RankedOpportunity, ScanResult, Scanner};

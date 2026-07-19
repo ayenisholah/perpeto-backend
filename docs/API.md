@@ -1,4 +1,4 @@
-# Signex Control API
+# Perpeto Control API
 
 ## Contract and implementation status
 

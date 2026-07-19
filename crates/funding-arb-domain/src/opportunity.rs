@@ -4,13 +4,14 @@
 //! earns positive funding and the **long leg** pays it, so the gross route
 //! funding APR is `short.predicted - long.predicted`. Costs are annualized over
 //! the configured holding period and subtracted to yield `net_apr`. Ranking and
-//! eligibility follow PRODUCT_SPEC §4.5.
+//! eligibility follow PRODUCT_SPEC §4.5 and the risk gates in [`crate::risk`].
 
 use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
 
 use crate::forecast::FundingForecast;
 use crate::market::RouteType;
+use crate::risk::RiskLimits;
 
 fn abs(value: Decimal) -> Decimal {
     if value.is_sign_negative() { -value } else { value }
@@ -18,6 +19,26 @@ fn abs(value: Decimal) -> Decimal {
 
 fn clamp_unit(value: Decimal) -> Decimal {
     value.clamp(Decimal::ZERO, Decimal::ONE)
+}
+
+/// Which funding sign the route captures.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum FundingDirection {
+    /// The route captures positive funding (gross APR ≥ 0).
+    Positive,
+    /// The route captures negative funding.
+    Negative,
+}
+
+impl FundingDirection {
+    /// The canonical wire spelling.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Positive => "POSITIVE",
+            Self::Negative => "NEGATIVE",
+        }
+    }
 }
 
 /// One leg of a two-leg route.
@@ -42,8 +63,8 @@ pub struct CostModel {
     pub risk_buffer_ratio: Decimal,
     /// Assumed holding period, in days, used to annualize one-off costs.
     pub holding_days: Decimal,
-    /// Minimum executable notional (USD) for a route to be eligible.
-    pub min_required_notional: Decimal,
+    /// Assumed leverage on each perpetual leg.
+    pub leverage: Decimal,
 }
 
 impl Default for CostModel {
@@ -54,7 +75,7 @@ impl Default for CostModel {
             carry_ratio: Decimal::new(2, 2),        // 0.02 (2% APR)
             risk_buffer_ratio: Decimal::new(10, 2), // 0.10 of gross
             holding_days: Decimal::from(14),
-            min_required_notional: Decimal::from(1000),
+            leverage: Decimal::from(2),             // 2.0x
         }
     }
 }
@@ -68,6 +89,8 @@ pub struct Opportunity {
     pub route_type: RouteType,
     /// The underlying asset the route trades.
     pub underlying: String,
+    /// Which funding sign the route captures.
+    pub funding_direction: FundingDirection,
     /// The leg held long.
     pub long_leg: RouteLeg,
     /// The leg held short.
@@ -82,12 +105,20 @@ pub struct Opportunity {
     pub carry_cost: Decimal,
     /// Risk buffer deducted from the APR.
     pub risk_buffer: Decimal,
+    /// Gross funding APR required to break even (all costs).
+    pub break_even_funding: Decimal,
     /// Net APR after all costs.
     pub net_apr: Decimal,
     /// Expected net PnL (USD) over the holding period at full capacity.
     pub expected_net_pnl: Decimal,
     /// Estimated probability that net PnL is positive, in `[0, 1]`.
     pub profitability_probability: Decimal,
+    /// Entry basis between the legs, in basis points.
+    pub entry_basis_bps: Decimal,
+    /// Assumed leverage on each perpetual leg.
+    pub leverage: Decimal,
+    /// Capital (USD) tied up by the route at full capacity.
+    pub required_capital: Decimal,
     /// Depth-limited executable capacity (USD).
     pub available_capacity: Decimal,
     /// When funding next settles (earliest of the two legs).
@@ -120,7 +151,8 @@ impl Opportunity {
         let carry_cost = cost.carry_ratio;
         let risk_buffer = abs(gross) * cost.risk_buffer_ratio;
 
-        let net_apr = gross - entry_cost - exit_cost - carry_cost - risk_buffer;
+        let break_even_funding = entry_cost + exit_cost + carry_cost + risk_buffer;
+        let net_apr = gross - break_even_funding;
         let expected_net_pnl = available_capacity * net_apr * (cost.holding_days / Decimal::from(365));
 
         let confidence = (long_leg.forecast.direction_probability
@@ -134,6 +166,25 @@ impl Opportunity {
         };
         let profitability_probability =
             clamp_unit(confidence * (Decimal::new(5, 1) + Decimal::new(5, 1) * margin));
+
+        let entry_basis_bps =
+            abs(short_leg.forecast.premium - long_leg.forecast.premium) * Decimal::from(10_000);
+        let leverage = cost.leverage;
+        let leverage_capital = if leverage.is_zero() {
+            available_capacity
+        } else {
+            available_capacity / leverage
+        };
+        // Spot-perp ties up spot notional plus one perp margin; perp-perp ties up two perp margins.
+        let required_capital = match route_type {
+            RouteType::SpotPerp => available_capacity + leverage_capital,
+            RouteType::PerpPerp => leverage_capital * Decimal::from(2),
+        };
+        let funding_direction = if gross.is_sign_negative() {
+            FundingDirection::Negative
+        } else {
+            FundingDirection::Positive
+        };
 
         let next_funding_at = long_leg
             .forecast
@@ -151,6 +202,7 @@ impl Opportunity {
             route_id,
             route_type,
             underlying: underlying.to_owned(),
+            funding_direction,
             long_leg,
             short_leg,
             gross_funding_apr: gross,
@@ -158,28 +210,25 @@ impl Opportunity {
             exit_cost,
             carry_cost,
             risk_buffer,
+            break_even_funding,
             net_apr,
             expected_net_pnl,
             profitability_probability,
+            entry_basis_bps,
+            leverage,
+            required_capital,
             available_capacity,
             next_funding_at,
         }
     }
-
-    /// Whether the route clears the eligibility gates (positive net APR and
-    /// enough executable capacity).
-    #[must_use]
-    pub fn is_eligible(&self, cost: &CostModel) -> bool {
-        self.net_apr > Decimal::ZERO && self.available_capacity >= cost.min_required_notional
-    }
 }
 
-/// Drop ineligible routes and rank the rest by the PRODUCT_SPEC §4.5 key:
-/// `net_apr ↓, profitability_probability ↓, available_capacity ↓,
-/// next_funding_at ↑, route_id ↑`.
+/// Drop routes that fail the risk gates and rank the rest by the PRODUCT_SPEC
+/// §4.5 default key: `net_apr ↓, profitability_probability ↓,
+/// available_capacity ↓, next_funding_at ↑, route_id ↑`.
 #[must_use]
-pub fn rank(mut opportunities: Vec<Opportunity>, cost: &CostModel) -> Vec<Opportunity> {
-    opportunities.retain(|opportunity| opportunity.is_eligible(cost));
+pub fn rank(mut opportunities: Vec<Opportunity>, limits: &RiskLimits) -> Vec<Opportunity> {
+    opportunities.retain(|opportunity| limits.admits(opportunity));
     opportunities.sort_by(|a, b| {
         b.net_apr
             .cmp(&a.net_apr)
@@ -196,6 +245,7 @@ mod tests {
     use super::{CostModel, Opportunity, RouteLeg, rank};
     use crate::forecast::{ForecastConfig, forecast};
     use crate::market::{FundingObservation, InstrumentRef, RouteType, Venue};
+    use crate::risk::RiskLimits;
     use chrono::{TimeZone, Utc};
     use rust_decimal::Decimal;
 
@@ -252,35 +302,26 @@ mod tests {
     }
 
     #[test]
-    fn forecast_is_deterministic() {
-        let config = ForecastConfig::default();
-        let obs = observation(
-            Venue::Binance,
-            "BTC",
-            Decimal::new(1, 4),
-            Decimal::from(30_030),
-            Decimal::from(30_000),
-            Decimal::from(50_000),
-        );
-        let a = forecast(&obs, &config);
-        let b = forecast(&obs, &config);
-        assert_eq!(a.predicted_settlement_rate, b.predicted_settlement_rate);
-        assert_eq!(a.p10_rate, b.p10_rate);
-        assert_eq!(a.p90_rate, b.p90_rate);
-        assert!(a.p10_rate < a.p90_rate);
+    fn build_populates_detail_fields() {
+        let opp = opportunity(Decimal::new(1, 4), Decimal::new(9, 4), Decimal::from(100_000));
+        assert!(opp.break_even_funding > Decimal::ZERO);
+        assert!(opp.required_capital > Decimal::ZERO);
+        assert_eq!(opp.leverage, Decimal::from(2));
+        assert!(opp.entry_basis_bps >= Decimal::ZERO);
+        // net = gross - break_even
+        assert_eq!(opp.net_apr, opp.gross_funding_apr - opp.break_even_funding);
     }
 
     #[test]
     fn ranking_orders_by_net_apr_and_drops_ineligible() {
-        let cost = CostModel::default();
-        // A wide positive spread, a thin one, and a negative (ineligible) one.
+        let limits = RiskLimits::default();
         let strong = opportunity(Decimal::new(1, 4), Decimal::new(30, 4), Decimal::from(100_000));
         let weak = opportunity(Decimal::new(1, 4), Decimal::new(9, 4), Decimal::from(100_000));
         let losing = opportunity(Decimal::new(30, 4), Decimal::new(1, 4), Decimal::from(100_000));
         assert!(strong.net_apr > weak.net_apr);
-        assert!(!losing.is_eligible(&cost));
+        assert!(!limits.admits(&losing));
 
-        let ranked = rank(vec![weak.clone(), losing, strong.clone()], &cost);
+        let ranked = rank(vec![weak.clone(), losing, strong.clone()], &limits);
         assert_eq!(ranked.len(), 2);
         assert_eq!(ranked[0].route_id, strong.route_id);
         assert!(ranked[0].net_apr >= ranked[1].net_apr);
@@ -288,9 +329,9 @@ mod tests {
 
     #[test]
     fn capacity_gate_excludes_thin_routes() {
-        let cost = CostModel::default();
+        let limits = RiskLimits::default();
         let thin = opportunity(Decimal::new(1, 4), Decimal::new(30, 4), Decimal::from(500));
-        assert!(!thin.is_eligible(&cost));
-        assert!(rank(vec![thin], &cost).is_empty());
+        assert!(!limits.admits(&thin));
+        assert!(rank(vec![thin], &limits).is_empty());
     }
 }

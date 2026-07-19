@@ -1,4 +1,4 @@
-export const schemaVersion = "0.3.0" as const;
+export const schemaVersion = "0.4.0" as const;
 
 export type SocialProvider = "APPLE" | "GOOGLE";
 export type AuthNextState =
@@ -96,11 +96,29 @@ export interface MfaEnrollment {
 
 export type Venue = "BINANCE" | "BYBIT" | "OKX" | "DYDX" | "HYPERLIQUID";
 export type RouteType = "SPOT_PERP" | "PERP_PERP";
+export type FundingDirection = "POSITIVE" | "NEGATIVE";
+export type OpportunitySort =
+  | "default"
+  | "net_apr"
+  | "next_funding"
+  | "probability"
+  | "capacity"
+  | "expected_pnl";
+
+export interface OpportunityLeg {
+  readonly venue: Venue;
+  readonly predicted_rate: number;
+  readonly p10_rate: number;
+  readonly p90_rate: number;
+  readonly direction_probability: number;
+  readonly next_funding_at: string;
+}
 
 export interface Opportunity {
   readonly route_id: string;
   readonly route_type: RouteType;
   readonly underlying: string;
+  readonly funding_direction: FundingDirection;
   readonly long_venue: Venue;
   readonly short_venue: Venue;
   readonly gross_funding_apr: number;
@@ -108,10 +126,20 @@ export interface Opportunity {
   readonly exit_cost: number;
   readonly carry_cost: number;
   readonly risk_buffer: number;
+  readonly break_even_funding: number;
   readonly net_apr: number;
   readonly expected_net_pnl: number;
   readonly profitability_probability: number;
+  readonly entry_basis_bps: number;
+  readonly leverage: number;
+  readonly required_capital: number;
   readonly available_capacity: number;
+  readonly reserved_notional: number;
+  readonly reserved_capital: number;
+  readonly capital_fraction: number;
+  readonly within_limits: boolean;
+  readonly long_leg: OpportunityLeg;
+  readonly short_leg: OpportunityLeg;
   readonly next_funding_at: string;
 }
 
@@ -121,11 +149,29 @@ export interface OpportunityScan {
   readonly opportunities: readonly Opportunity[];
 }
 
+export interface RiskLimits {
+  readonly reference_equity: number;
+  readonly max_portfolio_fraction: number;
+  readonly max_opportunity_fraction: number;
+  readonly max_underlying_fraction: number;
+  readonly max_venue_fraction: number;
+  readonly max_leverage: number;
+  readonly min_profitability: number;
+  readonly min_net_apr: number;
+  readonly max_entry_basis_bps: number;
+  readonly min_depth_multiple: number;
+}
+
 export interface OpportunityFilter {
   readonly route_type?: RouteType;
   readonly venue?: Venue;
+  readonly underlying?: string;
+  readonly funding_direction?: FundingDirection;
   readonly min_net_apr?: number;
   readonly min_probability?: number;
+  readonly max_basis_bps?: number;
+  readonly max_time_to_funding_secs?: number;
+  readonly sort?: OpportunitySort;
 }
 
 export interface PerpetoClientOptions {
@@ -170,6 +216,14 @@ export function isOpportunityScan(value: unknown): value is OpportunityScan {
   return typeof scan.scanned_at === "string" &&
     typeof scan.model_version === "string" &&
     Array.isArray(scan.opportunities);
+}
+
+export function isOpportunity(value: unknown): value is Opportunity {
+  if (typeof value !== "object" || value === null) return false;
+  const opportunity = value as Record<string, unknown>;
+  return typeof opportunity.route_id === "string" &&
+    typeof opportunity.net_apr === "number" &&
+    typeof opportunity.long_leg === "object" && opportunity.long_leg !== null;
 }
 
 export class PerpetoClient {
@@ -348,5 +402,19 @@ export class PerpetoClient {
       throw new Error("Perpeto opportunity scan contract is incompatible");
     }
     return payload;
+  }
+
+  public async getOpportunity(routeId: string): Promise<Opportunity> {
+    const payload = await this.#request<unknown>(
+      `/api/v1/opportunities/${encodeURIComponent(routeId)}`,
+    );
+    if (!isOpportunity(payload)) {
+      throw new Error("Perpeto opportunity contract is incompatible");
+    }
+    return payload;
+  }
+
+  public getRiskLimits(): Promise<RiskLimits> {
+    return this.#request("/api/v1/risk/limits");
   }
 }
