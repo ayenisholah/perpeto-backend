@@ -8,6 +8,7 @@ import {
   isHealth,
   isOpportunity,
   isOpportunityScan,
+  isPosition,
 } from "../dist/index.js";
 
 const paperHealth = {
@@ -282,5 +283,100 @@ describe("opportunity scan contract", () => {
       fetchImplementation: async () => Response.json(limits),
     });
     assert.deepEqual(await client.getRiskLimits(), limits);
+  });
+});
+
+describe("paper position contract", () => {
+  const position = {
+    id: "0190abcd-1111-7000-8000-000000000001",
+    route_id: "PERP_PERP:BINANCE>BYBIT:BTC",
+    underlying: "BTC",
+    route_type: "PERP_PERP",
+    funding_direction: "POSITIVE",
+    state: "OPEN",
+    target_notional: 100000,
+    reserved_capital: 75000,
+    residual_delta_usd: 90,
+    opened_at: "2026-07-19T00:00:00Z",
+    long_leg: {
+      venue: "BINANCE",
+      symbol: "BTCUSDT",
+      is_long: true,
+      target_qty: 3.333,
+      filled_qty: 3.333,
+      avg_fill_price: 30009,
+      fees: 50,
+      orders: [
+        { client_order_id: "fa-0190abcd-open-long-1", side: "BUY", target_qty: 3.333, price_cap: 30009, time_in_force: "IOC" },
+      ],
+      fills: [
+        { client_order_id: "fa-0190abcd-open-long-1", qty: 3.333, price: 30009, fee: 50 },
+      ],
+    },
+    short_leg: {
+      venue: "BYBIT",
+      symbol: "BTCUSDT",
+      is_long: false,
+      target_qty: 3.33,
+      filled_qty: 3.33,
+      avg_fill_price: 30021,
+      fees: 50,
+      orders: [
+        { client_order_id: "fa-0190abcd-open-short-1", side: "SELL", target_qty: 3.33, price_cap: 30021, time_in_force: "IOC" },
+      ],
+      fills: [
+        { client_order_id: "fa-0190abcd-open-short-1", qty: 3.33, price: 30021, fee: 50 },
+      ],
+    },
+  };
+
+  it("validates the position shape", () => {
+    assert.equal(isPosition(position), true);
+    assert.equal(isPosition({ id: "x" }), false);
+    assert.equal(isPosition(null), false);
+  });
+
+  it("opens a position with an idempotency key header", async () => {
+    let requestedUrl;
+    let idempotencyKey;
+    const client = new PerpetoClient({
+      baseUrl: "https://perpeto.test",
+      getAccessToken: () => "ephemeral",
+      fetchImplementation: async (url, init) => {
+        requestedUrl = String(url);
+        idempotencyKey = new Headers(init.headers).get("Idempotency-Key");
+        return Response.json(position, { status: 201 });
+      },
+    });
+
+    const opened = await client.createPosition({ route_id: position.route_id }, "idem-42");
+    assert.equal(opened.state, "OPEN");
+    assert.equal(idempotencyKey, "idem-42");
+    assert.match(requestedUrl, /\/api\/v1\/positions$/u);
+  });
+
+  it("lists and fetches positions", async () => {
+    const client = new PerpetoClient({
+      baseUrl: "https://perpeto.test",
+      getAccessToken: () => "ephemeral",
+      fetchImplementation: async (url) =>
+        String(url).endsWith("/positions")
+          ? Response.json({ positions: [position] })
+          : Response.json(position),
+    });
+
+    const list = await client.listPositions();
+    assert.equal(list.positions[0].route_id, position.route_id);
+    const fetched = await client.getPosition(position.id);
+    assert.equal(fetched.id, position.id);
+  });
+
+  it("fails closed on an incompatible position payload", async () => {
+    const client = new PerpetoClient({
+      baseUrl: "https://perpeto.test",
+      getAccessToken: () => "ephemeral",
+      fetchImplementation: async () => Response.json({ id: 5 }),
+    });
+    await assert.rejects(client.getPosition("x"), /contract is incompatible/u);
   });
 });

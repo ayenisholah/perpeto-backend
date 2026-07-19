@@ -1,4 +1,4 @@
-export const schemaVersion = "0.4.0" as const;
+export const schemaVersion = "0.5.0" as const;
 
 export type SocialProvider = "APPLE" | "GOOGLE";
 export type AuthNextState =
@@ -160,6 +160,68 @@ export interface RiskLimits {
   readonly min_net_apr: number;
   readonly max_entry_basis_bps: number;
   readonly min_depth_multiple: number;
+  readonly max_unmatched_usd: number;
+}
+
+export type PositionState =
+  | "QUALIFIED"
+  | "RESERVED"
+  | "OPENING"
+  | "OPEN"
+  | "OPEN_FAILED"
+  | "REHEDGING"
+  | "CLOSING"
+  | "CLOSED";
+
+export interface PaperOrder {
+  readonly client_order_id: string;
+  readonly side: "BUY" | "SELL";
+  readonly target_qty: number;
+  readonly price_cap: number;
+  readonly time_in_force: string;
+}
+
+export interface PaperFill {
+  readonly client_order_id: string;
+  readonly qty: number;
+  readonly price: number;
+  readonly fee: number;
+}
+
+export interface PositionLeg {
+  readonly venue: Venue;
+  readonly symbol: string;
+  readonly is_long: boolean;
+  readonly target_qty: number;
+  readonly filled_qty: number;
+  readonly avg_fill_price: number;
+  readonly fees: number;
+  readonly orders: readonly PaperOrder[];
+  readonly fills: readonly PaperFill[];
+}
+
+export interface Position {
+  readonly id: string;
+  readonly route_id: string;
+  readonly underlying: string;
+  readonly route_type: RouteType;
+  readonly funding_direction: FundingDirection;
+  readonly state: PositionState;
+  readonly target_notional: number;
+  readonly reserved_capital: number;
+  readonly residual_delta_usd: number;
+  readonly opened_at: string;
+  readonly long_leg: PositionLeg;
+  readonly short_leg: PositionLeg;
+}
+
+export interface PositionList {
+  readonly positions: readonly Position[];
+}
+
+export interface OpenPositionRequest {
+  readonly route_id: string;
+  readonly notional?: number;
 }
 
 export interface OpportunityFilter {
@@ -224,6 +286,15 @@ export function isOpportunity(value: unknown): value is Opportunity {
   return typeof opportunity.route_id === "string" &&
     typeof opportunity.net_apr === "number" &&
     typeof opportunity.long_leg === "object" && opportunity.long_leg !== null;
+}
+
+export function isPosition(value: unknown): value is Position {
+  if (typeof value !== "object" || value === null) return false;
+  const position = value as Record<string, unknown>;
+  return typeof position.id === "string" &&
+    typeof position.route_id === "string" &&
+    typeof position.state === "string" &&
+    typeof position.long_leg === "object" && position.long_leg !== null;
 }
 
 export class PerpetoClient {
@@ -417,4 +488,37 @@ export class PerpetoClient {
   public getRiskLimits(): Promise<RiskLimits> {
     return this.#request("/api/v1/risk/limits");
   }
+
+  public async createPosition(
+    request: OpenPositionRequest,
+    idempotencyKey: string = randomIdempotencyKey(),
+  ): Promise<Position> {
+    const payload = await this.#request<unknown>("/api/v1/positions", {
+      method: "POST",
+      headers: { "Idempotency-Key": idempotencyKey },
+      body: JSON.stringify(request),
+    });
+    if (!isPosition(payload)) {
+      throw new Error("Perpeto position contract is incompatible");
+    }
+    return payload;
+  }
+
+  public listPositions(): Promise<PositionList> {
+    return this.#request("/api/v1/positions");
+  }
+
+  public async getPosition(id: string): Promise<Position> {
+    const payload = await this.#request<unknown>(`/api/v1/positions/${encodeURIComponent(id)}`);
+    if (!isPosition(payload)) {
+      throw new Error("Perpeto position contract is incompatible");
+    }
+    return payload;
+  }
+}
+
+function randomIdempotencyKey(): string {
+  const cryptoRef = (globalThis as { crypto?: { randomUUID?: () => string } }).crypto;
+  if (cryptoRef?.randomUUID !== undefined) return cryptoRef.randomUUID();
+  return `idem-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 }

@@ -659,9 +659,12 @@ name = "funding-arb-api"
 version = "0.1.0"
 dependencies = [
  "axum",
+ "chrono",
  "funding-arb-auth-service",
  "funding-arb-domain",
+ "funding-arb-execution-service",
  "funding-arb-scanner-service",
+ "rust_decimal",
  "serde",
  "serde_json",
  "sqlx",
@@ -714,6 +717,22 @@ dependencies = [
  "sqlx",
  "tokio",
  "tracing",
+]
+
+[[package]]
+name = "funding-arb-execution-service"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "funding-arb-domain",
+ "funding-arb-scanner-service",
+ "rust_decimal",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "tokio",
+ "tracing",
+ "uuid",
 ]
 
 [[package]]

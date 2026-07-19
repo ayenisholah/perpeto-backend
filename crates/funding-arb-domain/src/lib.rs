@@ -9,6 +9,7 @@ pub mod auth;
 pub mod forecast;
 pub mod market;
 pub mod opportunity;
+pub mod position;
 pub mod risk;
 
 /// Deployment trading mode. The initial scaffold supports paper mode only.

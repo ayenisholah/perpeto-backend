@@ -1,7 +1,7 @@
 //! HTTP handlers translating requests into auth-service calls.
 
 use axum::extract::{Path, Query, State};
-use axum::http::StatusCode;
+use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::{Extension, Json};
 use funding_arb_auth_service::AuthError;
@@ -11,9 +11,13 @@ use funding_arb_auth_service::dto::{
 };
 use funding_arb_auth_service::service::CallerContext;
 use funding_arb_domain::risk::RiskLimits;
+use funding_arb_execution_service::{OpenError, OpenPositionRequest, PositionDto, PositionListDto};
 use funding_arb_scanner_service::{OpportunityScanDto, RiskLimitsDto};
+use rust_decimal::Decimal;
+use rust_decimal::prelude::FromPrimitive;
 use serde::Deserialize;
 use chrono::{DateTime, Utc};
+use uuid::Uuid;
 
 use crate::problem::ApiError;
 use crate::state::AppState;
@@ -328,4 +332,109 @@ pub async fn get_risk_limits(
 ) -> Result<impl IntoResponse, ApiError> {
     caller.require_active()?;
     Ok(Json(RiskLimitsDto::from_domain(&RiskLimits::default())))
+}
+
+fn not_found(title: &str, code: &str) -> Response {
+    (
+        StatusCode::NOT_FOUND,
+        [(axum::http::header::CONTENT_TYPE, "application/problem+json")],
+        format!(r#"{{"type":"about:blank","title":"{title}","status":404,"code":"{code}"}}"#),
+    )
+        .into_response()
+}
+
+/// `POST /api/v1/positions` — open a paper position from a ranked route.
+///
+/// Requires an active OWNER or TRADER. Honors the `Idempotency-Key` header: a
+/// repeat with the same key returns the existing position instead of opening a
+/// duplicate.
+pub async fn create_position(
+    State(state): State<AppState>,
+    Extension(caller): Extension<CallerContext>,
+    headers: HeaderMap,
+    Json(request): Json<OpenPositionRequest>,
+) -> Result<Response, ApiError> {
+    caller.require_active()?;
+    if !caller.can_trade() {
+        return Err(AuthError::Forbidden.into());
+    }
+
+    let supplied_key = headers
+        .get("idempotency-key")
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_owned);
+
+    if let Some(key) = supplied_key.as_deref()
+        && let Some(existing) = state
+            .positions
+            .get_by_idempotency_key(key)
+            .await
+            .map_err(internal)?
+    {
+        return Ok((StatusCode::OK, Json(existing)).into_response());
+    }
+
+    let key = supplied_key.unwrap_or_else(|| Uuid::new_v4().to_string());
+    let notional = request.notional.and_then(Decimal::from_f64);
+    let position = match state
+        .execution
+        .open(&request.route_id, notional, key.clone(), Utc::now())
+    {
+        Ok(position) => position,
+        Err(OpenError::RouteNotFound | OpenError::LegNotFound) => {
+            return Ok(not_found("Route not open-eligible", "ROUTE_NOT_FOUND"));
+        }
+        Err(error @ OpenError::Fixture(_)) => {
+            return Err(ApiError(AuthError::Internal(error.to_string())));
+        }
+    };
+
+    let dto = PositionDto::from_domain(&position);
+    match state.positions.create(&dto, &key).await {
+        Ok(()) => Ok((StatusCode::CREATED, Json(dto)).into_response()),
+        // Lost an idempotency race: return the position the other request stored.
+        Err(error)
+            if error
+                .as_database_error()
+                .is_some_and(|db| db.is_unique_violation()) =>
+        {
+            match state
+                .positions
+                .get_by_idempotency_key(&key)
+                .await
+                .map_err(internal)?
+            {
+                Some(existing) => Ok((StatusCode::OK, Json(existing)).into_response()),
+                None => Err(internal(error)),
+            }
+        }
+        Err(error) => Err(internal(error)),
+    }
+}
+
+/// `GET /api/v1/positions` — list opened paper positions (newest first).
+pub async fn list_positions(
+    State(state): State<AppState>,
+    Extension(caller): Extension<CallerContext>,
+) -> Result<impl IntoResponse, ApiError> {
+    caller.require_active()?;
+    let positions = state.positions.list().await.map_err(internal)?;
+    Ok(Json(PositionListDto { positions }))
+}
+
+/// `GET /api/v1/positions/{id}` — one paper position by id.
+pub async fn get_position(
+    State(state): State<AppState>,
+    Extension(caller): Extension<CallerContext>,
+    Path(id): Path<String>,
+) -> Result<Response, ApiError> {
+    caller.require_active()?;
+    match state.positions.get(&id).await.map_err(internal)? {
+        Some(position) => Ok(Json(position).into_response()),
+        None => Ok(not_found("Position not found", "POSITION_NOT_FOUND")),
+    }
+}
+
+fn internal(error: sqlx::Error) -> ApiError {
+    ApiError(AuthError::Internal(error.to_string()))
 }

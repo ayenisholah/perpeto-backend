@@ -169,6 +169,8 @@ pub struct RiskLimitsDto {
     pub max_entry_basis_bps: f64,
     /// Minimum depth inside the slippage cap, as a multiple of leg notional.
     pub min_depth_multiple: f64,
+    /// Effective cap on unmatched (residual) two-leg exposure, in USD.
+    pub max_unmatched_usd: f64,
 }
 
 impl RiskLimitsDto {
@@ -186,6 +188,7 @@ impl RiskLimitsDto {
             min_net_apr: as_f64(limits.min_net_apr),
             max_entry_basis_bps: as_f64(limits.max_entry_basis_bps),
             min_depth_multiple: as_f64(limits.min_depth_multiple),
+            max_unmatched_usd: as_f64(limits.max_unmatched()),
         }
     }
 }

@@ -2,7 +2,7 @@
 
 ## Snapshot
 
-- Milestone: M2 Slice 2 — opportunity detail, full filters, and risk reservations (M1A auth + Slice 1 scanner complete)
+- Milestone: M2 Slice 3 — paper position open lifecycle (M1A auth + Slice 1 scanner + Slice 2 detail/filters/risk complete)
 - Overall state: In progress
 - Last verified: 2026-07-19
 
@@ -19,11 +19,12 @@
 - Added the M1A PostgreSQL schema, authentication invariant model/tests, OpenAPI 0.2.0 contract, and typed TypeScript client.
 - Started M2 Slice 1: `funding-arb-domain` market/forecast/opportunity types with a transparent non-ML forecaster and PRODUCT_SPEC §4.5 ranking (unit-tested); a `funding-arb-scanner-service` crate driven by deterministic fixtures with Postgres persistence (`0003_market_scan.sql`); the engine as a paper scan loop; a read-only `GET /api/v1/opportunities` endpoint; and the additive OpenAPI 0.3.0 / `@ayenisholah/perpeto-api-client@0.3.0` contract with a mobile Scanner screen.
 - Started M2 Slice 2: richer opportunities (break-even funding, required capital, entry basis, leverage, per-leg forecast) and a `funding-arb-domain::risk` `RiskLimits` model (§6.2 safe-starter defaults) applied as scanner eligibility gates with per-opportunity paper reservations; the full §4.6 filter/sort set, `GET /api/v1/opportunities/{route_id}` detail, and `GET /api/v1/risk/limits`; OpenAPI 0.4.0 / client `0.4.0`; and a mobile filter/sort control, opportunity-detail sheet, and risk-limits card.
+- Started M2 Slice 3: a `funding-arb-domain::position` open-path state machine (§5.2 `QUALIFIED→RESERVED→OPENING→OPEN|OPEN_FAILED`) and a deterministic paper-fill simulator (`open_paper`) that sizes both legs, records order intents/fills, and gates residual delta against the new §6.2 unmatched-exposure cap on `RiskLimits`; a `funding-arb-execution-service` crate (`ExecutionService::open` reusing the deterministic scanner/fixtures, `PositionsRepo`, `0005_paper_positions.sql`); RBAC-gated `POST /api/v1/positions` (OWNER/TRADER, `Idempotency-Key`-deduped), `GET /api/v1/positions`, and `GET /api/v1/positions/{id}`; OpenAPI 0.5.0 / client `0.5.0`; and a mobile Positions screen plus an "Open paper position" action on the opportunity detail sheet.
 
 ## Not completed
 
 - The social-auth runtime adapters are implemented and deployed (`funding-arb-auth-service` + `axum` API). The shared v1 backend runs with `PERPETO_OPEN_REGISTRATION` enabled (DEC-0009), so new sign-ins get immediate full access; per-user backend isolation and the restored gated-approval/MFA flow are the v2 objective.
-- The scanner produces opportunities from deterministic fixtures only; no venue connector, risk engine, execution engine, ledger, or production-ready trading API exists.
+- The scanner produces opportunities from deterministic fixtures only; no venue connector, ledger, or production-ready trading API exists. Paper positions open through a deterministic simulator (no venue connectivity); funding capture, close, re-hedge, and partial-fill/unknown-outcome recovery are deferred to Slice 4.
 - No venue has any certification evidence.
 - Live trading is unavailable by design.
 
@@ -36,4 +37,4 @@
 
 ## Next verified task
 
-Complete M2 Slice 1: add the Postgres scan→read integration test, run the compose stack end-to-end (`migrate` + `engine` + `api`) against `GET /api/v1/opportunities`, and publish `@ayenisholah/perpeto-api-client@0.3.0`. Then begin Slice 2 (opportunity detail, filters, and risk reservations).
+Verify M2 Slice 3 in CI (workspace compile/clippy/tests, including the Postgres `positions` round-trip/idempotency tests), run the compose stack end-to-end (`migrate` + `engine` + `api`): `GET /opportunities` → `POST /positions` with an `Idempotency-Key` → `201`, repeat → same position, `GET /positions` shows it `OPEN`, and a non-trader gets `403`. Publish `@ayenisholah/perpeto-api-client@0.5.0`. Then begin Slice 4 (funding capture, close, re-hedge, and recovery).

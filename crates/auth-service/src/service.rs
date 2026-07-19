@@ -45,6 +45,14 @@ impl CallerContext {
         self.roles.iter().any(|role| role == "OWNER")
     }
 
+    /// Whether the caller may open/manage trading positions (owner or trader).
+    #[must_use]
+    pub fn can_trade(&self) -> bool {
+        self.roles
+            .iter()
+            .any(|role| role == "OWNER" || role == "TRADER")
+    }
+
     /// Require the account to be fully active.
     ///
     /// # Errors

@@ -35,6 +35,10 @@ pub struct RiskLimits {
     pub min_depth_multiple: Decimal,
     /// Minimum executable notional for a route to be eligible.
     pub min_reserved_notional: Decimal,
+    /// Absolute cap on unmatched (residual) two-leg exposure, in USD.
+    pub max_unmatched_usd: Decimal,
+    /// Cap on unmatched exposure as a fraction of reference equity.
+    pub max_unmatched_fraction: Decimal,
 }
 
 impl Default for RiskLimits {
@@ -51,6 +55,8 @@ impl Default for RiskLimits {
             max_entry_basis_bps: Decimal::from(100),       // 100 bps
             min_depth_multiple: Decimal::from(5),          // 5x
             min_reserved_notional: Decimal::from(1_000),
+            max_unmatched_usd: Decimal::from(1_000),       // USD 1,000
+            max_unmatched_fraction: Decimal::new(5, 3),    // 0.5% of equity
         }
     }
 }
@@ -77,6 +83,13 @@ impl RiskLimits {
             && opportunity.entry_basis_bps <= self.max_entry_basis_bps
             && opportunity.leverage <= self.max_leverage
             && opportunity.available_capacity >= self.min_reserved_notional
+    }
+
+    /// The effective unmatched-exposure cap: the lesser of the absolute USD cap
+    /// and the equity-fraction cap (PRODUCT_SPEC §6.2).
+    #[must_use]
+    pub fn max_unmatched(&self) -> Decimal {
+        (self.reference_equity * self.max_unmatched_fraction).min(self.max_unmatched_usd)
     }
 
     /// Compute the paper reservation and limit status for an opportunity.

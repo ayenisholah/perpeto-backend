@@ -32,6 +32,11 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/v1/opportunities", get(handlers::list_opportunities))
         .route("/api/v1/opportunities/{route_id}", get(handlers::get_opportunity))
         .route("/api/v1/risk/limits", get(handlers::get_risk_limits))
+        .route(
+            "/api/v1/positions",
+            get(handlers::list_positions).post(handlers::create_position),
+        )
+        .route("/api/v1/positions/{id}", get(handlers::get_position))
         .layer(middleware::from_fn_with_state(state.clone(), require_auth));
 
     let public = Router::new()

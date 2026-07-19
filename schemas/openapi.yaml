@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Perpeto Control API
-  version: 0.4.0
+  version: 0.5.0
   description: >-
     M1A social identity, MFA, and secure-session contract plus the M2 read-only
     paper opportunity scanner. Trade execution remains unavailable.
@@ -33,6 +33,8 @@ tags:
     description: Current-user status and privacy-preserving account deletion.
   - name: Opportunities
     description: Read-only ranked funding-arbitrage opportunities from the deterministic paper scanner.
+  - name: Positions
+    description: Opening and monitoring coordinated paper arbitrage positions (no live trading).
   - name: Provider notifications
     description: Signed, idempotent identity-provider account-change callbacks.
 paths:
@@ -468,6 +470,72 @@ paths:
               schema: { $ref: "#/components/schemas/RiskLimits" }
         "401": { $ref: "#/components/responses/ProblemResponse" }
         "403": { $ref: "#/components/responses/ProblemResponse" }
+  /api/v1/positions:
+    get:
+      tags: [Positions]
+      summary: List opened paper positions (newest first)
+      operationId: listPositions
+      responses:
+        "200":
+          description: The opened paper positions.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PositionList" }
+        "401": { $ref: "#/components/responses/ProblemResponse" }
+        "403": { $ref: "#/components/responses/ProblemResponse" }
+    post:
+      tags: [Positions]
+      summary: Open a paper position from a ranked route
+      description: >-
+        Requires an active OWNER or TRADER. Sizes each leg to the requested
+        notional (defaulting to the route's risk reservation) and simulates a
+        deterministic paired taker fill. Send an Idempotency-Key header to make
+        the open safe to retry; a repeat with the same key returns the existing
+        position with a 200 rather than opening a duplicate.
+      operationId: createPosition
+      parameters:
+        - in: header
+          name: Idempotency-Key
+          required: false
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/OpenPositionRequest" }
+      responses:
+        "200":
+          description: The existing position for a repeated Idempotency-Key.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Position" }
+        "201":
+          description: The newly opened paper position.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Position" }
+        "401": { $ref: "#/components/responses/ProblemResponse" }
+        "403": { $ref: "#/components/responses/ProblemResponse" }
+        "404": { $ref: "#/components/responses/ProblemResponse" }
+  /api/v1/positions/{id}:
+    get:
+      tags: [Positions]
+      summary: Fetch one opened paper position by id
+      operationId: getPosition
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: The paper position.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Position" }
+        "401": { $ref: "#/components/responses/ProblemResponse" }
+        "403": { $ref: "#/components/responses/ProblemResponse" }
+        "404": { $ref: "#/components/responses/ProblemResponse" }
   /api/v1/auth/apple/notifications:
     post:
       tags: [Provider notifications]
@@ -567,6 +635,7 @@ components:
         - min_net_apr
         - max_entry_basis_bps
         - min_depth_multiple
+        - max_unmatched_usd
       properties:
         reference_equity: { type: number }
         max_portfolio_fraction: { type: number }
@@ -578,6 +647,7 @@ components:
         min_net_apr: { type: number }
         max_entry_basis_bps: { type: number }
         min_depth_multiple: { type: number }
+        max_unmatched_usd: { type: number }
     Opportunity:
       type: object
       additionalProperties: false
@@ -647,6 +717,92 @@ components:
         opportunities:
           type: array
           items: { $ref: "#/components/schemas/Opportunity" }
+    PositionState:
+      type: string
+      enum: [QUALIFIED, RESERVED, OPENING, OPEN, OPEN_FAILED, REHEDGING, CLOSING, CLOSED]
+    OpenPositionRequest:
+      type: object
+      additionalProperties: false
+      required: [route_id]
+      properties:
+        route_id: { type: string }
+        notional:
+          type: number
+          description: Notional (USD) to size each leg to; defaults to the reservation.
+    PaperOrder:
+      type: object
+      additionalProperties: false
+      required: [client_order_id, side, target_qty, price_cap, time_in_force]
+      properties:
+        client_order_id: { type: string }
+        side: { type: string, enum: [BUY, SELL] }
+        target_qty: { type: number }
+        price_cap: { type: number }
+        time_in_force: { type: string }
+    PaperFill:
+      type: object
+      additionalProperties: false
+      required: [client_order_id, qty, price, fee]
+      properties:
+        client_order_id: { type: string }
+        qty: { type: number }
+        price: { type: number }
+        fee: { type: number }
+    PositionLeg:
+      type: object
+      additionalProperties: false
+      required: [venue, symbol, is_long, target_qty, filled_qty, avg_fill_price, fees, orders, fills]
+      properties:
+        venue: { $ref: "#/components/schemas/Venue" }
+        symbol: { type: string }
+        is_long: { type: boolean }
+        target_qty: { type: number }
+        filled_qty: { type: number }
+        avg_fill_price: { type: number }
+        fees: { type: number }
+        orders:
+          type: array
+          items: { $ref: "#/components/schemas/PaperOrder" }
+        fills:
+          type: array
+          items: { $ref: "#/components/schemas/PaperFill" }
+    Position:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - route_id
+        - underlying
+        - route_type
+        - funding_direction
+        - state
+        - target_notional
+        - reserved_capital
+        - residual_delta_usd
+        - opened_at
+        - long_leg
+        - short_leg
+      properties:
+        id: { type: string, format: uuid }
+        route_id: { type: string }
+        underlying: { type: string }
+        route_type: { $ref: "#/components/schemas/RouteType" }
+        funding_direction: { $ref: "#/components/schemas/FundingDirection" }
+        state: { $ref: "#/components/schemas/PositionState" }
+        target_notional: { type: number }
+        reserved_capital: { type: number }
+        residual_delta_usd: { type: number }
+        opened_at: { type: string, format: date-time }
+        long_leg: { $ref: "#/components/schemas/PositionLeg" }
+        short_leg: { $ref: "#/components/schemas/PositionLeg" }
+    PositionList:
+      type: object
+      additionalProperties: false
+      required: [positions]
+      properties:
+        positions:
+          type: array
+          items: { $ref: "#/components/schemas/Position" }
     CreateSocialChallengeRequest:
       type: object
       additionalProperties: false

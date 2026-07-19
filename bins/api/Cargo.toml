@@ -9,8 +9,10 @@ rust-version.workspace = true
 funding-arb-domain = { path = "../../crates/funding-arb-domain" }
 funding-arb-auth-service = { path = "../../crates/auth-service" }
 funding-arb-scanner-service = { path = "../../crates/scanner-service" }
+funding-arb-execution-service = { path = "../../crates/execution-service" }
 axum.workspace = true
 chrono.workspace = true
+rust_decimal.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sqlx.workspace = true
