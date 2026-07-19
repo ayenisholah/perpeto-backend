@@ -1,7 +1,13 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { PerpetoApiError, PerpetoClient, isAuthTransition, isHealth } from "../dist/index.js";
+import {
+  PerpetoApiError,
+  PerpetoClient,
+  isAuthTransition,
+  isHealth,
+  isOpportunityScan,
+} from "../dist/index.js";
 
 const paperHealth = {
   status: "OK",
@@ -151,5 +157,66 @@ describe("social authentication contract", () => {
       () => client.refresh("x".repeat(43), "device"),
       (error) => error instanceof PerpetoApiError && error.code === "REFRESH_TOKEN_REUSE",
     );
+  });
+});
+
+describe("opportunity scan contract", () => {
+  const scan = {
+    scanned_at: "2026-07-19T00:00:00Z",
+    model_version: "funding-forecast-v1",
+    opportunities: [
+      {
+        route_id: "PERP_PERP:BINANCE>BYBIT:BTC",
+        route_type: "PERP_PERP",
+        underlying: "BTC",
+        long_venue: "BINANCE",
+        short_venue: "BYBIT",
+        gross_funding_apr: 0.36,
+        entry_cost: 0.04,
+        exit_cost: 0.04,
+        carry_cost: 0.02,
+        risk_buffer: 0.036,
+        net_apr: 0.22,
+        expected_net_pnl: 1180.5,
+        profitability_probability: 0.72,
+        available_capacity: 140000,
+        next_funding_at: "2026-07-19T08:00:00Z",
+      },
+    ],
+  };
+
+  it("validates the scan shape", () => {
+    assert.equal(isOpportunityScan(scan), true);
+    assert.equal(isOpportunityScan({ scanned_at: "x", model_version: "y" }), false);
+    assert.equal(isOpportunityScan(null), false);
+  });
+
+  it("sends bearer auth and encodes filters into the query", async () => {
+    let requestedUrl;
+    let authorization;
+    const client = new PerpetoClient({
+      baseUrl: "https://perpeto.test",
+      getAccessToken: () => "ephemeral",
+      fetchImplementation: async (url, init) => {
+        requestedUrl = String(url);
+        authorization = new Headers(init.headers).get("Authorization");
+        return Response.json(scan);
+      },
+    });
+
+    const result = await client.listOpportunities({ route_type: "PERP_PERP", min_net_apr: 0.1 });
+    assert.equal(result.opportunities[0].route_id, "PERP_PERP:BINANCE>BYBIT:BTC");
+    assert.equal(authorization, "Bearer ephemeral");
+    assert.match(requestedUrl, /route_type=PERP_PERP/u);
+    assert.match(requestedUrl, /min_net_apr=0\.1/u);
+  });
+
+  it("fails closed on an incompatible scan payload", async () => {
+    const client = new PerpetoClient({
+      baseUrl: "https://perpeto.test",
+      getAccessToken: () => "ephemeral",
+      fetchImplementation: async () => Response.json({ scanned_at: 5 }),
+    });
+    await assert.rejects(client.listOpportunities(), /contract is incompatible/u);
   });
 });

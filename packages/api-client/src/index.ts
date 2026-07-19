@@ -1,4 +1,4 @@
-export const schemaVersion = "0.2.0" as const;
+export const schemaVersion = "0.3.0" as const;
 
 export type SocialProvider = "APPLE" | "GOOGLE";
 export type AuthNextState =
@@ -94,6 +94,40 @@ export interface MfaEnrollment {
   readonly otpauth_uri: string;
 }
 
+export type Venue = "BINANCE" | "BYBIT" | "OKX" | "DYDX" | "HYPERLIQUID";
+export type RouteType = "SPOT_PERP" | "PERP_PERP";
+
+export interface Opportunity {
+  readonly route_id: string;
+  readonly route_type: RouteType;
+  readonly underlying: string;
+  readonly long_venue: Venue;
+  readonly short_venue: Venue;
+  readonly gross_funding_apr: number;
+  readonly entry_cost: number;
+  readonly exit_cost: number;
+  readonly carry_cost: number;
+  readonly risk_buffer: number;
+  readonly net_apr: number;
+  readonly expected_net_pnl: number;
+  readonly profitability_probability: number;
+  readonly available_capacity: number;
+  readonly next_funding_at: string;
+}
+
+export interface OpportunityScan {
+  readonly scanned_at: string;
+  readonly model_version: string;
+  readonly opportunities: readonly Opportunity[];
+}
+
+export interface OpportunityFilter {
+  readonly route_type?: RouteType;
+  readonly venue?: Venue;
+  readonly min_net_apr?: number;
+  readonly min_probability?: number;
+}
+
 export interface PerpetoClientOptions {
   readonly baseUrl: string;
   readonly fetchImplementation?: typeof fetch;
@@ -128,6 +162,14 @@ export function isAuthTransition(value: unknown): value is AuthTransition {
     "AUTHENTICATED",
   ].includes(String(transition.next)) && typeof transition.user === "object" &&
     transition.user !== null;
+}
+
+export function isOpportunityScan(value: unknown): value is OpportunityScan {
+  if (typeof value !== "object" || value === null) return false;
+  const scan = value as Record<string, unknown>;
+  return typeof scan.scanned_at === "string" &&
+    typeof scan.model_version === "string" &&
+    Array.isArray(scan.opportunities);
 }
 
 export class PerpetoClient {
@@ -294,5 +336,17 @@ export class PerpetoClient {
 
   public deleteAccount(): Promise<void> {
     return this.#request("/api/v1/account", { method: "DELETE" });
+  }
+
+  public async listOpportunities(filter: OpportunityFilter = {}): Promise<OpportunityScan> {
+    const params = Object.entries(filter)
+      .filter(([, value]) => value !== undefined)
+      .map(([key, value]) => `${key}=${encodeURIComponent(String(value))}`);
+    const suffix = params.length > 0 ? `?${params.join("&")}` : "";
+    const payload = await this.#request<unknown>(`/api/v1/opportunities${suffix}`);
+    if (!isOpportunityScan(payload)) {
+      throw new Error("Perpeto opportunity scan contract is incompatible");
+    }
+    return payload;
   }
 }

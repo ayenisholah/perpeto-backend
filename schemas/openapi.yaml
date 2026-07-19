@@ -1,8 +1,10 @@
 openapi: 3.1.0
 info:
   title: Perpeto Control API
-  version: 0.2.0
-  description: M1A social identity, MFA, and secure-session contract. Trading remains unavailable.
+  version: 0.3.0
+  description: >-
+    M1A social identity, MFA, and secure-session contract plus the M2 read-only
+    paper opportunity scanner. Trade execution remains unavailable.
   license:
     name: Proprietary
     url: https://github.com/ayenisholah/perpeto-backend#license
@@ -29,6 +31,8 @@ tags:
     description: Owner review of isolated pending social registrations.
   - name: Account
     description: Current-user status and privacy-preserving account deletion.
+  - name: Opportunities
+    description: Read-only ranked funding-arbitrage opportunities from the deterministic paper scanner.
   - name: Provider notifications
     description: Signed, idempotent identity-provider account-change callbacks.
 paths:
@@ -380,6 +384,36 @@ paths:
       responses:
         "204": { description: Account deleted and audit actor pseudonymized. }
         "409": { $ref: "#/components/responses/ProblemResponse" }
+  /api/v1/opportunities:
+    get:
+      tags: [Opportunities]
+      summary: List the latest ranked paper funding-arbitrage opportunities
+      operationId: listOpportunities
+      parameters:
+        - in: query
+          name: route_type
+          required: false
+          schema: { $ref: "#/components/schemas/RouteType" }
+        - in: query
+          name: venue
+          required: false
+          schema: { $ref: "#/components/schemas/Venue" }
+        - in: query
+          name: min_net_apr
+          required: false
+          schema: { type: number }
+        - in: query
+          name: min_probability
+          required: false
+          schema: { type: number, minimum: 0, maximum: 1 }
+      responses:
+        "200":
+          description: The latest scan snapshot (empty when no scan has run yet).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OpportunityScan" }
+        "401": { $ref: "#/components/responses/ProblemResponse" }
+        "403": { $ref: "#/components/responses/ProblemResponse" }
   /api/v1/auth/apple/notifications:
     post:
       tags: [Provider notifications]
@@ -445,6 +479,59 @@ components:
     Role:
       type: string
       enum: [VIEWER, OWNER, TRADER, APPROVER]
+    Venue:
+      type: string
+      enum: [BINANCE, BYBIT, OKX, DYDX, HYPERLIQUID]
+    RouteType:
+      type: string
+      enum: [SPOT_PERP, PERP_PERP]
+    Opportunity:
+      type: object
+      additionalProperties: false
+      required:
+        - route_id
+        - route_type
+        - underlying
+        - long_venue
+        - short_venue
+        - gross_funding_apr
+        - entry_cost
+        - exit_cost
+        - carry_cost
+        - risk_buffer
+        - net_apr
+        - expected_net_pnl
+        - profitability_probability
+        - available_capacity
+        - next_funding_at
+      properties:
+        route_id: { type: string }
+        route_type: { $ref: "#/components/schemas/RouteType" }
+        underlying: { type: string }
+        long_venue: { $ref: "#/components/schemas/Venue" }
+        short_venue: { $ref: "#/components/schemas/Venue" }
+        gross_funding_apr: { type: number }
+        entry_cost: { type: number }
+        exit_cost: { type: number }
+        carry_cost: { type: number }
+        risk_buffer: { type: number }
+        net_apr: { type: number }
+        expected_net_pnl: { type: number }
+        profitability_probability: { type: number, minimum: 0, maximum: 1 }
+        available_capacity: { type: number }
+        next_funding_at: { type: string, format: date-time }
+    OpportunityScan:
+      type: object
+      additionalProperties: false
+      required: [scanned_at, model_version, opportunities]
+      properties:
+        scanned_at:
+          type: string
+          description: RFC 3339 scan timestamp, or empty when no scan has run yet.
+        model_version: { type: string }
+        opportunities:
+          type: array
+          items: { $ref: "#/components/schemas/Opportunity" }
     CreateSocialChallengeRequest:
       type: object
       additionalProperties: false

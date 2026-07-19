@@ -2,9 +2,9 @@
 
 ## Snapshot
 
-- Milestone: M1A — Google/Apple authentication and secure sessions
+- Milestone: M2 Slice 1 — deterministic opportunity scanner feed (M1A auth complete)
 - Overall state: In progress
-- Last verified: 2026-07-14
+- Last verified: 2026-07-19
 
 ## Completed
 
@@ -17,11 +17,12 @@
 - M0 API-client packaging is deterministic and locally verifies compiled code plus bundled schemas.
 - Accepted DEC-0007 and replaced the password flow in the canonical specification with Google/Apple identity and Signex-authoritative approval, MFA, sessions, and revocation.
 - Added the M1A PostgreSQL schema, authentication invariant model/tests, OpenAPI 0.2.0 contract, and typed TypeScript client.
+- Started M2 Slice 1: `funding-arb-domain` market/forecast/opportunity types with a transparent non-ML forecaster and PRODUCT_SPEC §4.5 ranking (unit-tested); a `funding-arb-scanner-service` crate driven by deterministic fixtures with Postgres persistence (`0003_market_scan.sql`); the engine as a paper scan loop; a read-only `GET /api/v1/opportunities` endpoint; and the additive OpenAPI 0.3.0 / `@ayenisholah/perpeto-api-client@0.3.0` contract with a mobile Scanner screen.
 
 ## Not completed
 
 - The social-auth runtime adapters are implemented and deployed (`funding-arb-auth-service` + `axum` API). The shared v1 backend runs with `PERPETO_OPEN_REGISTRATION` enabled (DEC-0009), so new sign-ins get immediate full access; per-user backend isolation and the restored gated-approval/MFA flow are the v2 objective.
-- No venue connector, scanner, risk engine, execution engine, ledger, or production-ready trading API exists.
+- The scanner produces opportunities from deterministic fixtures only; no venue connector, risk engine, execution engine, ledger, or production-ready trading API exists.
 - No venue has any certification evidence.
 - Live trading is unavailable by design.
 
@@ -34,4 +35,4 @@
 
 ## Next verified task
 
-Implement the provider-verification/cryptographic adapters and transactional PostgreSQL HTTP handlers, then merge, publish `0.2.0`, and replace the mobile vendored tarball with the exact GitHub Packages release.
+Complete M2 Slice 1: add the Postgres scan→read integration test, run the compose stack end-to-end (`migrate` + `engine` + `api`) against `GET /api/v1/opportunities`, and publish `@ayenisholah/perpeto-api-client@0.3.0`. Then begin Slice 2 (opportunity detail, filters, and risk reservations).

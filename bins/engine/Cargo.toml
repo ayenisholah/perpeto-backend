@@ -7,6 +7,11 @@ rust-version.workspace = true
 
 [dependencies]
 funding-arb-domain = { path = "../../crates/funding-arb-domain" }
+funding-arb-scanner-service = { path = "../../crates/scanner-service" }
+chrono.workspace = true
+sqlx.workspace = true
+tokio = { workspace = true, features = ["time"] }
+tracing.workspace = true
 
 [lints]
 workspace = true

@@ -1,6 +1,6 @@
 //! HTTP handlers translating requests into auth-service calls.
 
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::{Extension, Json};
@@ -10,6 +10,8 @@ use funding_arb_auth_service::dto::{
     MfaConfirmRequest, MfaVerifyRequest, RefreshRequest,
 };
 use funding_arb_auth_service::service::CallerContext;
+use funding_arb_scanner_service::OpportunityScanDto;
+use serde::Deserialize;
 
 use crate::problem::ApiError;
 use crate::state::AppState;
@@ -192,4 +194,55 @@ pub async fn acknowledge_recovery(
     Json(request): Json<AcknowledgeRecoveryRequest>,
 ) -> Result<impl IntoResponse, ApiError> {
     Ok(Json(state.service.acknowledge_recovery(request).await?))
+}
+
+/// Optional filters for the opportunity scan feed.
+#[derive(Debug, Deserialize)]
+pub struct OpportunityQuery {
+    /// `SPOT_PERP` or `PERP_PERP` (case-insensitive).
+    pub route_type: Option<String>,
+    /// A venue that must appear on either leg (case-insensitive).
+    pub venue: Option<String>,
+    /// Minimum net APR (fraction, e.g. `0.05`).
+    pub min_net_apr: Option<f64>,
+    /// Minimum profitability probability, `[0, 1]`.
+    pub min_probability: Option<f64>,
+}
+
+/// `GET /api/v1/opportunities` — the latest ranked paper scan (read-only).
+pub async fn list_opportunities(
+    State(state): State<AppState>,
+    Extension(caller): Extension<CallerContext>,
+    Query(filter): Query<OpportunityQuery>,
+) -> Result<impl IntoResponse, ApiError> {
+    caller.require_active()?;
+    let mut scan = state
+        .scanner
+        .latest()
+        .await
+        .map_err(|error| ApiError(AuthError::Internal(error.to_string())))?
+        .unwrap_or(OpportunityScanDto {
+            scanned_at: String::new(),
+            model_version: String::new(),
+            opportunities: Vec::new(),
+        });
+
+    if let Some(route_type) = filter.route_type.as_deref() {
+        let wanted = route_type.to_ascii_uppercase();
+        scan.opportunities.retain(|opportunity| opportunity.route_type == wanted);
+    }
+    if let Some(venue) = filter.venue.as_deref() {
+        let wanted = venue.to_ascii_uppercase();
+        scan.opportunities
+            .retain(|opportunity| opportunity.long_venue == wanted || opportunity.short_venue == wanted);
+    }
+    if let Some(minimum) = filter.min_net_apr {
+        scan.opportunities.retain(|opportunity| opportunity.net_apr >= minimum);
+    }
+    if let Some(minimum) = filter.min_probability {
+        scan.opportunities
+            .retain(|opportunity| opportunity.profitability_probability >= minimum);
+    }
+
+    Ok(Json(scan))
 }

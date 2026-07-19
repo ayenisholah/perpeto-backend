@@ -29,6 +29,7 @@ pub fn build_router(state: AppState) -> Router {
             post(handlers::approve_access_request),
         )
         .route("/api/v1/account", delete(handlers::delete_account))
+        .route("/api/v1/opportunities", get(handlers::list_opportunities))
         .layer(middleware::from_fn_with_state(state.clone(), require_auth));
 
     let public = Router::new()

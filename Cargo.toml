@@ -3,6 +3,7 @@ resolver = "3"
 members = [
   "crates/funding-arb-domain",
   "crates/auth-service",
+  "crates/scanner-service",
   "bins/api",
   "bins/engine",
   "bins/reconciler",
@@ -22,6 +23,7 @@ hmac = "0.12"
 jsonwebtoken = { version = "10.3", default-features = false, features = ["rust_crypto"] }
 rand = "0.8"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+rust_decimal = { version = "1", default-features = false, features = ["std"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha1 = "0.10"

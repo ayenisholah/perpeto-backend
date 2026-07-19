@@ -13,6 +13,7 @@ use std::{env, thread, time::Duration};
 
 use funding_arb_auth_service::{AuthConfig, AuthService, LiveIdentityVerifier, Repo};
 use funding_arb_domain::TradingMode;
+use funding_arb_scanner_service::ScannerRepo;
 use sqlx::postgres::PgPoolOptions;
 
 use crate::routes::build_router;
@@ -73,6 +74,7 @@ async fn run() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
+    let scanner = ScannerRepo::new(pool.clone());
     let repo = Repo::new(pool);
 
     if let (Some(hash), Some(expiry)) = (
@@ -89,7 +91,7 @@ async fn run() -> ExitCode {
         config.google_client_ids.clone(),
     ));
     let service = AuthService::new(repo, &config, verifier);
-    let router = build_router(AppState { service });
+    let router = build_router(AppState { service, scanner });
 
     let listener = match tokio::net::TcpListener::bind(&config.bind_address).await {
         Ok(listener) => listener,

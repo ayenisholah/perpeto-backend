@@ -6,6 +6,9 @@
 use std::{fmt, str::FromStr};
 
 pub mod auth;
+pub mod forecast;
+pub mod market;
+pub mod opportunity;
 
 /// Deployment trading mode. The initial scaffold supports paper mode only.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
