@@ -25,6 +25,10 @@ pub struct AuthConfig {
     pub bootstrap_token_expires_at: Option<String>,
     /// 32-byte AES-256-GCM key for encrypting TOTP secrets.
     pub mfa_encryption_key: Option<[u8; 32]>,
+    /// When true, new social sign-ins are auto-approved to full access without
+    /// pending-approval or MFA. Intended for the single shared v1 backend; v2
+    /// isolates each user's backend and restores gated approval (see DEC-0009).
+    pub open_registration: bool,
 }
 
 /// Reasons configuration could not be resolved.
@@ -118,6 +122,10 @@ impl AuthConfig {
             _ => None,
         };
 
+        let open_registration = env::var("SIGNEX_OPEN_REGISTRATION")
+            .map(|value| value.trim().eq_ignore_ascii_case("true"))
+            .unwrap_or(false);
+
         Ok(Self {
             database_url,
             bind_address,
@@ -128,6 +136,7 @@ impl AuthConfig {
             bootstrap_token_hash,
             bootstrap_token_expires_at,
             mfa_encryption_key,
+            open_registration,
         })
     }
 }

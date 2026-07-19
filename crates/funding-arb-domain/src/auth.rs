@@ -86,6 +86,23 @@ impl User {
         Ok(())
     }
 
+    /// Admit a pending user to full access under open registration (DEC-0009).
+    ///
+    /// Grants every privileged role. The mandatory-MFA rule in
+    /// [`Self::next_state`] still applies; open-registration deployments waive
+    /// it at the service policy layer, not here.
+    pub fn admit_with_full_access(&mut self) -> Result<(), AuthInvariantError> {
+        if self.status != UserStatus::Pending {
+            return Err(AuthInvariantError::UserIsNotPending);
+        }
+        self.status = UserStatus::Active;
+        self.roles.clear();
+        self.roles.insert(Role::Owner);
+        self.roles.insert(Role::Trader);
+        self.roles.insert(Role::Approver);
+        Ok(())
+    }
+
     pub fn assign_privileged_role(&mut self, role: Role) -> Result<(), AuthInvariantError> {
         if !role.requires_mfa() {
             return Err(AuthInvariantError::RoleIsNotPrivileged);
@@ -306,6 +323,17 @@ mod tests {
         user.approve_as_viewer().unwrap();
         assert_eq!(user.roles, BTreeSet::from([Role::Viewer]));
         assert_eq!(user.next_state(), AuthNextState::Authenticated);
+    }
+
+    #[test]
+    fn open_registration_admits_pending_user_to_all_privileged_roles() {
+        let mut user = social_user(UserStatus::Pending);
+        user.admit_with_full_access().unwrap();
+        assert_eq!(user.status, UserStatus::Active);
+        assert_eq!(
+            user.roles,
+            BTreeSet::from([Role::Owner, Role::Trader, Role::Approver])
+        );
     }
 
     #[test]

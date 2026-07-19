@@ -20,6 +20,7 @@ The M1 authentication runtime additionally requires the following in `runtime.en
 - `SIGNEX_GOOGLE_IOS_CLIENT_ID`, `SIGNEX_GOOGLE_WEB_CLIENT_ID` — accepted audiences for Google identity tokens (either may appear as `aud`).
 - `SIGNEX_BOOTSTRAP_TOKEN_HASH`, `SIGNEX_BOOTSTRAP_TOKEN_EXPIRES_AT` — SHA-256 hex of the one-use deployment token and its RFC 3339 expiry; the first social sign-in exchanges the plaintext token to become Owner.
 - `SIGNEX_MFA_KEY` — base64 of a 32-byte AES-256-GCM key that encrypts stored TOTP secrets.
+- `SIGNEX_OPEN_REGISTRATION` — optional (default `false`). Set `true` on the shared v1 dev/TestFlight backend so each new social sign-in is admitted immediately to full access without pending approval or MFA (DEC-0009). Leave unset/`false` for isolated or production deployments.
 
 The `funding-arb-migrate` container runs `migrations/` before the API starts; the compose file gates the API on its successful completion.
 
