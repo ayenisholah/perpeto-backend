@@ -78,6 +78,20 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/v1/health", get(handlers::get_health))
         .route("/api/v1/alerts", get(handlers::list_alerts))
         .route("/api/v1/alerts/{id}/ack", post(handlers::ack_alert))
+        .route("/api/v1/venues", get(handlers::list_venues))
+        .route("/api/v1/venue-accounts", get(handlers::list_venue_accounts))
+        .route(
+            "/api/v1/venue-accounts/{id}",
+            get(handlers::get_venue_account),
+        )
+        .route(
+            "/api/v1/venue-accounts/{id}/test",
+            post(handlers::test_venue_account),
+        )
+        .route(
+            "/api/v1/venue-accounts/{id}/disable",
+            post(handlers::disable_venue_account),
+        )
         .layer(middleware::from_fn_with_state(state.clone(), require_auth));
 
     let public = Router::new()

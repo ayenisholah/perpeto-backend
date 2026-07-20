@@ -18,6 +18,7 @@ use funding_arb_execution_service::{
 };
 use funding_arb_scanner_service::ScannerRepo;
 use funding_arb_strategy_service::StrategiesRepo;
+use funding_arb_venue_service::VenueAccountsRepo;
 use sqlx::postgres::PgPoolOptions;
 
 use crate::routes::build_router;
@@ -47,17 +48,17 @@ async fn run() -> ExitCode {
         .init();
 
     let mode = env::var("PERPETO_MODE").unwrap_or_else(|_| String::from("PAPER"));
-    match TradingMode::from_str(&mode) {
-        Ok(mode) if mode.is_paper() => {}
+    let mode = match TradingMode::from_str(&mode) {
+        Ok(mode) if !mode.is_live() => mode,
         Ok(_) => {
-            eprintln!("live mode is unavailable in the M1 auth milestone");
+            eprintln!("LIVE mode remains locked until certification");
             return ExitCode::FAILURE;
         }
         Err(_) => {
             eprintln!("invalid PERPETO_MODE");
             return ExitCode::FAILURE;
         }
-    }
+    };
 
     let config = match AuthConfig::from_env() {
         Ok(config) => config,
@@ -84,6 +85,7 @@ async fn run() -> ExitCode {
     let outbox = OutboxRepo::new(pool.clone());
     let strategies = StrategiesRepo::new(pool.clone());
     let monitoring = MonitoringRepo::new(pool.clone());
+    let venues = VenueAccountsRepo::new(pool.clone());
     let execution = ExecutionService::default();
     let repo = Repo::new(pool);
 
@@ -102,6 +104,7 @@ async fn run() -> ExitCode {
     ));
     let service = AuthService::new(repo, &config, verifier);
     let router = build_router(AppState {
+        mode,
         service,
         scanner,
         execution,
@@ -110,6 +113,7 @@ async fn run() -> ExitCode {
         outbox,
         strategies,
         monitoring,
+        venues,
     });
 
     let listener = match tokio::net::TcpListener::bind(&config.bind_address).await {
@@ -120,8 +124,8 @@ async fn run() -> ExitCode {
         }
     };
     println!(
-        "Perpeto auth API listening on {} in PAPER mode (M1_AUTH)",
-        config.bind_address,
+        "Perpeto API listening on {} in {} mode",
+        config.bind_address, mode,
     );
     match axum::serve(listener, router).await {
         Ok(()) => ExitCode::SUCCESS,

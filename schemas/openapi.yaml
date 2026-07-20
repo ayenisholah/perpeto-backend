@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Perpeto Control API
-  version: 0.10.0
+  version: 0.11.0
   description: >-
     Social identity, MFA, and secure sessions plus the M2 deterministic paper
     scanner and coordinated simulated positions. Live execution remains unavailable.
@@ -41,6 +41,8 @@ tags:
     description: Versioned automated paper-strategy configuration.
   - name: Monitoring
     description: Paper portfolio, service health, and deduplicated alerts.
+  - name: Venues
+    description: Masked centralized-exchange accounts and connector capabilities.
   - name: Provider notifications
     description: Signed, idempotent identity-provider account-change callbacks.
 paths:
@@ -786,6 +788,62 @@ paths:
       responses:
         "204": { description: Valid notification processed idempotently. }
         "401": { $ref: "#/components/responses/ProblemResponse" }
+  /api/v1/venues:
+    get:
+      tags: [Venues]
+      summary: List connector capabilities and configured-account counts
+      operationId: listVenues
+      responses:
+        "200":
+          description: Venue connector catalog.
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/VenueSummary" } }
+        "401": { $ref: "#/components/responses/ProblemResponse" }
+  /api/v1/venue-accounts:
+    get:
+      tags: [Venues]
+      summary: List masked venue accounts
+      operationId: listVenueAccounts
+      responses:
+        "200":
+          description: Masked venue accounts; credential material is never returned.
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/VenueAccount" } }
+        "401": { $ref: "#/components/responses/ProblemResponse" }
+  /api/v1/venue-accounts/{id}:
+    get:
+      tags: [Venues]
+      summary: Get one masked venue account
+      operationId: getVenueAccount
+      parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        "200": { description: Masked account detail., content: { application/json: { schema: { $ref: "#/components/schemas/VenueAccount" } } } }
+        "401": { $ref: "#/components/responses/ProblemResponse" }
+        "404": { $ref: "#/components/responses/ProblemResponse" }
+  /api/v1/venue-accounts/{id}/test:
+    post:
+      tags: [Venues]
+      summary: Validate account configuration without submitting orders
+      operationId: testVenueAccount
+      parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        "200": { description: Configuration safety result., content: { application/json: { schema: { $ref: "#/components/schemas/ConnectionTest" } } } }
+        "401": { $ref: "#/components/responses/ProblemResponse" }
+        "403": { $ref: "#/components/responses/ProblemResponse" }
+        "404": { $ref: "#/components/responses/ProblemResponse" }
+  /api/v1/venue-accounts/{id}/disable:
+    post:
+      tags: [Venues]
+      summary: Disable a venue account
+      operationId: disableVenueAccount
+      parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        "200": { description: Disabled masked account., content: { application/json: { schema: { $ref: "#/components/schemas/VenueAccount" } } } }
+        "401": { $ref: "#/components/responses/ProblemResponse" }
+        "403": { $ref: "#/components/responses/ProblemResponse" }
+        "404": { $ref: "#/components/responses/ProblemResponse" }
 components:
   securitySchemes:
     bearerAuth:
@@ -820,6 +878,55 @@ components:
         application/problem+json:
           schema: { $ref: "#/components/schemas/Problem" }
   schemas:
+    VenueSummary:
+      type: object
+      additionalProperties: false
+      required: [venue, display_name, products, sandbox_environment, configured_accounts]
+      properties:
+        venue: { type: string, enum: [BINANCE, BYBIT, OKX] }
+        display_name: { type: string }
+        products: { type: array, items: { type: string, enum: [SPOT, LINEAR_PERPETUAL] } }
+        sandbox_environment: { type: string, enum: [TESTNET, DEMO] }
+        configured_accounts: { type: integer, minimum: 0 }
+    ProductConnection:
+      type: object
+      additionalProperties: false
+      required: [id, product, environment, secret_ref, read_permission, trade_permission, withdrawal_permission, status, last_tested_at]
+      properties:
+        id: { type: string, format: uuid }
+        product: { type: string, enum: [SPOT, LINEAR_PERPETUAL] }
+        environment: { type: string, enum: [PRODUCTION, TESTNET, DEMO] }
+        secret_ref: { type: [string, "null"], format: uuid }
+        read_permission: { type: boolean }
+        trade_permission: { type: boolean }
+        withdrawal_permission: { type: [boolean, "null"] }
+        status: { type: string }
+        last_tested_at: { type: [string, "null"], format: date-time }
+    VenueAccount:
+      type: object
+      additionalProperties: false
+      required: [id, venue, alias, masked_identity, enabled, certification_state, reconciliation_state, connections, last_reconciled_at, created_at, tombstoned_at]
+      properties:
+        id: { type: string, format: uuid }
+        venue: { type: string, enum: [BINANCE, BYBIT, OKX] }
+        alias: { type: string }
+        masked_identity: { type: string }
+        enabled: { type: boolean }
+        certification_state: { type: string, enum: [DISABLED, PAPER_ONLY, SHADOW, PILOT, CERTIFIED_LIVE] }
+        reconciliation_state: { type: string, enum: [PENDING, RECONCILED, REQUIRED, FROZEN] }
+        connections: { type: array, items: { $ref: "#/components/schemas/ProductConnection" } }
+        last_reconciled_at: { type: [string, "null"], format: date-time }
+        created_at: { type: string, format: date-time }
+        tombstoned_at: { type: [string, "null"], format: date-time }
+    ConnectionTest:
+      type: object
+      additionalProperties: false
+      required: [account_id, status, checked_at, checks]
+      properties:
+        account_id: { type: string, format: uuid }
+        status: { type: string, enum: [PASS, FAIL] }
+        checked_at: { type: string, format: date-time }
+        checks: { type: array, items: { type: string } }
     SocialProvider:
       type: string
       enum: [APPLE, GOOGLE]

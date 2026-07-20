@@ -20,6 +20,7 @@ use funding_arb_execution_service::{
 };
 use funding_arb_scanner_service::{OpportunityScanDto, RiskLimitsDto};
 use funding_arb_strategy_service::StrategyDto;
+use funding_arb_venue_service::{CertificationState, ConnectionTestDto, VenueSummaryDto};
 use rust_decimal::Decimal;
 use rust_decimal::prelude::FromPrimitive;
 use serde::Deserialize;
@@ -28,37 +29,43 @@ use uuid::Uuid;
 use crate::problem::ApiError;
 use crate::state::AppState;
 
-const BLOCKED_ENTRY: &str =
-    r#"{"status":"BLOCKED","reasons":["M0_SCAFFOLD_NO_TRADING_CAPABILITY"]}"#;
-
 /// Liveness probe.
-pub async fn livez() -> impl IntoResponse {
-    health_ok()
+pub async fn livez(State(state): State<AppState>) -> impl IntoResponse {
+    health_ok(state.mode)
 }
 
 /// Readiness probe that verifies database connectivity.
 pub async fn readyz(State(state): State<AppState>) -> impl IntoResponse {
     match state.service.repo().ping().await {
-        Ok(()) => health_ok().into_response(),
+        Ok(()) => health_ok(state.mode).into_response(),
         Err(_) => (
             StatusCode::SERVICE_UNAVAILABLE,
-            Json(serde_json::json!({"status": "UNAVAILABLE", "mode": "PAPER", "stage": "M1_AUTH"})),
+            Json(serde_json::json!({"status": "UNAVAILABLE", "mode": state.mode.to_string(), "stage": "M3_CONNECTORS"})),
         )
             .into_response(),
     }
 }
 
 /// Trading entrypoint probe — still blocked in the auth milestone.
-pub async fn entryz() -> impl IntoResponse {
+pub async fn entryz(State(state): State<AppState>) -> impl IntoResponse {
+    let ready = state.mode.allows_external_writes();
     (
-        StatusCode::SERVICE_UNAVAILABLE,
-        [(axum::http::header::CONTENT_TYPE, "application/json")],
-        BLOCKED_ENTRY,
+        if ready {
+            StatusCode::OK
+        } else {
+            StatusCode::SERVICE_UNAVAILABLE
+        },
+        Json(serde_json::json!({
+            "status": if ready { "READY" } else { "BLOCKED" },
+            "mode": state.mode.to_string(),
+            "external_writes": ready,
+            "reasons": if ready { Vec::<String>::new() } else { vec![String::from("MODE_FORBIDS_EXTERNAL_WRITES")] },
+        })),
     )
 }
 
-fn health_ok() -> impl IntoResponse {
-    Json(serde_json::json!({"status": "OK", "mode": "PAPER", "stage": "M1_AUTH"}))
+fn health_ok(mode: funding_arb_domain::TradingMode) -> impl IntoResponse {
+    Json(serde_json::json!({"status": "OK", "mode": mode.to_string(), "stage": "M3_CONNECTORS"}))
 }
 
 /// `POST /api/v1/auth/social/challenges`
@@ -895,6 +902,159 @@ pub async fn ack_alert(
         Some(alert) => Ok(Json(alert).into_response()),
         None => Ok(not_found("Alert not found", "ALERT_NOT_FOUND")),
     }
+}
+
+/// `GET /api/v1/venues` — normalized connector capability catalog.
+pub async fn list_venues(
+    State(state): State<AppState>,
+    Extension(caller): Extension<CallerContext>,
+) -> Result<impl IntoResponse, ApiError> {
+    caller.require_active()?;
+    let accounts = state.venues.list().await.map_err(internal)?;
+    let summary = [
+        ("BYBIT", "Bybit", "TESTNET"),
+        ("BINANCE", "Binance", "TESTNET"),
+        ("OKX", "OKX", "DEMO"),
+    ]
+    .into_iter()
+    .map(
+        |(venue, display_name, sandbox_environment)| VenueSummaryDto {
+            venue: venue.into(),
+            display_name: display_name.into(),
+            products: vec!["SPOT".into(), "LINEAR_PERPETUAL".into()],
+            sandbox_environment: sandbox_environment.into(),
+            configured_accounts: accounts
+                .iter()
+                .filter(|account| account.venue == venue)
+                .count(),
+        },
+    )
+    .collect::<Vec<_>>();
+    Ok(Json(summary))
+}
+
+/// `GET /api/v1/venue-accounts` — masked account inventory.
+pub async fn list_venue_accounts(
+    State(state): State<AppState>,
+    Extension(caller): Extension<CallerContext>,
+) -> Result<impl IntoResponse, ApiError> {
+    caller.require_active()?;
+    Ok(Json(state.venues.list().await.map_err(internal)?))
+}
+
+/// `GET /api/v1/venue-accounts/{id}` — masked account detail.
+pub async fn get_venue_account(
+    State(state): State<AppState>,
+    Extension(caller): Extension<CallerContext>,
+    Path(id): Path<String>,
+) -> Result<Response, ApiError> {
+    caller.require_active()?;
+    match state.venues.get(&id).await.map_err(internal)? {
+        Some(account) => Ok(Json(account).into_response()),
+        None => Ok(not_found(
+            "Venue account not found",
+            "VENUE_ACCOUNT_NOT_FOUND",
+        )),
+    }
+}
+
+/// `POST /api/v1/venue-accounts/{id}/test` — configuration-only safety test.
+pub async fn test_venue_account(
+    State(state): State<AppState>,
+    Extension(caller): Extension<CallerContext>,
+    Path(id): Path<String>,
+) -> Result<Response, ApiError> {
+    caller.require_active()?;
+    if !caller.can_trade() {
+        return Err(AuthError::Forbidden.into());
+    }
+    let Some(mut account) = state.venues.get(&id).await.map_err(internal)? else {
+        return Ok(not_found(
+            "Venue account not found",
+            "VENUE_ACCOUNT_NOT_FOUND",
+        ));
+    };
+    let now = Utc::now().to_rfc3339();
+    let mut checks = Vec::new();
+    let mut valid = account.enabled && !account.connections.is_empty();
+    checks.push(
+        if account.enabled {
+            "ACCOUNT_ENABLED"
+        } else {
+            "ACCOUNT_DISABLED"
+        }
+        .into(),
+    );
+    for connection in &mut account.connections {
+        let has_secret = connection.secret_ref.is_some();
+        let no_withdrawal = connection.withdrawal_permission != Some(true);
+        let environment_valid = match state.mode {
+            funding_arb_domain::TradingMode::Sandbox => connection.environment != "PRODUCTION",
+            funding_arb_domain::TradingMode::Shadow => {
+                connection.environment == "PRODUCTION" && !connection.trade_permission
+            }
+            funding_arb_domain::TradingMode::Paper => true,
+            funding_arb_domain::TradingMode::Live => false,
+        };
+        let connection_valid =
+            has_secret && connection.read_permission && no_withdrawal && environment_valid;
+        valid &= connection_valid;
+        checks.push(format!(
+            "{}:{}:{}",
+            connection.product,
+            connection.environment,
+            if connection_valid { "VALID" } else { "INVALID" }
+        ));
+        connection.last_tested_at = Some(now.clone());
+        connection.status = if connection_valid {
+            "CONFIGURED".into()
+        } else {
+            "CONFIGURATION_FAILED".into()
+        };
+        state
+            .venues
+            .update_connection(&account.id, connection)
+            .await
+            .map_err(internal)?;
+    }
+    state.venues.update(&account).await.map_err(internal)?;
+    Ok(Json(ConnectionTestDto {
+        account_id: account.id,
+        status: if valid { "PASS" } else { "FAIL" }.into(),
+        checked_at: now,
+        checks,
+    })
+    .into_response())
+}
+
+/// `POST /api/v1/venue-accounts/{id}/disable` — Owner-only containment.
+pub async fn disable_venue_account(
+    State(state): State<AppState>,
+    Extension(caller): Extension<CallerContext>,
+    Path(id): Path<String>,
+) -> Result<Response, ApiError> {
+    caller.require_active()?;
+    if !caller.is_owner() {
+        return Err(AuthError::Forbidden.into());
+    }
+    let Some(mut account) = state.venues.get(&id).await.map_err(internal)? else {
+        return Ok(not_found(
+            "Venue account not found",
+            "VENUE_ACCOUNT_NOT_FOUND",
+        ));
+    };
+    account.enabled = false;
+    account.certification_state = CertificationState::Disabled;
+    for connection in &mut account.connections {
+        connection.status = "DISABLED".into();
+        state
+            .venues
+            .update_connection(&account.id, connection)
+            .await
+            .map_err(internal)?;
+    }
+    state.venues.update(&account).await.map_err(internal)?;
+    Ok(Json(account).into_response())
 }
 
 fn internal(error: sqlx::Error) -> ApiError {

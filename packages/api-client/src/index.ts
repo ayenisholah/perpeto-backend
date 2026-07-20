@@ -1,4 +1,4 @@
-export const schemaVersion = "0.10.0" as const;
+export const schemaVersion = "0.11.0" as const;
 
 export type SocialProvider = "APPLE" | "GOOGLE";
 export type AuthNextState =
@@ -11,8 +11,49 @@ export type Role = "VIEWER" | "OWNER" | "TRADER" | "APPROVER";
 
 export interface Health {
   readonly status: "OK";
-  readonly mode: "PAPER";
-  readonly stage: "M0_SCAFFOLD" | "M1_AUTH";
+  readonly mode: "PAPER" | "SANDBOX" | "SHADOW";
+  readonly stage: "M0_SCAFFOLD" | "M1_AUTH" | "M3_CONNECTORS";
+}
+
+export interface VenueSummary {
+  readonly venue: "BINANCE" | "BYBIT" | "OKX";
+  readonly display_name: string;
+  readonly products: readonly ("SPOT" | "LINEAR_PERPETUAL")[];
+  readonly sandbox_environment: "TESTNET" | "DEMO";
+  readonly configured_accounts: number;
+}
+
+export interface ProductConnection {
+  readonly id: string;
+  readonly product: "SPOT" | "LINEAR_PERPETUAL";
+  readonly environment: "PRODUCTION" | "TESTNET" | "DEMO";
+  readonly secret_ref: string | null;
+  readonly read_permission: boolean;
+  readonly trade_permission: boolean;
+  readonly withdrawal_permission: boolean | null;
+  readonly status: string;
+  readonly last_tested_at: string | null;
+}
+
+export interface VenueAccount {
+  readonly id: string;
+  readonly venue: "BINANCE" | "BYBIT" | "OKX";
+  readonly alias: string;
+  readonly masked_identity: string;
+  readonly enabled: boolean;
+  readonly certification_state: "DISABLED" | "PAPER_ONLY" | "SHADOW" | "PILOT" | "CERTIFIED_LIVE";
+  readonly reconciliation_state: "PENDING" | "RECONCILED" | "REQUIRED" | "FROZEN";
+  readonly connections: readonly ProductConnection[];
+  readonly last_reconciled_at: string | null;
+  readonly created_at: string;
+  readonly tombstoned_at: string | null;
+}
+
+export interface ConnectionTest {
+  readonly account_id: string;
+  readonly status: "PASS" | "FAIL";
+  readonly checked_at: string;
+  readonly checks: readonly string[];
 }
 
 export interface CurrentUser {
@@ -348,8 +389,9 @@ export class PerpetoApiError extends Error {
 export function isHealth(value: unknown): value is Health {
   if (typeof value !== "object" || value === null) return false;
   const health = value as Record<string, unknown>;
-  return health.status === "OK" && health.mode === "PAPER" &&
-    (health.stage === "M0_SCAFFOLD" || health.stage === "M1_AUTH");
+  return health.status === "OK" &&
+    (health.mode === "PAPER" || health.mode === "SANDBOX" || health.mode === "SHADOW") &&
+    (health.stage === "M0_SCAFFOLD" || health.stage === "M1_AUTH" || health.stage === "M3_CONNECTORS");
 }
 
 export function isAuthTransition(value: unknown): value is AuthTransition {
@@ -672,6 +714,11 @@ export class PerpetoClient {
   public getSystemHealth(): Promise<SystemHealth> { return this.#request("/api/v1/health"); }
   public listAlerts(): Promise<readonly Alert[]> { return this.#request("/api/v1/alerts"); }
   public acknowledgeAlert(id: string): Promise<Alert> { return this.#request(`/api/v1/alerts/${encodeURIComponent(id)}/ack`, { method: "POST" }); }
+  public listVenues(): Promise<readonly VenueSummary[]> { return this.#request("/api/v1/venues"); }
+  public listVenueAccounts(): Promise<readonly VenueAccount[]> { return this.#request("/api/v1/venue-accounts"); }
+  public getVenueAccount(id: string): Promise<VenueAccount> { return this.#request(`/api/v1/venue-accounts/${encodeURIComponent(id)}`); }
+  public testVenueAccount(id: string): Promise<ConnectionTest> { return this.#request(`/api/v1/venue-accounts/${encodeURIComponent(id)}/test`, { method: "POST" }); }
+  public disableVenueAccount(id: string): Promise<VenueAccount> { return this.#request(`/api/v1/venue-accounts/${encodeURIComponent(id)}/disable`, { method: "POST" }); }
 }
 
 function randomIdempotencyKey(): string {

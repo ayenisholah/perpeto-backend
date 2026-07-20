@@ -2,6 +2,25 @@
 
 use serde::{Deserialize, Serialize};
 
+/// Static capability summary plus configured-account count.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct VenueSummaryDto {
+    pub venue: String,
+    pub display_name: String,
+    pub products: Vec<String>,
+    pub sandbox_environment: String,
+    pub configured_accounts: usize,
+}
+
+/// Non-invasive configuration test. It never submits or cancels orders.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ConnectionTestDto {
+    pub account_id: String,
+    pub status: String,
+    pub checked_at: String,
+    pub checks: Vec<String>,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum CertificationState {

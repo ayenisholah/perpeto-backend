@@ -5,7 +5,8 @@ mod repo;
 mod secret;
 
 pub use dto::{
-    CertificationState, InstrumentDto, ProductConnectionDto, ReconciliationState, VenueAccountDto,
+    CertificationState, ConnectionTestDto, InstrumentDto, ProductConnectionDto,
+    ReconciliationState, VenueAccountDto, VenueSummaryDto,
 };
 pub use repo::VenueAccountsRepo;
 pub use secret::{

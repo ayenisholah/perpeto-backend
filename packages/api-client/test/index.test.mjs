@@ -470,3 +470,42 @@ describe("emergency controls contract", () => {
     assert.equal(requests.filter(([, method]) => method === "POST").length, 4);
   });
 });
+
+describe("venue account contract", () => {
+  it("exposes only masked account data and sends explicit mutations", async () => {
+    const requests = [];
+    const account = {
+      id: "0190abcd-1111-7000-8000-000000000077",
+      venue: "BYBIT",
+      alias: "sandbox",
+      masked_identity: "****1234",
+      enabled: true,
+      certification_state: "PAPER_ONLY",
+      reconciliation_state: "PENDING",
+      connections: [],
+      last_reconciled_at: null,
+      created_at: "2026-07-20T00:00:00Z",
+      tombstoned_at: null,
+    };
+    const client = new PerpetoClient({
+      baseUrl: "https://perpeto.test",
+      getAccessToken: () => "ephemeral",
+      fetchImplementation: async (url, init = {}) => {
+        requests.push([String(url), init.method ?? "GET"]);
+        if (String(url).endsWith("/venues")) return Response.json([]);
+        if (String(url).endsWith("/venue-accounts")) return Response.json([account]);
+        if (String(url).endsWith("/test")) {
+          return Response.json({ account_id: account.id, status: "PASS", checked_at: account.created_at, checks: [] });
+        }
+        return Response.json(account);
+      },
+    });
+    assert.deepEqual(await client.listVenues(), []);
+    assert.equal((await client.listVenueAccounts())[0].masked_identity, "****1234");
+    assert.equal((await client.getVenueAccount(account.id)).masked_identity, "****1234");
+    assert.equal((await client.testVenueAccount(account.id)).status, "PASS");
+    await client.disableVenueAccount(account.id);
+    assert.equal(requests.filter(([, method]) => method === "POST").length, 2);
+    assert.equal(JSON.stringify(requests).includes("api_secret"), false);
+  });
+});

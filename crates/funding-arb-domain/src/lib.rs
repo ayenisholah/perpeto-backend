@@ -40,6 +40,23 @@ impl TradingMode {
     pub const fn is_shadow(self) -> bool {
         matches!(self, Self::Shadow)
     }
+
+    /// Whether the unavailable real-capital mode was requested.
+    #[must_use]
+    pub const fn is_live(self) -> bool {
+        matches!(self, Self::Live)
+    }
+}
+
+impl fmt::Display for TradingMode {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::Paper => "PAPER",
+            Self::Sandbox => "SANDBOX",
+            Self::Shadow => "SHADOW",
+            Self::Live => "LIVE",
+        })
+    }
 }
 
 impl FromStr for TradingMode {
