@@ -6,6 +6,8 @@ All notable repository changes are recorded here using Keep a Changelog categori
 
 ### Added
 
+- M3 Slice 7 — added an exact-decimal local order book that requires snapshots, accepts valid overlapping deltas, ignores duplicates, clears prices on sequence gaps, and computes deterministic executable VWAP without floating-point conversion.
+
 - M3 Slice 6 — added masked venue catalog/account/detail APIs, configuration-only account tests, Owner containment, fail-closed `PAPER`/`SANDBOX`/`SHADOW` API startup/readiness semantics, and OpenAPI/TypeScript client **0.11.0**. Raw credential import and rotation remain CLI-only.
 
 - M3 Slice 5 — added a context-bound AES-256-GCM `SecretStore`, migration `0011_encrypted_credentials.sql`, zeroizing credential DTOs, redacted errors/debug output, and the audited `funding-arb-venue-admin` stdin-only import/rotation/disable/inspect workflow. API and mobile payloads continue to expose only masked identity and opaque secret references.
