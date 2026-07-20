@@ -1,0 +1,9 @@
+{
+  "venue": "OKX",
+  "schema_version": 1,
+  "api_revision": "V5-2026-07",
+  "official_document": "https://www.okx.com/docs-v5/",
+  "reviewed_at": "2026-07-20",
+  "cases_sha256": "aeb74f85d4b09a502dee9144fddef208e05aa813d3f5c36d7ace5d316e595e9e",
+  "required_scenarios": ["instrument_pagination", "book_snapshot_reset", "order_ack", "partial_fill", "rate_limit", "unknown_outcome"]
+}

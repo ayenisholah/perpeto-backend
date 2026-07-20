@@ -1,0 +1,9 @@
+{
+  "venue": "BINANCE",
+  "schema_version": 1,
+  "api_revision": "Spot-and-USD-M-2026-06",
+  "official_document": "https://developers.binance.com/en/docs/introduction",
+  "reviewed_at": "2026-07-20",
+  "cases_sha256": "bd148bb88eb819fe6c7cd1078ae6590f247d4ec160936a948bcc56e15521f296",
+  "required_scenarios": ["instrument_pagination", "book_snapshot_reset", "order_ack", "partial_fill", "rate_limit", "unknown_outcome"]
+}

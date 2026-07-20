@@ -1,0 +1,9 @@
+{
+  "venue": "BYBIT",
+  "schema_version": 1,
+  "api_revision": "V5-2026-06",
+  "official_document": "https://bybit-exchange.github.io/docs/v5/intro",
+  "reviewed_at": "2026-07-20",
+  "cases_sha256": "b5f540acdc7cf851bc09d3121d70f6296d6814c8b9c572df6ba3d85eba41c381",
+  "required_scenarios": ["instrument_pagination", "book_snapshot_reset", "order_ack", "partial_fill", "rate_limit", "unknown_outcome"]
+}
