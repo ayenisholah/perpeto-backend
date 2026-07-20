@@ -6,6 +6,8 @@ All notable repository changes are recorded here using Keep a Changelog categori
 
 ### Added
 
+- M3 Slice 1 — added fail-closed `SANDBOX` and read-only `SHADOW` runtime modes plus DEC-0011: only sandbox may submit to explicitly non-production connector accounts, shadow never submits, live stays locked, and shared-v1 credentials use an audited server CLI rather than the non-step-up API.
+
 - M3 foundation preparation — normalized the locally committed M2 Rust edits so the workspace formatting gate is clean before connector work begins; the linked Rust build remains delegated to the Linux verification environment because the local Windows host has no MSVC linker.
 
 - M2 Slices 6–7 — immutable versioned paper strategies with stricter admission rules, fixed/percent/dynamic allocation, concurrency/cooldown and auto-compound evaluation, engine auto-entry and position attribution; portfolio/PnL aggregation, synthetic venue/service health, durable deduplicated alerts and acknowledgement; migrations `0007`–`0009`, strategy/monitoring APIs, OpenAPI/client **0.10.0**, and complete mobile Strategies/Portfolio/Health/Alerts tabs. M2 is complete.
