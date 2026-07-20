@@ -6,6 +6,7 @@ members = [
   "crates/scanner-service",
   "crates/execution-service",
   "crates/strategy-service",
+  "crates/connectors",
   "bins/api",
   "bins/engine",
   "bins/reconciler",
@@ -17,6 +18,7 @@ members = [
 [workspace.dependencies]
 aes-gcm = "0.10"
 async-trait = "0.1"
+futures-core = "0.3"
 axum = "0.8"
 base64 = "0.22"
 chrono = { version = "0.4", features = ["serde"] }

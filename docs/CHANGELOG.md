@@ -6,6 +6,8 @@ All notable repository changes are recorded here using Keep a Changelog categori
 
 ### Added
 
+- M3 Slice 2 — introduced the `funding-arb-connectors` crate with a capability-driven async connector contract, exact normalized instrument/market/account/order/fill/funding types, boxed public/private event streams, explicit production/testnet/demo environments, terminal-order semantics, and stable retry/containment error categories.
+
 - M3 Slice 1 — added fail-closed `SANDBOX` and read-only `SHADOW` runtime modes plus DEC-0011: only sandbox may submit to explicitly non-production connector accounts, shadow never submits, live stays locked, and shared-v1 credentials use an audited server CLI rather than the non-step-up API.
 
 - M3 foundation preparation — normalized the locally committed M2 Rust edits so the workspace formatting gate is clean before connector work begins; the linked Rust build remains delegated to the Linux verification environment because the local Windows host has no MSVC linker.
