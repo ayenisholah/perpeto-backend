@@ -215,12 +215,12 @@ pub fn effective_action(breakers: &[CircuitBreakerDto]) -> Option<BreakerAction>
         BreakerAction::DisableVenue,
         BreakerAction::HaltNewRisk,
     ]
-        .into_iter()
-        .find(|action| {
-            breakers
-                .iter()
-                .any(|breaker| breaker.active && breaker.action == *action)
-        })
+    .into_iter()
+    .find(|action| {
+        breakers
+            .iter()
+            .any(|breaker| breaker.active && breaker.action == *action)
+    })
 }
 
 /// Append-only event used by the worker for deduplicated alerts.
