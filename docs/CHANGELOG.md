@@ -6,6 +6,8 @@ All notable repository changes are recorded here using Keep a Changelog categori
 
 ### Added
 
+- M3 Slices 13–15 — added the Binance Spot and USDⓈ-M adapter for BTC/ETH USDT metadata/books/funding, HMAC-signed account/order/fill/funding reads, exact order previews, Spot and Futures testnet submit/query/cancel, `-1007`/5xx unknown-outcome containment, and production-write refusal.
+
 - M3 Slices 10–12 — added the Bybit V5 adapter for BTC/ETH USDT spot and linear instruments, paginated exact metadata, snapshot market streams, funding, account/order/fill/funding-ledger reads, HMAC-authenticated testnet/demo writes, deterministic native order previews, asynchronous acknowledgement mapping, query-before-retry lookup, and fail-closed production submission.
 
 - M3 Slice 9 — added read-only connector reconciliation with bounded fill pagination, exact balance/position/fill/funding snapshots (`0013_connector_accounting.sql`), external/local order discrepancy detection, and durable reconciliation reports. No retry or corrective venue write occurs during reconciliation.
