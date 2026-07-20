@@ -79,6 +79,7 @@ impl BreakersRepo {
     }
 
     /// Activate a breaker idempotently for its scope/action.
+    #[allow(clippy::too_many_arguments)]
     pub async fn activate(
         &self,
         scope: BreakerScope,
@@ -208,20 +209,18 @@ fn action_wire(action: &BreakerAction) -> &'static str {
 /// Apply the documented safety precedence.
 #[must_use]
 pub fn effective_action(breakers: &[CircuitBreakerDto]) -> Option<BreakerAction> {
-    for action in [
+    [
         BreakerAction::ReadOnly,
         BreakerAction::Flatten,
         BreakerAction::DisableVenue,
         BreakerAction::HaltNewRisk,
-    ] {
-        if breakers
-            .iter()
-            .any(|breaker| breaker.active && breaker.action == action)
-        {
-            return Some(action);
-        }
-    }
-    None
+    ]
+        .into_iter()
+        .find(|action| {
+            breakers
+                .iter()
+                .any(|breaker| breaker.active && breaker.action == *action)
+        })
 }
 
 /// Append-only event used by the worker for deduplicated alerts.
