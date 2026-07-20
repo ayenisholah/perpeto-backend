@@ -6,6 +6,8 @@ All notable repository changes are recorded here using Keep a Changelog categori
 
 ### Added
 
+- M3 Slice 9 — added read-only connector reconciliation with bounded fill pagination, exact balance/position/fill/funding snapshots (`0013_connector_accounting.sql`), external/local order discrepancy detection, and durable reconciliation reports. No retry or corrective venue write occurs during reconciliation.
+
 - M3 Slice 8 — added durable exact-decimal connector order intents/events/fills and reconciliation tables (`0012_connector_execution.sql`) plus a sandbox-only submit-once coordinator. Intents are persisted before submission, duplicate client IDs never resubmit, production writes fail closed, and ambiguous responses require query-by-client-id reconciliation.
 
 - M3 Slice 7 — added an exact-decimal local order book that requires snapshots, accepts valid overlapping deltas, ignores duplicates, clears prices on sequence gaps, and computes deterministic executable VWAP without floating-point conversion.
