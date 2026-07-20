@@ -6,7 +6,7 @@ The backend is the only component allowed to evaluate opportunities, hold venue 
 
 ## Current status
 
-Milestone M1A is in progress. The repository has social-auth contracts, persistence schema, and domain invariants, but the Rust runtime remains health-only and is not a trading system. No venue connector or live-order path exists, and staging must remain in `PAPER` mode. See [PROGRESS.md](docs/PROGRESS.md) for evidence and blockers.
+M2 paper trading is complete and M3 CEX integration is in progress. The backend includes deterministic paper automation plus Binance, Bybit, and OKX exact-decimal connectors, encrypted server-side credentials, sandbox-only submit-once coordination, read-only shadow scanning, reconciliation, accounting monitoring, and certification evidence tooling. `LIVE` remains fail-closed; primary WebSocket streams and credentialed timed venue certification are still required. See [PROGRESS.md](docs/PROGRESS.md) and [the M3 certification runbook](docs/M3_CONNECTOR_CERTIFICATION.md).
 
 ## Authoritative documents
 
@@ -45,7 +45,7 @@ cargo test --workspace
 docker compose -f deploy/compose/docker-compose.staging.yml config
 ```
 
-The scaffold API exposes `/livez`, `/readyz`, and `/entryz` for infrastructure validation. `/entryz` is deliberately blocked until the required trading capabilities exist.
+The API exposes `/livez`, `/readyz`, and `/entryz` for mode-aware infrastructure and entry validation. PAPER is deterministic, SANDBOX permits only explicitly configured testnet/demo writes, SHADOW is read-only, and LIVE remains locked.
 
 ## Security
 

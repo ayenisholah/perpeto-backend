@@ -2,8 +2,8 @@
 
 ## Snapshot
 
-- Milestone: M2 — scanner and paper trading
-- Overall state: Complete
+- Milestone: M3 — CEX integrations
+- Overall state: In progress (engineering implemented through evidence tooling)
 - Last verified: 2026-07-20
 
 ## Completed
@@ -27,6 +27,9 @@
 - Started M2 Slice 3: a `funding-arb-domain::position` open-path state machine (§5.2 `QUALIFIED→RESERVED→OPENING→OPEN|OPEN_FAILED`) and a deterministic paper-fill simulator (`open_paper`) that sizes both legs, records order intents/fills, and gates residual delta against the new §6.2 unmatched-exposure cap on `RiskLimits`; a `funding-arb-execution-service` crate (`ExecutionService::open` reusing the deterministic scanner/fixtures, `PositionsRepo`, `0005_paper_positions.sql`); RBAC-gated `POST /api/v1/positions` (OWNER/TRADER, `Idempotency-Key`-deduped), `GET /api/v1/positions`, and `GET /api/v1/positions/{id}`; OpenAPI 0.5.0 / client `0.5.0`; and a mobile Positions screen plus an "Open paper position" action on the opportunity detail sheet.
 
 ## Not completed
+
+- Primary public/private WebSocket ingestion is not implemented; current connector streams poll REST snapshots and therefore do not satisfy the production real-time-path requirement.
+- Bybit/Binance testnet, OKX demo, and production read-only shadow evidence require least-privilege operator credentials and the time-based 72-hour/14-day certification windows.
 
 - The social-auth runtime adapters are implemented and deployed (`funding-arb-auth-service` + `axum` API). The shared v1 backend runs with `PERPETO_OPEN_REGISTRATION` enabled (DEC-0009), so new sign-ins get immediate full access; per-user backend isolation and the restored gated-approval/MFA flow are the v2 objective.
 - The completed M2 scanner, execution, strategy, and monitoring flows use deterministic paper fixtures only; no venue connector or production-ready live trading API exists. Position payloads persist as `f64`; lossless decimal persistence remains deferred.

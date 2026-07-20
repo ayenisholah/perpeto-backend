@@ -67,6 +67,8 @@ All notable repository changes are recorded here using Keep a Changelog categori
 
 ### Changed
 
+- Updated repository status and runtime examples to describe the implemented M2/M3 safety modes and the remaining WebSocket and credentialed certification gates without implying live readiness.
+
 - Rebranded Signex to **Perpeto**: renamed the `SIGNEX_*` runtime environment variables to `PERPETO_*`, the public API origin to `https://api.perpeto.xyz`, the Postgres role/database to `perpeto`, and the published contract package to `@ayenisholah/perpeto-api-client`. The Apple audience `com.signex.mobile` and the `signex://` OAuth redirect scheme are unchanged. Deployments must update `runtime.env` (new variable names, `DATABASE_URL`) and rename the database in lockstep — see `docs/DEPLOYMENT.md`.
 - Moved project-control documentation under `docs/` and recorded the temporary solo-maintainer administrator bypass policy.
 - Hardened the versioned API client to reject incompatible health payloads and verify compiled code and schemas before publication.
