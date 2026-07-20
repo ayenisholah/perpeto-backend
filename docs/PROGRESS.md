@@ -2,7 +2,7 @@
 
 ## Snapshot
 
-- Milestone: M3 — CEX integrations
+- Milestone: M3 — CEX connector certification
 - Overall state: In progress (engineering implemented through evidence tooling)
 - Last verified: 2026-07-20
 
@@ -31,8 +31,9 @@
 - Primary public/private WebSocket ingestion is not implemented; current connector streams poll REST snapshots and therefore do not satisfy the production real-time-path requirement.
 - Bybit/Binance testnet, OKX demo, and production read-only shadow evidence require least-privilege operator credentials and the time-based 72-hour/14-day certification windows.
 
-- The social-auth runtime adapters are implemented and deployed (`funding-arb-auth-service` + `axum` API). The shared v1 backend runs with `PERPETO_OPEN_REGISTRATION` enabled (DEC-0009), so new sign-ins get immediate full access; per-user backend isolation and the restored gated-approval/MFA flow are the v2 objective.
+- The social-auth runtime adapters are implemented and deployed (`funding-arb-auth-service` + `axum` API). The shared v1 backend currently runs the DEC-0009 full-access registration waiver. DEC-0012 supersedes that model for the target: M4 will create personal tenants, add passkeys and prohibit universal privilege for live use.
 - The completed M2 scanner, execution, strategy, and monitoring flows use deterministic paper fixtures only; no venue connector or production-ready live trading API exists. Position payloads persist as `f64`; lossless decimal persistence remains deferred.
+- Shared-VPS tenant isolation, forced PostgreSQL RLS, tenant-aware background work, Vault Transit, WebAuthn passkeys, consumer credential enrollment, per-account live preflight and production CEX writes are not implemented. Their accepted target is M4; the existing AES master-key/admin-CLI path is M3-only transitional tooling.
 - No venue has any certification evidence.
 - Live trading is unavailable by design.
 
@@ -46,3 +47,5 @@
 ## Next verified task
 
 Run the M3 connector certification workflow with least-privilege Bybit/Binance testnet and OKX demo credentials; live trading remains unavailable until the evidence is accepted.
+
+After M3 evidence closes, begin M4 Slice 1 with personal-tenant/authenticated-context persistence. Do not expose a consumer credential mutation endpoint before RLS, passkey verification and encrypt-only Vault access land together.

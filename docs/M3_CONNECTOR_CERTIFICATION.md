@@ -3,7 +3,10 @@
 M3 engineering and venue certification are separate gates. Fixture, client, and
 paper checks can pass without exchange credentials. A route remains `PAPER_ONLY`
 until its credentialed sandbox and production-shadow evidence meets Product Spec
-section 17.6 and is accepted by the Owner. `LIVE` remains unavailable.
+section 17.6 and is accepted as platform connector evidence. `LIVE` remains
+unavailable. M3 certification does not make any trader account live-eligible;
+M4 separately requires tenant isolation, Vault enrollment, account preflight and
+passkey-authorized arming.
 
 ## Credential requirements
 
@@ -41,6 +44,10 @@ funding-arb-connector-evidence public
 This command uses venue networks but no API keys and performs no writes.
 
 ## Import credentials
+
+> Transitional M3 operator-test flow only. This is not the consumer credential
+> path and is not approved for shared multi-user live operation. M4 replaces it
+> with passkey-authorized, one-use API enrollment into tenant-scoped Vault Transit.
 
 Run migrations, set `DATABASE_URL` and a base64-encoded 32-byte
 `PERPETO_SECRET_MASTER_KEY`, then pipe one credential JSON document through stdin:
@@ -87,3 +94,14 @@ append-only evidence record for review.
 Connector assumptions must be rechecked against the current official venue
 documentation before certification: Bybit V5, Binance Spot/USD-M Futures, and
 OKX V5 API documentation linked from Product Spec section 19.
+
+## Handoff to M4
+
+Accepted M3 evidence certifies connector code for a named venue/environment,
+product set, account mode and route. It can be reused across traders only within
+those exact bounds. Each trader account must still pass least-privilege permission
+inspection, account/margin-mode validation, private-stream health, balance/order/
+position reconciliation and read-only shadow checks. M4 records that account
+preflight separately and requires a fresh passkey assertion plus typed confirmation
+before live arming. A platform connector regression, venue API change or global
+breaker may invalidate every dependent account's eligibility.

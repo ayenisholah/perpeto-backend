@@ -1,5 +1,7 @@
 # Versioning
 
+Architecture documents may describe a future contract only when marked with its target milestone and implementation status. A documentation update does not reserve an API version or enable a runtime capability.
+
 The Perpeto backend follows [Semantic Versioning 2.0.0](https://semver.org/).
 
 ## Two independently versioned artifacts
@@ -38,5 +40,9 @@ Pre-1.0.0 (`0.y.z`), treat **MINOR** as the breaking-change lever and **PATCH** 
 4. The `vX.Y.Z` tag triggers [`.github/workflows/RELEASE.yml`](../.github/workflows/RELEASE.yml), which verifies the tag matches the workspace version, publishes a GitHub Release from the changelog section, and promotes the immutable `sha-<commit>` container image to `:vX.Y.Z` and `:latest`.
 
 ## Releasing the API client
+
+For M4, tenant identity is session-derived and never introduced as a caller-selectable header. Additive passkey, credential-preflight and live-eligibility resources receive a minor client version. Any release that changes authorization meaning, tenant visibility, secret handling or idempotency scope requires an explicit compatibility/security review and may require a major version even if its JSON shape appears additive.
+
+Never publish generated credential endpoints ahead of the backend's forced-RLS, passkey and Vault boundary. Mobile must pin the exact client version and fail closed when its live-control contract is incompatible.
 
 The client is published by [`PUBLISH_API.yml`](../.github/workflows/PUBLISH_API.yml). On a GitHub Release it publishes the version committed in `packages/api-client/package.json`; a manual `workflow_dispatch` can override with an explicit version. Bump `packages/api-client/package.json` (and re-pack the vendored tarball for the mobile app) whenever the OpenAPI contract in `schemas/` changes — this is separate from the workspace version.

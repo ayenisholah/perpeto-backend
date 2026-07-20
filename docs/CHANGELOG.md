@@ -6,6 +6,10 @@ All notable repository changes are recorded here using Keep a Changelog categori
 
 ### Added
 
+- Accepted and documented the M4 shared-VPS multi-user live architecture: one personal tenant per trader, authenticated tenant context with forced PostgreSQL RLS, passkey-authorized sensitive actions, per-tenant HashiCorp Vault Transit credentials with 2-of-3 manual unseal, per-account preflight/live arming, and tenant/global risk isolation. Added canonical `ARCHITECTURE.md` and `KEY_MANAGEMENT.md`; this is target design, not an implemented live capability.
+
+- Re-sequenced the roadmap so M3 certifies CEX connector code without production writes, M4 delivers limited multi-user CEX live, DEX moves to M5, hardening to M6, and broader rollout to M7. Documented that DEC-0012 supersedes DEC-0009's universal privilege and DEC-0011's CLI-only credential path for the M4 target.
+
 - M3 Slice 20 — added migration `0014_connector_certification_evidence.sql`, a credential-safe `funding-arb-connector-evidence` CLI for hashed fixtures, public no-key probes, and sanitized credentialed read/reconciliation probes, plus the M3 certification runbook. The probe performs no exchange writes; timed sandbox/shadow certification remains an explicit operational gate.
 
 - M3 Slice 19 — added exact connector observability over the durable execution and reconciliation records: recent normalized/native order intents, reconciliation summaries, and latest exact balance/venue-position snapshots are available through authenticated APIs and OpenAPI/client **0.13.0**. Decimal values remain strings and credential material is never returned.
