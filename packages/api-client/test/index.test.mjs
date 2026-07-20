@@ -497,6 +497,12 @@ describe("venue account contract", () => {
         if (String(url).endsWith("/test")) {
           return Response.json({ account_id: account.id, status: "PASS", checked_at: account.created_at, checks: [] });
         }
+        if (String(url).endsWith("/orders/preview")) {
+          return Response.json({ venue: "BYBIT", environment: "TESTNET", product: "LINEAR_PERPETUAL", native_symbol: "BTCUSDT", native_quantity: "0.001", equivalent_base_quantity: "0.001", native_price: "60000", projected_delta_usd: "60", payload_hash: "a".repeat(64), payload: {} });
+        }
+        if (String(url).endsWith("/orders")) {
+          return Response.json({ intent_id: account.id, state: "ACKNOWLEDGED", venue_order_id: "venue-1", client_order_id: "perpeto-1" });
+        }
         return Response.json(account);
       },
     });
@@ -504,8 +510,11 @@ describe("venue account contract", () => {
     assert.equal((await client.listVenueAccounts())[0].masked_identity, "****1234");
     assert.equal((await client.getVenueAccount(account.id)).masked_identity, "****1234");
     assert.equal((await client.testVenueAccount(account.id)).status, "PASS");
+    const order = { product: "LINEAR_PERPETUAL", symbol: "BTCUSDT", side: "SELL", base_quantity: "0.001", limit_price: "60000", client_order_id: "perpeto-1" };
+    assert.equal((await client.previewConnectorOrder(account.id, order)).native_quantity, "0.001");
+    assert.equal((await client.submitConnectorOrder(account.id, order)).state, "ACKNOWLEDGED");
     await client.disableVenueAccount(account.id);
-    assert.equal(requests.filter(([, method]) => method === "POST").length, 2);
+    assert.equal(requests.filter(([, method]) => method === "POST").length, 4);
     assert.equal(JSON.stringify(requests).includes("api_secret"), false);
   });
 });

@@ -5,5 +5,13 @@ edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
 
+[dependencies]
+funding-arb-domain = { path = "../../crates/funding-arb-domain" }
+funding-arb-connectors = { path = "../../crates/connectors" }
+funding-arb-venue-service = { path = "../../crates/venue-service" }
+chrono.workspace = true
+sqlx.workspace = true
+tokio = { workspace = true, features = ["time"] }
+
 [lints]
 workspace = true

@@ -8,6 +8,8 @@ use funding_arb_execution_service::{
 use funding_arb_scanner_service::ScannerRepo;
 use funding_arb_strategy_service::StrategiesRepo;
 use funding_arb_venue_service::VenueAccountsRepo;
+use funding_arb_venue_service::{ConnectorExecutionCoordinator, ConnectorRegistry};
+use std::sync::Arc;
 
 /// Cloneable state shared across all handlers.
 #[derive(Clone)]
@@ -32,4 +34,8 @@ pub struct AppState {
     pub monitoring: MonitoringRepo,
     /// Masked venue account and exact instrument persistence.
     pub venues: VenueAccountsRepo,
+    /// Encrypted connector registry; absent in paper mode.
+    pub connector_registry: Option<Arc<ConnectorRegistry>>,
+    /// Durable sandbox submit-once coordinator.
+    pub connector_execution: ConnectorExecutionCoordinator,
 }

@@ -13,6 +13,9 @@ use funding_arb_auth_service::dto::{
     MfaConfirmRequest, MfaVerifyRequest, RefreshRequest,
 };
 use funding_arb_auth_service::service::CallerContext;
+use funding_arb_connectors::{
+    AccountId, CanonicalOrderIntent, InstrumentId, OrderSide, ProductType,
+};
 use funding_arb_domain::market::Venue;
 use funding_arb_domain::risk::RiskLimits;
 use funding_arb_execution_service::{
@@ -21,6 +24,7 @@ use funding_arb_execution_service::{
 use funding_arb_scanner_service::{OpportunityScanDto, RiskLimitsDto};
 use funding_arb_strategy_service::StrategyDto;
 use funding_arb_venue_service::{CertificationState, ConnectionTestDto, VenueSummaryDto};
+use funding_arb_venue_service::{ConfiguredConnector, SubmissionState};
 use rust_decimal::Decimal;
 use rust_decimal::prelude::FromPrimitive;
 use serde::Deserialize;
@@ -1055,6 +1059,174 @@ pub async fn disable_venue_account(
     }
     state.venues.update(&account).await.map_err(internal)?;
     Ok(Json(account).into_response())
+}
+
+#[derive(Deserialize)]
+pub struct ConnectorOrderRequest {
+    product: String,
+    symbol: String,
+    side: String,
+    base_quantity: String,
+    limit_price: String,
+    client_order_id: String,
+    #[serde(default)]
+    reduce_only: bool,
+}
+
+/// `POST /api/v1/venue-accounts/{id}/orders/preview` — exact native payload only.
+pub async fn preview_connector_order(
+    State(state): State<AppState>,
+    Extension(caller): Extension<CallerContext>,
+    Path(id): Path<String>,
+    Json(request): Json<ConnectorOrderRequest>,
+) -> Result<Response, ApiError> {
+    caller.require_active()?;
+    if !caller.can_trade() {
+        return Err(AuthError::Forbidden.into());
+    }
+    let (configured, intent) = connector_intent(&state, &id, &request).await?;
+    let prepared = state
+        .connector_execution
+        .preview(configured.connector.as_ref(), &intent)
+        .await
+        .map_err(|error| ApiError(AuthError::Internal(error.to_string())))?;
+    Ok(Json(serde_json::json!({
+        "venue": configured.account.venue,
+        "environment": configured.environment.as_str(),
+        "product": configured.product.as_str(),
+        "native_symbol": prepared.native_symbol,
+        "native_quantity": prepared.native_quantity.to_string(),
+        "equivalent_base_quantity": prepared.equivalent_base_quantity.to_string(),
+        "native_price": prepared.native_price.to_string(),
+        "projected_delta_usd": prepared.projected_delta_usd.to_string(),
+        "payload_hash": prepared.payload_hash,
+        "payload": prepared.payload,
+    }))
+    .into_response())
+}
+
+/// `POST /api/v1/venue-accounts/{id}/orders` — sandbox-only durable submit-once.
+pub async fn submit_connector_order(
+    State(state): State<AppState>,
+    Extension(caller): Extension<CallerContext>,
+    Path(id): Path<String>,
+    Json(request): Json<ConnectorOrderRequest>,
+) -> Result<Response, ApiError> {
+    caller.require_active()?;
+    if !caller.can_trade() {
+        return Err(AuthError::Forbidden.into());
+    }
+    if !state.mode.allows_external_writes() {
+        return Err(AuthError::Conflict("runtime mode forbids connector submission").into());
+    }
+    if state
+        .breakers
+        .controls()
+        .await
+        .map_err(internal)?
+        .effective_action
+        .is_some()
+    {
+        return Err(AuthError::Conflict("circuit breaker blocks connector submission").into());
+    }
+    let (configured, intent) = connector_intent(&state, &id, &request).await?;
+    let result = state
+        .connector_execution
+        .submit_sandbox(
+            state.mode,
+            configured.environment,
+            configured.connector.as_ref(),
+            &intent,
+        )
+        .await
+        .map_err(|error| ApiError(AuthError::Internal(error.to_string())))?;
+    let status = match result.state {
+        SubmissionState::Duplicate => StatusCode::OK,
+        SubmissionState::Acknowledged => StatusCode::CREATED,
+        SubmissionState::UnknownOutcome => StatusCode::ACCEPTED,
+        SubmissionState::Failed => StatusCode::BAD_GATEWAY,
+    };
+    Ok((
+        status,
+        Json(serde_json::json!({
+            "intent_id": result.intent_id,
+            "state": match result.state {
+                SubmissionState::Duplicate => "DUPLICATE",
+                SubmissionState::Acknowledged => "ACKNOWLEDGED",
+                SubmissionState::UnknownOutcome => "UNKNOWN_OUTCOME",
+                SubmissionState::Failed => "FAILED",
+            },
+            "venue_order_id": result.acknowledgement.as_ref().and_then(|ack| ack.venue_order_id.clone()),
+            "client_order_id": request.client_order_id,
+        })),
+    )
+        .into_response())
+}
+
+async fn connector_intent(
+    state: &AppState,
+    account_id: &str,
+    request: &ConnectorOrderRequest,
+) -> Result<(ConfiguredConnector, CanonicalOrderIntent), ApiError> {
+    let product = match request.product.as_str() {
+        "SPOT" => ProductType::Spot,
+        "LINEAR_PERPETUAL" => ProductType::LinearPerpetual,
+        _ => return Err(AuthError::BadRequest("invalid connector product").into()),
+    };
+    let side = match request.side.as_str() {
+        "BUY" => OrderSide::Buy,
+        "SELL" => OrderSide::Sell,
+        _ => return Err(AuthError::BadRequest("invalid connector order side").into()),
+    };
+    let base_quantity = Decimal::from_str(&request.base_quantity)
+        .map_err(|_| AuthError::BadRequest("invalid base quantity"))?;
+    let limit_price = Decimal::from_str(&request.limit_price)
+        .map_err(|_| AuthError::BadRequest("invalid limit price"))?;
+    if base_quantity <= Decimal::ZERO || limit_price <= Decimal::ZERO {
+        return Err(AuthError::BadRequest("quantity and price must be positive").into());
+    }
+    if request.client_order_id.trim().is_empty() || request.client_order_id.len() > 32 {
+        return Err(AuthError::BadRequest("invalid client order id").into());
+    }
+    let registry = state
+        .connector_registry
+        .as_ref()
+        .ok_or(AuthError::Conflict("connector registry is unavailable"))?;
+    let configured = registry
+        .load(state.mode)
+        .await
+        .map_err(|error| ApiError(AuthError::Internal(error.to_string())))?
+        .into_iter()
+        .find(|configured| configured.account.id == account_id && configured.product == product)
+        .ok_or(AuthError::NotFound)?;
+    let symbol_allowed = match (
+        configured.account.venue.as_str(),
+        product,
+        request.symbol.as_str(),
+    ) {
+        ("BINANCE" | "BYBIT", _, "BTCUSDT" | "ETHUSDT") => true,
+        ("OKX", ProductType::Spot, "BTC-USDT" | "ETH-USDT") => true,
+        ("OKX", ProductType::LinearPerpetual, "BTC-USDT-SWAP" | "ETH-USDT-SWAP") => true,
+        _ => false,
+    };
+    if !symbol_allowed {
+        return Err(AuthError::BadRequest("instrument is outside the M3 allowlist").into());
+    }
+    let intent = CanonicalOrderIntent {
+        account_id: AccountId(account_id.into()),
+        instrument: InstrumentId {
+            venue: configured.connector.venue(),
+            symbol: request.symbol.clone(),
+            product,
+        },
+        side,
+        base_quantity,
+        limit_price,
+        time_in_force: "IOC".into(),
+        reduce_only: request.reduce_only,
+        client_order_id: request.client_order_id.clone(),
+    };
+    Ok((configured, intent))
 }
 
 fn internal(error: sqlx::Error) -> ApiError {

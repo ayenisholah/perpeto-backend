@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Perpeto Control API
-  version: 0.11.0
+  version: 0.12.0
   description: >-
     Social identity, MFA, and secure sessions plus the M2 deterministic paper
     scanner and coordinated simulated positions. Live execution remains unavailable.
@@ -844,6 +844,43 @@ paths:
         "401": { $ref: "#/components/responses/ProblemResponse" }
         "403": { $ref: "#/components/responses/ProblemResponse" }
         "404": { $ref: "#/components/responses/ProblemResponse" }
+  /api/v1/venue-accounts/{id}/orders/preview:
+    post:
+      tags: [Venues]
+      summary: Preview an exact native connector order without submission
+      operationId: previewConnectorOrder
+      parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ConnectorOrderRequest" }
+      responses:
+        "200": { description: Exact native payload preview., content: { application/json: { schema: { $ref: "#/components/schemas/ConnectorOrderPreview" } } } }
+        "400": { $ref: "#/components/responses/ProblemResponse" }
+        "401": { $ref: "#/components/responses/ProblemResponse" }
+        "403": { $ref: "#/components/responses/ProblemResponse" }
+        "404": { $ref: "#/components/responses/ProblemResponse" }
+  /api/v1/venue-accounts/{id}/orders:
+    post:
+      tags: [Venues]
+      summary: Persist and submit one non-production connector order
+      description: SANDBOX only. The unique client order id makes submission durable and submit-once. Production and SHADOW writes are rejected.
+      operationId: submitConnectorOrder
+      parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ConnectorOrderRequest" }
+      responses:
+        "200": { description: Duplicate intent returned without resubmission., content: { application/json: { schema: { $ref: "#/components/schemas/ConnectorSubmission" } } } }
+        "201": { description: Venue acknowledged the submission., content: { application/json: { schema: { $ref: "#/components/schemas/ConnectorSubmission" } } } }
+        "202": { description: Outcome unknown; reconciliation is required., content: { application/json: { schema: { $ref: "#/components/schemas/ConnectorSubmission" } } } }
+        "400": { $ref: "#/components/responses/ProblemResponse" }
+        "401": { $ref: "#/components/responses/ProblemResponse" }
+        "403": { $ref: "#/components/responses/ProblemResponse" }
+        "409": { $ref: "#/components/responses/ProblemResponse" }
 components:
   securitySchemes:
     bearerAuth:
@@ -927,6 +964,42 @@ components:
         status: { type: string, enum: [PASS, FAIL] }
         checked_at: { type: string, format: date-time }
         checks: { type: array, items: { type: string } }
+    ConnectorOrderRequest:
+      type: object
+      additionalProperties: false
+      required: [product, symbol, side, base_quantity, limit_price, client_order_id]
+      properties:
+        product: { type: string, enum: [SPOT, LINEAR_PERPETUAL] }
+        symbol: { type: string }
+        side: { type: string, enum: [BUY, SELL] }
+        base_quantity: { type: string, pattern: "^[0-9]+(\\.[0-9]+)?$" }
+        limit_price: { type: string, pattern: "^[0-9]+(\\.[0-9]+)?$" }
+        client_order_id: { type: string, minLength: 1, maxLength: 32 }
+        reduce_only: { type: boolean, default: false }
+    ConnectorOrderPreview:
+      type: object
+      additionalProperties: false
+      required: [venue, environment, product, native_symbol, native_quantity, equivalent_base_quantity, native_price, projected_delta_usd, payload_hash, payload]
+      properties:
+        venue: { type: string, enum: [BINANCE, BYBIT, OKX] }
+        environment: { type: string, enum: [PRODUCTION, TESTNET, DEMO] }
+        product: { type: string, enum: [SPOT, LINEAR_PERPETUAL] }
+        native_symbol: { type: string }
+        native_quantity: { type: string }
+        equivalent_base_quantity: { type: string }
+        native_price: { type: string }
+        projected_delta_usd: { type: string }
+        payload_hash: { type: string, pattern: "^[0-9a-f]{64}$" }
+        payload: { type: object, additionalProperties: true }
+    ConnectorSubmission:
+      type: object
+      additionalProperties: false
+      required: [intent_id, state, venue_order_id, client_order_id]
+      properties:
+        intent_id: { type: string, format: uuid }
+        state: { type: string, enum: [DUPLICATE, ACKNOWLEDGED, UNKNOWN_OUTCOME, FAILED] }
+        venue_order_id: { type: [string, "null"] }
+        client_order_id: { type: string }
     SocialProvider:
       type: string
       enum: [APPLE, GOOGLE]

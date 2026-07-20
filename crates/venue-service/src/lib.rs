@@ -3,6 +3,7 @@
 mod coordinator;
 mod dto;
 mod reconcile;
+mod registry;
 mod repo;
 mod secret;
 
@@ -14,6 +15,7 @@ pub use dto::{
     ReconciliationState, VenueAccountDto, VenueSummaryDto,
 };
 pub use reconcile::{ReconciliationError, ReconciliationReport, ReconciliationService};
+pub use registry::{ConfiguredConnector, ConnectorRegistry, RegistryError, decode_master_key};
 pub use repo::VenueAccountsRepo;
 pub use secret::{
     CredentialBundle, EncryptedPostgresSecretStore, SecretContext, SecretMetadata, SecretStore,

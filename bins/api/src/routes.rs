@@ -92,6 +92,14 @@ pub fn build_router(state: AppState) -> Router {
             "/api/v1/venue-accounts/{id}/disable",
             post(handlers::disable_venue_account),
         )
+        .route(
+            "/api/v1/venue-accounts/{id}/orders/preview",
+            post(handlers::preview_connector_order),
+        )
+        .route(
+            "/api/v1/venue-accounts/{id}/orders",
+            post(handlers::submit_connector_order),
+        )
         .layer(middleware::from_fn_with_state(state.clone(), require_auth));
 
     let public = Router::new()

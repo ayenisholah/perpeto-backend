@@ -18,7 +18,9 @@ use funding_arb_execution_service::{
 };
 use funding_arb_scanner_service::ScannerRepo;
 use funding_arb_strategy_service::StrategiesRepo;
-use funding_arb_venue_service::VenueAccountsRepo;
+use funding_arb_venue_service::{
+    ConnectorExecutionCoordinator, ConnectorRegistry, VenueAccountsRepo, decode_master_key,
+};
 use sqlx::postgres::PgPoolOptions;
 
 use crate::routes::build_router;
@@ -86,6 +88,26 @@ async fn run() -> ExitCode {
     let strategies = StrategiesRepo::new(pool.clone());
     let monitoring = MonitoringRepo::new(pool.clone());
     let venues = VenueAccountsRepo::new(pool.clone());
+    let connector_execution = ConnectorExecutionCoordinator::new(pool.clone());
+    let connector_registry = if mode.is_paper() {
+        None
+    } else {
+        let encoded = match env::var("PERPETO_SECRET_MASTER_KEY") {
+            Ok(value) => value,
+            Err(_) => {
+                eprintln!("PERPETO_SECRET_MASTER_KEY is required outside PAPER mode");
+                return ExitCode::FAILURE;
+            }
+        };
+        let master_key = match decode_master_key(&encoded) {
+            Ok(value) => value,
+            Err(error) => {
+                eprintln!("{error}");
+                return ExitCode::FAILURE;
+            }
+        };
+        Some(Arc::new(ConnectorRegistry::new(pool.clone(), master_key)))
+    };
     let execution = ExecutionService::default();
     let repo = Repo::new(pool);
 
@@ -114,6 +136,8 @@ async fn run() -> ExitCode {
         strategies,
         monitoring,
         venues,
+        connector_registry,
+        connector_execution,
     });
 
     let listener = match tokio::net::TcpListener::bind(&config.bind_address).await {

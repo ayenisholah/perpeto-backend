@@ -10,15 +10,21 @@ use std::str::FromStr;
 use std::time::Duration;
 
 use chrono::{DateTime, Utc};
+use funding_arb_connectors::{MarketEvent, MarketSubscription, ProductType};
 use funding_arb_domain::TradingMode;
+use funding_arb_domain::market::{FundingObservation, InstrumentRef};
 use funding_arb_domain::position::ExitReason;
 use funding_arb_execution_service::{
     BreakerAction, BreakerScope, BreakersRepo, ExecutionService, OutboxRepo, PositionDto,
     PositionsRepo,
 };
-use funding_arb_scanner_service::fixtures::{self, MarketStatus};
+use funding_arb_scanner_service::fixtures::{self, InstrumentKind, MarketLeg, MarketStatus};
 use funding_arb_scanner_service::{Scanner, ScannerRepo};
 use funding_arb_strategy_service::{PositionSummary, StrategiesRepo, StrategyService};
+use funding_arb_venue_service::{
+    ConfiguredConnector, ConnectorRegistry, InstrumentDto, VenueAccountsRepo, decode_master_key,
+};
+use futures_util::StreamExt;
 use rust_decimal::Decimal;
 use sqlx::postgres::PgPoolOptions;
 
@@ -28,10 +34,17 @@ const DEFAULT_SIM_START: &str = "2026-07-19T00:00:00Z";
 
 fn main() -> ExitCode {
     let mode = env::var("PERPETO_MODE").unwrap_or_else(|_| String::from("PAPER"));
-    if TradingMode::from_str(&mode) != Ok(TradingMode::Paper) {
-        eprintln!("M2 engine refuses every mode except PAPER");
-        return ExitCode::FAILURE;
-    }
+    let mode = match TradingMode::from_str(&mode) {
+        Ok(mode) if !mode.is_live() => mode,
+        Ok(_) => {
+            eprintln!("LIVE mode remains locked until certification");
+            return ExitCode::FAILURE;
+        }
+        Err(_) => {
+            eprintln!("invalid PERPETO_MODE");
+            return ExitCode::FAILURE;
+        }
+    };
 
     let runtime = match tokio::runtime::Runtime::new() {
         Ok(runtime) => runtime,
@@ -40,10 +53,10 @@ fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    runtime.block_on(run())
+    runtime.block_on(run(mode))
 }
 
-async fn run() -> ExitCode {
+async fn run(mode: TradingMode) -> ExitCode {
     let database_url = match env::var("DATABASE_URL") {
         Ok(value) => value,
         Err(_) => {
@@ -91,40 +104,79 @@ async fn run() -> ExitCode {
     let positions = PositionsRepo::new(pool.clone());
     let breakers = BreakersRepo::new(pool.clone());
     let outbox = OutboxRepo::new(pool.clone());
-    let strategies = StrategiesRepo::new(pool);
+    let strategies = StrategiesRepo::new(pool.clone());
+    let venues = VenueAccountsRepo::new(pool.clone());
+    let configured = if mode.is_paper() {
+        Vec::new()
+    } else {
+        let master_key = match env::var("PERPETO_SECRET_MASTER_KEY")
+            .map_err(|_| "PERPETO_SECRET_MASTER_KEY is required".to_owned())
+            .and_then(|value| decode_master_key(&value).map_err(|error| error.to_string()))
+        {
+            Ok(value) => value,
+            Err(error) => {
+                eprintln!("{error}");
+                return ExitCode::FAILURE;
+            }
+        };
+        match ConnectorRegistry::new(pool, master_key).load(mode).await {
+            Ok(value) if !value.is_empty() => value,
+            Ok(_) => {
+                eprintln!("no enabled connector accounts match {mode} mode");
+                return ExitCode::FAILURE;
+            }
+            Err(error) => {
+                eprintln!("failed to load connector registry: {error}");
+                return ExitCode::FAILURE;
+            }
+        }
+    };
     let execution = ExecutionService {
         scanner,
         ..ExecutionService::default()
     };
 
     println!(
-        "Perpeto M2 engine started; paper scanner and position supervision active \
-         (sleep {interval_secs}s, simulation step {sim_tick_secs}s)",
+        "Perpeto engine started in {mode} mode (sleep {interval_secs}s, simulation step {sim_tick_secs}s)",
     );
     let mut tick = 0_u64;
     loop {
-        let Some(now) = simulated_now(sim_start, tick, sim_tick_secs) else {
-            eprintln!("paper simulation clock overflowed");
-            return ExitCode::FAILURE;
+        let now = if mode.is_paper() {
+            let Some(now) = simulated_now(sim_start, tick, sim_tick_secs) else {
+                eprintln!("paper simulation clock overflowed");
+                return ExitCode::FAILURE;
+            };
+            now
+        } else {
+            Utc::now()
         };
-        activate_automatic_breakers(&positions, &breakers, &outbox, &execution, now).await;
-        supervise_open_positions(&positions, &breakers, &execution, now).await;
-        match scanner.scan(now) {
+        if mode.is_paper() {
+            activate_automatic_breakers(&positions, &breakers, &outbox, &execution, now).await;
+            supervise_open_positions(&positions, &breakers, &execution, now).await;
+        }
+        let scan = if mode.is_paper() {
+            scanner.scan(now).map_err(|error| error.to_string())
+        } else {
+            live_scan(&scanner, &configured, &venues, now).await
+        };
+        match scan {
             Ok(result) => {
                 let count = result.opportunities.len();
                 if let Err(error) = scan_repo.record_scan(&result).await {
                     eprintln!("failed to persist scan: {error}");
                 } else {
                     println!("scan complete at {now}: {count} eligible opportunities");
-                    auto_enter(
-                        &result.opportunities,
-                        &strategies,
-                        &positions,
-                        &breakers,
-                        &execution,
-                        now,
-                    )
-                    .await;
+                    if mode.is_paper() {
+                        auto_enter(
+                            &result.opportunities,
+                            &strategies,
+                            &positions,
+                            &breakers,
+                            &execution,
+                            now,
+                        )
+                        .await;
+                    }
                 }
             }
             Err(error) => eprintln!("scan failed: {error}"),
@@ -137,6 +189,168 @@ async fn run() -> ExitCode {
             }
         };
         tokio::time::sleep(Duration::from_secs(interval_secs)).await;
+    }
+}
+
+async fn live_scan(
+    scanner: &Scanner,
+    configured: &[ConfiguredConnector],
+    venues: &VenueAccountsRepo,
+    now: DateTime<Utc>,
+) -> Result<funding_arb_scanner_service::ScanResult, String> {
+    let mut legs = Vec::new();
+    for configured in configured {
+        let health = configured
+            .connector
+            .health()
+            .await
+            .map_err(|error| format!("{} health: {error}", configured.account.venue))?;
+        venues
+            .record_health(Some(&configured.account.id), &health)
+            .await
+            .map_err(|_| "failed to persist connector health".to_owned())?;
+        let status = match health.status {
+            funding_arb_connectors::HealthStatus::Healthy => MarketStatus::Healthy,
+            _ => MarketStatus::Degraded,
+        };
+        let instruments = configured
+            .connector
+            .instruments()
+            .await
+            .map_err(|error| format!("{} instruments: {error}", configured.account.venue))?;
+        for instrument in instruments
+            .into_iter()
+            .filter(|instrument| instrument.id.product == configured.product)
+        {
+            venues
+                .upsert_instrument(&instrument_dto(&instrument))
+                .await
+                .map_err(|_| "failed to persist exact instrument metadata".to_owned())?;
+            let subscription = MarketSubscription {
+                instrument: instrument.id.clone(),
+                depth: 50,
+            };
+            let mut stream = configured
+                .connector
+                .market_stream(vec![subscription])
+                .await
+                .map_err(|error| format!("{} market stream: {error}", configured.account.venue))?;
+            let event = stream
+                .next()
+                .await
+                .ok_or_else(|| "connector market stream ended".to_owned())?
+                .map_err(|error| format!("connector market snapshot: {error}"))?;
+            let (book_mark, available_notional, observed_at) =
+                book_measurement(event, instrument.contract_multiplier)?;
+            let (funding_rate, interval_hours, mark_price, index_price, next_funding_at) =
+                if configured.product == ProductType::LinearPerpetual {
+                    let funding = configured
+                        .connector
+                        .current_funding(&instrument.id)
+                        .await
+                        .map_err(|error| {
+                            format!("{} funding: {error}", configured.account.venue)
+                        })?;
+                    (
+                        funding.rate,
+                        funding.interval_hours,
+                        funding.mark_price,
+                        funding.index_price,
+                        funding.next_funding_at,
+                    )
+                } else {
+                    (
+                        Decimal::ZERO,
+                        8,
+                        book_mark,
+                        book_mark,
+                        now + chrono::Duration::hours(8),
+                    )
+                };
+            legs.push(MarketLeg {
+                kind: if configured.product == ProductType::Spot {
+                    InstrumentKind::Spot
+                } else {
+                    InstrumentKind::Perp
+                },
+                status,
+                observation: FundingObservation {
+                    instrument: InstrumentRef {
+                        venue: instrument.id.venue,
+                        symbol: instrument.id.symbol,
+                        underlying: instrument.canonical_underlying,
+                    },
+                    funding_rate,
+                    interval_hours,
+                    mark_price,
+                    index_price,
+                    available_notional,
+                    observed_at,
+                    next_funding_at,
+                },
+            });
+        }
+    }
+    Ok(scanner.scan_legs(now, &legs))
+}
+
+fn book_measurement(
+    event: MarketEvent,
+    contract_multiplier: Decimal,
+) -> Result<(Decimal, Decimal, DateTime<Utc>), String> {
+    let MarketEvent::BookSnapshot {
+        bids,
+        asks,
+        received_at,
+        ..
+    } = event
+    else {
+        return Err("connector did not provide a book snapshot".into());
+    };
+    let best_bid = bids
+        .first()
+        .ok_or_else(|| "connector book has no bids".to_owned())?;
+    let best_ask = asks
+        .first()
+        .ok_or_else(|| "connector book has no asks".to_owned())?;
+    if best_bid.price >= best_ask.price {
+        return Err("connector book is crossed".into());
+    }
+    let mark = (best_bid.price + best_ask.price) / Decimal::new(2, 0);
+    let bid_notional: Decimal = bids
+        .iter()
+        .map(|level| level.price * level.quantity * contract_multiplier)
+        .sum();
+    let ask_notional: Decimal = asks
+        .iter()
+        .map(|level| level.price * level.quantity * contract_multiplier)
+        .sum();
+    Ok((mark, bid_notional.min(ask_notional), received_at))
+}
+
+fn instrument_dto(instrument: &funding_arb_connectors::Instrument) -> InstrumentDto {
+    InstrumentDto {
+        venue: instrument.id.venue.as_str().into(),
+        symbol: instrument.id.symbol.clone(),
+        product: instrument.id.product.as_str().into(),
+        canonical_underlying: instrument.canonical_underlying.clone(),
+        quote_asset: instrument.quote_asset.clone(),
+        settlement_asset: instrument.settlement_asset.clone(),
+        margin_asset: instrument.margin_asset.clone(),
+        contract_multiplier: instrument.contract_multiplier.to_string(),
+        price_tick: instrument.price_tick.to_string(),
+        quantity_step: instrument.quantity_step.to_string(),
+        minimum_quantity: instrument.minimum_quantity.to_string(),
+        maximum_quantity: instrument.maximum_quantity.map(|value| value.to_string()),
+        minimum_notional: instrument.minimum_notional.to_string(),
+        funding_interval_hours: instrument.funding_interval_hours,
+        funding_cap: instrument.funding_cap.map(|value| value.to_string()),
+        funding_floor: instrument.funding_floor.map(|value| value.to_string()),
+        maximum_leverage: instrument.maximum_leverage.map(|value| value.to_string()),
+        trading: instrument.trading,
+        metadata_version: instrument.metadata_version.clone(),
+        venue_updated_at: instrument.venue_updated_at.map(|value| value.to_rfc3339()),
+        received_at: instrument.received_at.to_rfc3339(),
     }
 }
 

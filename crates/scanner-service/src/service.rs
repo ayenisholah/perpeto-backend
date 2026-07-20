@@ -54,7 +54,13 @@ impl Scanner {
     /// Returns [`FixtureError`] if the embedded market fixtures cannot load.
     pub fn scan(&self, now: DateTime<Utc>) -> Result<ScanResult, FixtureError> {
         let legs = fixtures::load_at(now)?;
-        let ranked = rank(self.build_opportunities(&legs), &self.risk_limits);
+        Ok(self.scan_legs(now, &legs))
+    }
+
+    /// Rank an already-normalized connector snapshot using the same deterministic pipeline.
+    #[must_use]
+    pub fn scan_legs(&self, now: DateTime<Utc>, legs: &[MarketLeg]) -> ScanResult {
+        let ranked = rank(self.build_opportunities(legs), &self.risk_limits);
         let opportunities = ranked
             .into_iter()
             .map(|opportunity| {
@@ -65,11 +71,11 @@ impl Scanner {
                 }
             })
             .collect();
-        Ok(ScanResult {
+        ScanResult {
             scanned_at: now,
             model_version: MODEL_VERSION,
             opportunities,
-        })
+        }
     }
 
     /// Rebuild one route at `now` before risk/eligibility filtering.

@@ -5,6 +5,7 @@ use sqlx::{PgPool, Row};
 use uuid::Uuid;
 
 use crate::{InstrumentDto, ProductConnectionDto, VenueAccountDto};
+use funding_arb_connectors::VenueHealth;
 
 #[derive(Clone)]
 pub struct VenueAccountsRepo {
@@ -159,6 +160,43 @@ impl VenueAccountsRepo {
         .bind(parse_optional_time(instrument.venue_updated_at.as_deref())?)
         .bind(parse_time(&instrument.received_at)?)
         .bind(serde_json::to_string(instrument).map_err(protocol)?)
+        .execute(&self.pool)
+        .await
+        .map(|_| ())
+    }
+
+    pub async fn record_health(
+        &self,
+        account_id: Option<&str>,
+        health: &VenueHealth,
+    ) -> Result<(), sqlx::Error> {
+        sqlx::query(
+            "INSERT INTO venue_health_samples
+             (id, venue_account_id, venue, environment, status, clock_drift_ms,
+              rate_limit_remaining, observed_at, payload)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
+        )
+        .bind(Uuid::new_v4())
+        .bind(account_id.map(parse_uuid).transpose()?)
+        .bind(health.venue.as_str())
+        .bind(health.environment.as_str())
+        .bind(format!("{:?}", health.status).to_ascii_uppercase())
+        .bind(health.clock_drift_ms)
+        .bind(
+            health
+                .rate_limit_remaining
+                .and_then(|value| i64::try_from(value).ok()),
+        )
+        .bind(health.observed_at)
+        .bind(
+            serde_json::json!({
+                "venue": health.venue.as_str(),
+                "environment": health.environment.as_str(),
+                "clock_drift_ms": health.clock_drift_ms,
+                "observed_at": health.observed_at.to_rfc3339(),
+            })
+            .to_string(),
+        )
         .execute(&self.pool)
         .await
         .map(|_| ())

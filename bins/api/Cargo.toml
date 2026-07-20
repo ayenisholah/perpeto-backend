@@ -7,6 +7,7 @@ rust-version.workspace = true
 
 [dependencies]
 funding-arb-domain = { path = "../../crates/funding-arb-domain" }
+funding-arb-connectors = { path = "../../crates/connectors" }
 funding-arb-auth-service = { path = "../../crates/auth-service" }
 funding-arb-scanner-service = { path = "../../crates/scanner-service" }
 funding-arb-execution-service = { path = "../../crates/execution-service" }

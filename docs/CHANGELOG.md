@@ -6,6 +6,8 @@ All notable repository changes are recorded here using Keep a Changelog categori
 
 ### Added
 
+- M3 Slice 18 — wired encrypted account configuration into a fail-closed connector registry, live exact market snapshots into the existing scanner in `SHADOW`/`SANDBOX`, connector health/instrument persistence, scheduled account reconciliation, and durable preview/submit-once sandbox order APIs. OpenAPI/client **0.12.0** exposes exact string quantities, native payload hashes, acknowledgements, duplicates, and unknown outcomes; SHADOW and production submission remain blocked.
+
 - M3 Slices 16–17 — added the OKX V5 adapter for BTC/ETH USDT spot and swaps, exact contract-multiplier/lot conversion, regional REST origins, funding/account/order/fill/bill reads, HMAC+passphrase authentication, mandatory demo header, demo submit/query/cancel, and production-write refusal.
 
 - M3 Slices 13–15 — added the Binance Spot and USDⓈ-M adapter for BTC/ETH USDT metadata/books/funding, HMAC-signed account/order/fill/funding reads, exact order previews, Spot and Futures testnet submit/query/cancel, `-1007`/5xx unknown-outcome containment, and production-write refusal.

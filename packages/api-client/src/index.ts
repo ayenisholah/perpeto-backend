@@ -1,4 +1,4 @@
-export const schemaVersion = "0.11.0" as const;
+export const schemaVersion = "0.12.0" as const;
 
 export type SocialProvider = "APPLE" | "GOOGLE";
 export type AuthNextState =
@@ -54,6 +54,36 @@ export interface ConnectionTest {
   readonly status: "PASS" | "FAIL";
   readonly checked_at: string;
   readonly checks: readonly string[];
+}
+
+export interface ConnectorOrderRequest {
+  readonly product: "SPOT" | "LINEAR_PERPETUAL";
+  readonly symbol: string;
+  readonly side: "BUY" | "SELL";
+  readonly base_quantity: string;
+  readonly limit_price: string;
+  readonly client_order_id: string;
+  readonly reduce_only?: boolean;
+}
+
+export interface ConnectorOrderPreview {
+  readonly venue: "BINANCE" | "BYBIT" | "OKX";
+  readonly environment: "PRODUCTION" | "TESTNET" | "DEMO";
+  readonly product: "SPOT" | "LINEAR_PERPETUAL";
+  readonly native_symbol: string;
+  readonly native_quantity: string;
+  readonly equivalent_base_quantity: string;
+  readonly native_price: string;
+  readonly projected_delta_usd: string;
+  readonly payload_hash: string;
+  readonly payload: Readonly<Record<string, unknown>>;
+}
+
+export interface ConnectorSubmission {
+  readonly intent_id: string;
+  readonly state: "DUPLICATE" | "ACKNOWLEDGED" | "UNKNOWN_OUTCOME" | "FAILED";
+  readonly venue_order_id: string | null;
+  readonly client_order_id: string;
 }
 
 export interface CurrentUser {
@@ -719,6 +749,8 @@ export class PerpetoClient {
   public getVenueAccount(id: string): Promise<VenueAccount> { return this.#request(`/api/v1/venue-accounts/${encodeURIComponent(id)}`); }
   public testVenueAccount(id: string): Promise<ConnectionTest> { return this.#request(`/api/v1/venue-accounts/${encodeURIComponent(id)}/test`, { method: "POST" }); }
   public disableVenueAccount(id: string): Promise<VenueAccount> { return this.#request(`/api/v1/venue-accounts/${encodeURIComponent(id)}/disable`, { method: "POST" }); }
+  public previewConnectorOrder(id: string, request: ConnectorOrderRequest): Promise<ConnectorOrderPreview> { return this.#request(`/api/v1/venue-accounts/${encodeURIComponent(id)}/orders/preview`, { method: "POST", body: JSON.stringify(request) }); }
+  public submitConnectorOrder(id: string, request: ConnectorOrderRequest): Promise<ConnectorSubmission> { return this.#request(`/api/v1/venue-accounts/${encodeURIComponent(id)}/orders`, { method: "POST", body: JSON.stringify(request) }); }
 }
 
 function randomIdempotencyKey(): string {

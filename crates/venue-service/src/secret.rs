@@ -28,6 +28,18 @@ impl fmt::Debug for CredentialBundle {
     }
 }
 
+impl CredentialBundle {
+    /// Copy into the short-lived connector container; both copies zeroize on drop.
+    #[must_use]
+    pub fn connector_credentials(&self) -> funding_arb_connectors::ConnectorCredentials {
+        funding_arb_connectors::ConnectorCredentials {
+            api_key: self.api_key.clone(),
+            api_secret: self.api_secret.clone(),
+            passphrase: self.passphrase.clone(),
+        }
+    }
+}
+
 /// Immutable binding used as authenticated encryption context.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SecretContext {
