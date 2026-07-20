@@ -118,7 +118,9 @@ impl AuthConfig {
             .filter(|value| !value.trim().is_empty());
 
         let mfa_encryption_key = match env::var("PERPETO_MFA_KEY") {
-            Ok(value) if !value.trim().is_empty() => Some(decode_key_32("PERPETO_MFA_KEY", &value)?),
+            Ok(value) if !value.trim().is_empty() => {
+                Some(decode_key_32("PERPETO_MFA_KEY", &value)?)
+            }
             _ => None,
         };
 

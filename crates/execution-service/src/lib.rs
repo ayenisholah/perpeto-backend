@@ -6,10 +6,17 @@
 //! the API to serve. Paper-only and network-free; venue connectors arrive in M3
 //! and funding capture / close arrive in the next slice.
 
+pub mod controls;
 pub mod dto;
 pub mod repo;
 pub mod service;
 
-pub use dto::{OpenPositionRequest, PositionDto, PositionLegDto, PositionListDto};
+pub use controls::{
+    BreakerAction, BreakerScope, BreakersRepo, CircuitBreakerDto, ControlsDto, OutboxRepo,
+};
+pub use dto::{
+    FillOutcomeDto, OpenPositionRequest, PaperFillScenarioDto, PositionDto, PositionLegDto,
+    PositionListDto,
+};
 pub use repo::PositionsRepo;
 pub use service::{ExecutionService, OpenError, SuperviseError};

@@ -39,24 +39,30 @@ pub struct RiskLimits {
     pub max_unmatched_usd: Decimal,
     /// Cap on unmatched exposure as a fraction of reference equity.
     pub max_unmatched_fraction: Decimal,
+    /// Maximum realized loss in one UTC day as a fraction of reference equity.
+    pub max_daily_loss_fraction: Decimal,
+    /// Maximum peak-to-current equity drawdown fraction.
+    pub max_drawdown_fraction: Decimal,
 }
 
 impl Default for RiskLimits {
     fn default() -> Self {
         Self {
             reference_equity: Decimal::from(1_000_000),
-            max_portfolio_fraction: Decimal::new(70, 2),  // 0.70
+            max_portfolio_fraction: Decimal::new(70, 2), // 0.70
             max_opportunity_fraction: Decimal::new(10, 2), // 0.10
-            max_underlying_fraction: Decimal::new(20, 2),  // 0.20
-            max_venue_fraction: Decimal::new(35, 2),       // 0.35
-            max_leverage: Decimal::from(2),                // 2.0x
-            min_profitability: Decimal::new(70, 2),        // 0.70
-            min_net_apr: Decimal::new(15, 2),              // 0.15
-            max_entry_basis_bps: Decimal::from(100),       // 100 bps
-            min_depth_multiple: Decimal::from(5),          // 5x
+            max_underlying_fraction: Decimal::new(20, 2), // 0.20
+            max_venue_fraction: Decimal::new(35, 2),     // 0.35
+            max_leverage: Decimal::from(2),              // 2.0x
+            min_profitability: Decimal::new(70, 2),      // 0.70
+            min_net_apr: Decimal::new(15, 2),            // 0.15
+            max_entry_basis_bps: Decimal::from(100),     // 100 bps
+            min_depth_multiple: Decimal::from(5),        // 5x
             min_reserved_notional: Decimal::from(1_000),
-            max_unmatched_usd: Decimal::from(1_000),       // USD 1,000
-            max_unmatched_fraction: Decimal::new(5, 3),    // 0.5% of equity
+            max_unmatched_usd: Decimal::from(1_000), // USD 1,000
+            max_unmatched_fraction: Decimal::new(5, 3), // 0.5% of equity
+            max_daily_loss_fraction: Decimal::new(2, 2), // 2% of equity
+            max_drawdown_fraction: Decimal::new(5, 2), // 5% of equity
         }
     }
 }

@@ -59,7 +59,10 @@ impl Scanner {
             .into_iter()
             .map(|opportunity| {
                 let assessment = self.risk_limits.assess(&opportunity);
-                RankedOpportunity { opportunity, assessment }
+                RankedOpportunity {
+                    opportunity,
+                    assessment,
+                }
             })
             .collect();
         Ok(ScanResult {
@@ -147,8 +150,14 @@ impl Scanner {
         Opportunity::build(
             route_type,
             underlying,
-            RouteLeg { is_long: true, forecast: long_forecast },
-            RouteLeg { is_long: false, forecast: short_forecast },
+            RouteLeg {
+                is_long: true,
+                forecast: long_forecast,
+            },
+            RouteLeg {
+                is_long: false,
+                forecast: short_forecast,
+            },
             capacity,
             &self.cost_model,
         )
@@ -168,8 +177,16 @@ mod tests {
         let second = scanner.scan(now).expect("fixtures load");
 
         assert!(!first.opportunities.is_empty());
-        let ids: Vec<&str> = first.opportunities.iter().map(|o| o.opportunity.route_id.as_str()).collect();
-        let ids2: Vec<&str> = second.opportunities.iter().map(|o| o.opportunity.route_id.as_str()).collect();
+        let ids: Vec<&str> = first
+            .opportunities
+            .iter()
+            .map(|o| o.opportunity.route_id.as_str())
+            .collect();
+        let ids2: Vec<&str> = second
+            .opportunities
+            .iter()
+            .map(|o| o.opportunity.route_id.as_str())
+            .collect();
         assert_eq!(ids, ids2, "scan output must be deterministic");
 
         for pair in first.opportunities.windows(2) {
@@ -179,8 +196,18 @@ mod tests {
             );
         }
         // Every ranked opportunity clears the hard risk gates and carries a reservation.
-        assert!(first.opportunities.iter().all(|o| o.assessment.within_limits));
-        assert!(first.opportunities.iter().all(|o| o.assessment.reserved_notional > rust_decimal::Decimal::ZERO));
+        assert!(
+            first
+                .opportunities
+                .iter()
+                .all(|o| o.assessment.within_limits)
+        );
+        assert!(
+            first
+                .opportunities
+                .iter()
+                .all(|o| o.assessment.reserved_notional > rust_decimal::Decimal::ZERO)
+        );
     }
 
     #[test]

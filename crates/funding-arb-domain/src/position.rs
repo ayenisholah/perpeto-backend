@@ -53,6 +53,8 @@ pub enum PositionState {
     Open,
     /// Opening aborted (e.g. residual delta exceeded the cap).
     OpenFailed,
+    /// An incomplete or unknown paired fill is being reconciled.
+    Recovering,
     /// A corrective hedge is being filled.
     Rehedging,
     /// Both legs are being flattened.
@@ -71,6 +73,7 @@ impl PositionState {
             Self::Opening => "OPENING",
             Self::Open => "OPEN",
             Self::OpenFailed => "OPEN_FAILED",
+            Self::Recovering => "RECOVERING",
             Self::Rehedging => "REHEDGING",
             Self::Closing => "CLOSING",
             Self::Closed => "CLOSED",
@@ -86,6 +89,7 @@ impl PositionState {
             "OPENING" => Self::Opening,
             "OPEN" => Self::Open,
             "OPEN_FAILED" => Self::OpenFailed,
+            "RECOVERING" => Self::Recovering,
             "REHEDGING" => Self::Rehedging,
             "CLOSING" => Self::Closing,
             "CLOSED" => Self::Closed,
@@ -102,6 +106,10 @@ impl PositionState {
                 | (Self::Reserved, Self::Opening)
                 | (Self::Opening, Self::Open)
                 | (Self::Opening, Self::OpenFailed)
+                | (Self::Opening, Self::Recovering)
+                | (Self::OpenFailed, Self::Recovering)
+                | (Self::Recovering, Self::Open)
+                | (Self::Recovering, Self::Closed)
                 // Forward-compatible edges exercised by the next slice:
                 | (Self::Open, Self::Rehedging)
                 | (Self::Rehedging, Self::Open)
@@ -146,6 +154,10 @@ pub enum ExitReason {
     VenueUnhealthy,
     /// An operator closed the position.
     Manual,
+    /// Opening recovery could not safely complete the pair and flattened it.
+    RecoveryFailure,
+    /// A circuit breaker required the position to be flattened.
+    CircuitBreaker,
 }
 
 impl ExitReason {
@@ -157,6 +169,8 @@ impl ExitReason {
             Self::ThresholdBreach => "THRESHOLD_BREACH",
             Self::VenueUnhealthy => "VENUE_UNHEALTHY",
             Self::Manual => "MANUAL",
+            Self::RecoveryFailure => "RECOVERY_FAILURE",
+            Self::CircuitBreaker => "CIRCUIT_BREAKER",
         }
     }
 
@@ -168,6 +182,8 @@ impl ExitReason {
             "THRESHOLD_BREACH" => Some(Self::ThresholdBreach),
             "VENUE_UNHEALTHY" => Some(Self::VenueUnhealthy),
             "MANUAL" => Some(Self::Manual),
+            "RECOVERY_FAILURE" => Some(Self::RecoveryFailure),
+            "CIRCUIT_BREAKER" => Some(Self::CircuitBreaker),
             _ => None,
         }
     }
@@ -200,6 +216,48 @@ pub struct LegExecution {
 pub struct PaperFillConfig {
     /// The base-quantity lot step each leg is rounded down to.
     pub lot_step: Decimal,
+}
+
+/// Deterministic result returned by one paper leg submission.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum FillOutcome {
+    /// The requested quantity is authoritative and fully filled.
+    Full,
+    /// Only the supplied fraction is authoritatively filled.
+    Partial(Decimal),
+    /// Submission was ambiguous; reconciliation authoritatively finds this fraction.
+    Unknown(Decimal),
+}
+
+impl FillOutcome {
+    fn fraction(self) -> Decimal {
+        match self {
+            Self::Full => Decimal::ONE,
+            Self::Partial(value) | Self::Unknown(value) => value.clamp(Decimal::ZERO, Decimal::ONE),
+        }
+    }
+
+    fn requires_recovery(self) -> bool {
+        !matches!(self, Self::Full)
+    }
+}
+
+/// Per-leg deterministic fill scenario for a paired paper open.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PaperFillScenario {
+    /// Long-leg submission result.
+    pub long: FillOutcome,
+    /// Short-leg submission result.
+    pub short: FillOutcome,
+}
+
+impl Default for PaperFillScenario {
+    fn default() -> Self {
+        Self {
+            long: FillOutcome::Full,
+            short: FillOutcome::Full,
+        }
+    }
 }
 
 impl Default for PaperFillConfig {
@@ -318,6 +376,7 @@ fn leg(
     notional: Decimal,
     cost: &CostModel,
     fill: &PaperFillConfig,
+    outcome: FillOutcome,
 ) -> PositionLeg {
     let target_qty = if exec.mark_price.is_zero() {
         Decimal::ZERO
@@ -331,7 +390,8 @@ fn leg(
         Decimal::ONE - cost.slippage
     };
     let price = exec.mark_price * slip;
-    let fee = target_qty * price * cost.taker_fee;
+    let filled_qty = round_to_step(target_qty * outcome.fraction(), fill.lot_step);
+    let fee = filled_qty * price * cost.taker_fee;
     let client_order_id = format!("fa-{position_short}-open-{label}-1");
     let order = PaperOrder {
         client_order_id: client_order_id.clone(),
@@ -342,7 +402,7 @@ fn leg(
     };
     let fill_record = PaperFill {
         client_order_id,
-        qty: target_qty,
+        qty: filled_qty,
         price,
         fee,
     };
@@ -354,7 +414,7 @@ fn leg(
         funding_rate: exec.funding_rate,
         funding_interval_hours: exec.funding_interval_hours,
         target_qty,
-        filled_qty: target_qty,
+        filled_qty,
         avg_fill_price: price,
         fees: fee,
         orders: vec![order],
@@ -385,6 +445,40 @@ pub fn open_paper(
     limits: &RiskLimits,
     now: DateTime<Utc>,
 ) -> ArbitragePosition {
+    open_paper_with_scenario(
+        id,
+        idempotency_key,
+        opportunity,
+        long_exec,
+        short_exec,
+        requested_notional,
+        reserved_capital,
+        cost,
+        fill,
+        limits,
+        PaperFillScenario::default(),
+        now,
+    )
+}
+
+/// Open with deterministic per-leg partial or unknown outcomes and recover the
+/// authoritative unmatched quantity before returning.
+#[must_use]
+#[allow(clippy::too_many_arguments)]
+pub fn open_paper_with_scenario(
+    id: String,
+    idempotency_key: String,
+    opportunity: &Opportunity,
+    long_exec: &LegExecution,
+    short_exec: &LegExecution,
+    requested_notional: Decimal,
+    reserved_capital: Decimal,
+    cost: &CostModel,
+    fill: &PaperFillConfig,
+    limits: &RiskLimits,
+    scenario: PaperFillScenario,
+    now: DateTime<Utc>,
+) -> ArbitragePosition {
     let position_short: String = id.chars().take(8).collect();
     let long_leg = leg(
         &position_short,
@@ -395,6 +489,7 @@ pub fn open_paper(
         requested_notional,
         cost,
         fill,
+        scenario.long,
     );
     let short_leg = leg(
         &position_short,
@@ -405,20 +500,23 @@ pub fn open_paper(
         requested_notional,
         cost,
         fill,
+        scenario.short,
     );
 
     let residual_base = long_leg.filled_qty - short_leg.filled_qty;
     let reference_price = (long_exec.mark_price + short_exec.mark_price) / Decimal::from(2);
     let residual_delta_usd = abs(residual_base) * reference_price;
 
-    // Walk the open path; the residual gate decides Open vs OpenFailed.
-    let state = if residual_delta_usd <= limits.max_unmatched() {
+    // Any partial/unknown submission is reconciled before the position can open.
+    let state = if scenario.long.requires_recovery() || scenario.short.requires_recovery() {
+        PositionState::Recovering
+    } else if residual_delta_usd <= limits.max_unmatched() {
         PositionState::Open
     } else {
         PositionState::OpenFailed
     };
 
-    ArbitragePosition {
+    let position = ArbitragePosition {
         id,
         route_id: opportunity.route_id.clone(),
         underlying: opportunity.underlying.clone(),
@@ -437,7 +535,98 @@ pub fn open_paper(
         opened_at: now,
         closed_at: None,
         idempotency_key,
+    };
+    recover_opening(
+        position,
+        long_exec.mark_price,
+        short_exec.mark_price,
+        limits,
+        cost,
+        fill,
+    )
+}
+
+fn recovery_slippage_cap(underlying: &str) -> Decimal {
+    if matches!(underlying, "BTC" | "ETH") {
+        Decimal::new(10, 4)
+    } else {
+        Decimal::new(25, 4)
     }
+}
+
+/// Reconcile an incomplete paired open, complete the smaller leg inside the
+/// configured slippage-loss cap, or flatten when the cap would be exceeded.
+#[must_use]
+pub fn recover_opening(
+    mut position: ArbitragePosition,
+    long_mark: Decimal,
+    short_mark: Decimal,
+    limits: &RiskLimits,
+    cost: &CostModel,
+    fill: &PaperFillConfig,
+) -> ArbitragePosition {
+    if position.state != PositionState::Recovering {
+        return position;
+    }
+    let net = net_delta_usd(
+        position.long_leg.filled_qty,
+        long_mark,
+        position.short_leg.filled_qty,
+        short_mark,
+    );
+    let unmatched = abs(net);
+    let loss = unmatched * cost.slippage;
+    let loss_cap = unmatched * recovery_slippage_cap(&position.underlying);
+    if loss <= loss_cap {
+        let position_short: String = position.id.chars().take(8).collect();
+        if net.is_sign_positive() && !short_mark.is_zero() {
+            let quantity = round_to_step(net / short_mark, fill.lot_step);
+            if quantity > Decimal::ZERO {
+                position.short_leg = append_hedge_fill(
+                    &position_short,
+                    "short",
+                    position.short_leg,
+                    short_mark,
+                    quantity,
+                    cost,
+                );
+            }
+        } else if net.is_sign_negative() && !long_mark.is_zero() {
+            let quantity = round_to_step(abs(net) / long_mark, fill.lot_step);
+            if quantity > Decimal::ZERO {
+                position.long_leg = append_hedge_fill(
+                    &position_short,
+                    "long",
+                    position.long_leg,
+                    long_mark,
+                    quantity,
+                    cost,
+                );
+            }
+        }
+        position.residual_delta_usd = abs(net_delta_usd(
+            position.long_leg.filled_qty,
+            long_mark,
+            position.short_leg.filled_qty,
+            short_mark,
+        ));
+        if position.residual_delta_usd <= limits.max_unmatched() {
+            position.state = PositionState::Open;
+            return position;
+        }
+    }
+
+    let position_short: String = position.id.chars().take(8).collect();
+    let (long_leg, long_pnl) = close_leg(&position_short, "long", position.long_leg, cost);
+    let (short_leg, short_pnl) = close_leg(&position_short, "short", position.short_leg, cost);
+    position.long_leg = long_leg;
+    position.short_leg = short_leg;
+    position.realized_pnl = long_pnl + short_pnl - position.long_leg.fees - position.short_leg.fees;
+    position.residual_delta_usd = Decimal::ZERO;
+    position.exit_reason = Some(ExitReason::RecoveryFailure);
+    position.closed_at = Some(position.opened_at);
+    position.state = PositionState::Closed;
+    position
 }
 
 /// Deterministic funding capture (PRODUCT_SPEC §3.3).
@@ -709,8 +898,9 @@ pub fn close_paper(
 #[cfg(test)]
 mod tests {
     use super::{
-        ExitDecision, ExitReason, LegExecution, PaperFillConfig, PositionState, close_paper,
-        evaluate_exit, net_delta_usd, open_paper, re_hedge, settle_funding,
+        ExitDecision, ExitReason, FillOutcome, LegExecution, PaperFillConfig, PaperFillScenario,
+        PositionState, close_paper, evaluate_exit, net_delta_usd, open_paper,
+        open_paper_with_scenario, re_hedge, settle_funding,
     };
     use crate::forecast::{ForecastConfig, forecast};
     use crate::market::{FundingObservation, InstrumentRef, RouteType, Venue};
@@ -777,6 +967,9 @@ mod tests {
         assert!(PositionState::Reserved.can_transition(PositionState::Opening));
         assert!(PositionState::Opening.can_transition(PositionState::Open));
         assert!(PositionState::Opening.can_transition(PositionState::OpenFailed));
+        assert!(PositionState::Opening.can_transition(PositionState::Recovering));
+        assert!(PositionState::Recovering.can_transition(PositionState::Open));
+        assert!(PositionState::Recovering.can_transition(PositionState::Closed));
         assert!(PositionState::Open.can_transition(PositionState::Rehedging));
         assert!(PositionState::Rehedging.can_transition(PositionState::Open));
         // Illegal skips are rejected.
@@ -792,6 +985,89 @@ mod tests {
             .expect_err("illegal edge is rejected");
         assert_eq!(rejected.from, PositionState::Qualified);
         assert_eq!(rejected.to, PositionState::Open);
+    }
+
+    #[test]
+    fn unknown_fill_is_reconciled_and_hedged_before_open() {
+        let opp = opportunity();
+        let long_exec = LegExecution {
+            symbol: "BTCUSDT".into(),
+            mark_price: Decimal::from(30_000),
+            funding_rate: Decimal::new(1, 4),
+            funding_interval_hours: 8,
+        };
+        let short_exec = LegExecution {
+            symbol: "BTCUSDT".into(),
+            mark_price: Decimal::from(30_030),
+            funding_rate: Decimal::new(30, 4),
+            funding_interval_hours: 8,
+        };
+        let position = open_paper_with_scenario(
+            "0190abcd-4444-7000-8000-000000000004".into(),
+            "recover-unknown".into(),
+            &opp,
+            &long_exec,
+            &short_exec,
+            Decimal::from(100_000),
+            Decimal::from(100_000),
+            &CostModel::default(),
+            &PaperFillConfig::default(),
+            &RiskLimits::default(),
+            PaperFillScenario {
+                long: FillOutcome::Unknown(Decimal::new(5, 1)),
+                short: FillOutcome::Full,
+            },
+            Utc::now(),
+        );
+        assert_eq!(position.state, PositionState::Open);
+        assert!(
+            position
+                .long_leg
+                .orders
+                .iter()
+                .any(|order| order.client_order_id.contains("-hedge-long-"))
+        );
+        assert!(position.residual_delta_usd <= RiskLimits::default().max_unmatched());
+    }
+
+    #[test]
+    fn partial_fill_flattens_when_recovery_loss_exceeds_cap() {
+        let opp = opportunity();
+        let long_exec = LegExecution {
+            symbol: "BTCUSDT".into(),
+            mark_price: Decimal::from(30_000),
+            funding_rate: Decimal::new(1, 4),
+            funding_interval_hours: 8,
+        };
+        let short_exec = LegExecution {
+            symbol: "BTCUSDT".into(),
+            mark_price: Decimal::from(30_030),
+            funding_rate: Decimal::new(30, 4),
+            funding_interval_hours: 8,
+        };
+        let mut cost = CostModel::default();
+        cost.slippage = Decimal::new(2, 2);
+        let position = open_paper_with_scenario(
+            "0190abcd-5555-7000-8000-000000000005".into(),
+            "recover-flatten".into(),
+            &opp,
+            &long_exec,
+            &short_exec,
+            Decimal::from(100_000),
+            Decimal::from(100_000),
+            &cost,
+            &PaperFillConfig::default(),
+            &RiskLimits::default(),
+            PaperFillScenario {
+                long: FillOutcome::Partial(Decimal::new(5, 1)),
+                short: FillOutcome::Full,
+            },
+            Utc::now(),
+        );
+        assert_eq!(position.state, PositionState::Closed);
+        assert_eq!(position.exit_reason, Some(ExitReason::RecoveryFailure));
+        assert_eq!(position.long_leg.filled_qty, Decimal::ZERO);
+        assert_eq!(position.short_leg.filled_qty, Decimal::ZERO);
     }
 
     #[test]

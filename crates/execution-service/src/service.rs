@@ -10,11 +10,11 @@ use std::fmt;
 use chrono::{DateTime, Utc};
 use funding_arb_domain::market::{RouteType, Venue};
 use funding_arb_domain::position::{
-    ArbitragePosition, ExitDecision, ExitReason, LegExecution, PaperFillConfig, close_paper,
-    evaluate_exit, open_paper, re_hedge,
+    ArbitragePosition, ExitDecision, ExitReason, LegExecution, PaperFillConfig, PaperFillScenario,
+    close_paper, evaluate_exit, open_paper_with_scenario, re_hedge,
 };
 use funding_arb_scanner_service::Scanner;
-use funding_arb_scanner_service::fixtures::{self, InstrumentKind, MarketLeg};
+use funding_arb_scanner_service::fixtures::{self, InstrumentKind, MarketLeg, MarketStatus};
 use rust_decimal::Decimal;
 use uuid::Uuid;
 
@@ -87,6 +87,24 @@ impl ExecutionService {
         idempotency_key: String,
         now: DateTime<Utc>,
     ) -> Result<ArbitragePosition, OpenError> {
+        self.open_with_scenario(
+            route_id,
+            notional,
+            idempotency_key,
+            PaperFillScenario::default(),
+            now,
+        )
+    }
+
+    /// Open with an explicit deterministic paper fill scenario.
+    pub fn open_with_scenario(
+        &self,
+        route_id: &str,
+        notional: Option<Decimal>,
+        idempotency_key: String,
+        scenario: PaperFillScenario,
+        now: DateTime<Utc>,
+    ) -> Result<ArbitragePosition, OpenError> {
         let scan = self.scanner.scan(now).map_err(OpenError::Fixture)?;
         let ranked = scan
             .opportunities
@@ -127,7 +145,7 @@ impl ExecutionService {
         };
 
         let id = Uuid::new_v4().to_string();
-        Ok(open_paper(
+        Ok(open_paper_with_scenario(
             id,
             idempotency_key,
             &opportunity,
@@ -138,6 +156,7 @@ impl ExecutionService {
             &self.scanner.cost_model,
             &self.fill,
             &self.scanner.risk_limits,
+            scenario,
             now,
         ))
     }
@@ -177,6 +196,17 @@ impl ExecutionService {
         close_paper(position, now, &self.scanner.cost_model, ExitReason::Manual)
     }
 
+    /// Close with an engine-selected durable exit reason.
+    #[must_use]
+    pub fn close_with_reason(
+        &self,
+        position: ArbitragePosition,
+        now: DateTime<Utc>,
+        reason: ExitReason,
+    ) -> ArbitragePosition {
+        close_paper(position, now, &self.scanner.cost_model, reason)
+    }
+
     /// Re-mark, re-hedge, and evaluate one existing paper position at `now`.
     ///
     /// # Errors
@@ -192,10 +222,10 @@ impl ExecutionService {
             return Ok(position);
         }
         let legs = fixtures::load_at(now).map_err(SuperviseError::Fixture)?;
-        let long_mark =
-            Self::current_mark(&legs, position.long_leg.venue, &position.long_leg.symbol)?;
-        let short_mark =
-            Self::current_mark(&legs, position.short_leg.venue, &position.short_leg.symbol)?;
+        let (long_mark, long_healthy) =
+            Self::current_market(&legs, position.long_leg.venue, &position.long_leg.symbol)?;
+        let (short_mark, short_healthy) =
+            Self::current_market(&legs, position.short_leg.venue, &position.short_leg.symbol)?;
         let position = re_hedge(
             position,
             long_mark,
@@ -208,7 +238,11 @@ impl ExecutionService {
             .opportunity_at(&position.route_id, now)
             .map_err(SuperviseError::Fixture)?
             .ok_or(SuperviseError::RouteNotFound)?;
-        match evaluate_exit(opportunity.net_apr, true, &self.scanner.risk_limits) {
+        match evaluate_exit(
+            opportunity.net_apr,
+            long_healthy && short_healthy,
+            &self.scanner.risk_limits,
+        ) {
             ExitDecision::Hold => Ok(position),
             ExitDecision::Exit(reason) => {
                 Ok(close_paper(position, now, &self.scanner.cost_model, reason))
@@ -216,17 +250,22 @@ impl ExecutionService {
         }
     }
 
-    fn current_mark(
+    fn current_market(
         legs: &[MarketLeg],
         venue: Venue,
         symbol: &str,
-    ) -> Result<Decimal, SuperviseError> {
+    ) -> Result<(Decimal, bool), SuperviseError> {
         legs.iter()
             .find(|leg| {
                 leg.observation.instrument.venue == venue
                     && leg.observation.instrument.symbol == symbol
             })
-            .map(|leg| leg.observation.mark_price)
+            .map(|leg| {
+                (
+                    leg.observation.mark_price,
+                    leg.status == MarketStatus::Healthy,
+                )
+            })
             .ok_or(SuperviseError::LegNotFound)
     }
 }
@@ -235,7 +274,7 @@ impl ExecutionService {
 mod tests {
     use super::ExecutionService;
     use chrono::{TimeZone, Utc};
-    use funding_arb_domain::position::ExitReason;
+    use funding_arb_domain::position::{ExitReason, FillOutcome, PaperFillScenario};
 
     fn first_route_id(service: &ExecutionService, now: chrono::DateTime<Utc>) -> String {
         service
@@ -270,6 +309,27 @@ mod tests {
         let now = Utc.with_ymd_and_hms(2026, 7, 19, 0, 0, 0).unwrap();
         let result = service.open("PERP_PERP:BINANCE>BYBIT:NOPE", None, "key".into(), now);
         assert!(matches!(result, Err(super::OpenError::RouteNotFound)));
+    }
+
+    #[test]
+    fn partial_and_unknown_scenarios_reconcile_before_open() {
+        let service = ExecutionService::default();
+        let now = Utc.with_ymd_and_hms(2026, 7, 19, 0, 0, 0).unwrap();
+        let route_id = first_route_id(&service, now);
+        let position = service
+            .open_with_scenario(
+                &route_id,
+                None,
+                "recover-service".into(),
+                PaperFillScenario {
+                    long: FillOutcome::Unknown(rust_decimal::Decimal::new(5, 1)),
+                    short: FillOutcome::Partial(rust_decimal::Decimal::new(8, 1)),
+                },
+                now,
+            )
+            .expect("recovered open");
+        assert_eq!(position.state.as_str(), "OPEN");
+        assert!(position.long_leg.orders.len() > 1 || position.short_leg.orders.len() > 1);
     }
 
     #[test]

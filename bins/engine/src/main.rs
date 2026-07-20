@@ -11,8 +11,14 @@ use std::time::Duration;
 
 use chrono::{DateTime, Utc};
 use funding_arb_domain::TradingMode;
-use funding_arb_execution_service::{ExecutionService, PositionDto, PositionsRepo};
+use funding_arb_domain::position::ExitReason;
+use funding_arb_execution_service::{
+    BreakerAction, BreakerScope, BreakersRepo, ExecutionService, OutboxRepo, PositionDto,
+    PositionsRepo,
+};
+use funding_arb_scanner_service::fixtures::{self, MarketStatus};
 use funding_arb_scanner_service::{Scanner, ScannerRepo};
+use rust_decimal::Decimal;
 use sqlx::postgres::PgPoolOptions;
 
 const DEFAULT_INTERVAL_SECS: u64 = 30;
@@ -81,7 +87,9 @@ async fn run() -> ExitCode {
     };
     let scanner = Scanner::default();
     let scan_repo = ScannerRepo::new(pool.clone());
-    let positions = PositionsRepo::new(pool);
+    let positions = PositionsRepo::new(pool.clone());
+    let breakers = BreakersRepo::new(pool.clone());
+    let outbox = OutboxRepo::new(pool);
     let execution = ExecutionService {
         scanner,
         ..ExecutionService::default()
@@ -97,7 +105,8 @@ async fn run() -> ExitCode {
             eprintln!("paper simulation clock overflowed");
             return ExitCode::FAILURE;
         };
-        supervise_open_positions(&positions, &execution, now).await;
+        activate_automatic_breakers(&positions, &breakers, &outbox, &execution, now).await;
+        supervise_open_positions(&positions, &breakers, &execution, now).await;
         match scanner.scan(now) {
             Ok(result) => {
                 let count = result.opportunities.len();
@@ -122,6 +131,7 @@ async fn run() -> ExitCode {
 
 async fn supervise_open_positions(
     positions: &PositionsRepo,
+    breakers: &BreakersRepo,
     execution: &ExecutionService,
     now: DateTime<Utc>,
 ) {
@@ -132,12 +142,44 @@ async fn supervise_open_positions(
             return;
         }
     };
+    let controls = match breakers.controls().await {
+        Ok(value) => value,
+        Err(error) => {
+            eprintln!("failed to load circuit breakers: {error}");
+            return;
+        }
+    };
+    if controls.effective_action == Some(BreakerAction::ReadOnly) {
+        return;
+    }
     for dto in stored
         .into_iter()
         .filter(|position| position.state == "OPEN")
     {
         let id = dto.id.clone();
-        match execution.supervise(dto.to_domain(), now) {
+        let flatten = controls
+            .breakers
+            .iter()
+            .any(|breaker| breaker.action == BreakerAction::Flatten);
+        let disabled = controls.breakers.iter().find(|breaker| {
+            breaker.action == BreakerAction::DisableVenue
+                && breaker.scope_key.as_ref().is_some_and(|venue| {
+                    dto.long_leg.venue == *venue || dto.short_leg.venue == *venue
+                })
+        });
+        let result = if flatten {
+            Ok(execution.close_with_reason(dto.to_domain(), now, ExitReason::CircuitBreaker))
+        } else if let Some(breaker) = disabled {
+            let reason = if breaker.source == "VENUE_HEALTH" {
+                ExitReason::VenueUnhealthy
+            } else {
+                ExitReason::CircuitBreaker
+            };
+            Ok(execution.close_with_reason(dto.to_domain(), now, reason))
+        } else {
+            execution.supervise(dto.to_domain(), now)
+        };
+        match result {
             Ok(position) => {
                 if let Err(error) = positions.update(&PositionDto::from_domain(&position)).await {
                     eprintln!("failed to persist supervised position {id}: {error}");
@@ -145,6 +187,141 @@ async fn supervise_open_positions(
             }
             Err(error) => eprintln!("failed to supervise position {id}: {error}"),
         }
+    }
+}
+
+async fn activate_automatic_breakers(
+    positions: &PositionsRepo,
+    breakers: &BreakersRepo,
+    outbox: &OutboxRepo,
+    execution: &ExecutionService,
+    now: DateTime<Utc>,
+) {
+    if let Ok(legs) = fixtures::load_at(now) {
+        for leg in legs
+            .iter()
+            .filter(|leg| leg.status == MarketStatus::Degraded)
+        {
+            ensure_breaker(
+                breakers,
+                outbox,
+                BreakerScope::Venue,
+                Some(leg.observation.instrument.venue.as_str().to_owned()),
+                BreakerAction::DisableVenue,
+                "VENUE_HEALTH",
+                "Fixture venue health is degraded",
+                now,
+            )
+            .await;
+        }
+    }
+    let stored = match positions.list().await {
+        Ok(value) => value,
+        Err(error) => {
+            eprintln!("failed to evaluate loss breakers: {error}");
+            return;
+        }
+    };
+    let mut closed = stored
+        .iter()
+        .filter(|position| position.state == "CLOSED")
+        .map(PositionDto::to_domain)
+        .collect::<Vec<_>>();
+    closed.sort_by_key(|position| position.closed_at);
+    let reference = execution.scanner.risk_limits.reference_equity;
+    let daily_pnl: Decimal = closed
+        .iter()
+        .filter(|position| {
+            position
+                .closed_at
+                .is_some_and(|at| at.date_naive() == now.date_naive())
+        })
+        .map(|position| position.realized_pnl)
+        .sum();
+    if daily_pnl < -(reference * execution.scanner.risk_limits.max_daily_loss_fraction) {
+        ensure_breaker(
+            breakers,
+            outbox,
+            BreakerScope::Global,
+            None,
+            BreakerAction::HaltNewRisk,
+            "DAILY_LOSS",
+            "Daily realized loss limit breached",
+            now,
+        )
+        .await;
+    }
+    let mut equity = reference;
+    let mut peak = reference;
+    for position in closed {
+        equity += position.realized_pnl;
+        peak = peak.max(equity);
+    }
+    let drawdown = if peak.is_zero() {
+        Decimal::ZERO
+    } else {
+        (peak - equity) / peak
+    };
+    if drawdown >= execution.scanner.risk_limits.max_drawdown_fraction {
+        ensure_breaker(
+            breakers,
+            outbox,
+            BreakerScope::Global,
+            None,
+            BreakerAction::Flatten,
+            "DRAWDOWN",
+            "Portfolio drawdown limit breached",
+            now,
+        )
+        .await;
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn ensure_breaker(
+    breakers: &BreakersRepo,
+    outbox: &OutboxRepo,
+    scope: BreakerScope,
+    scope_key: Option<String>,
+    action: BreakerAction,
+    source: &str,
+    reason: &str,
+    now: DateTime<Utc>,
+) {
+    let existing = match breakers.controls().await {
+        Ok(value) => value.breakers.into_iter().any(|breaker| {
+            breaker.scope == scope && breaker.scope_key == scope_key && breaker.action == action
+        }),
+        Err(error) => {
+            eprintln!("failed to inspect automatic breakers: {error}");
+            return;
+        }
+    };
+    if existing {
+        return;
+    }
+    match breakers
+        .activate(
+            scope,
+            scope_key,
+            action,
+            source,
+            reason.to_owned(),
+            None,
+            now,
+        )
+        .await
+    {
+        Ok(breaker) => {
+            let payload = serde_json::to_value(&breaker).unwrap_or_default();
+            if let Err(error) = outbox
+                .append("CIRCUIT_BREAKER_ACTIVATED", &breaker.id, payload, now)
+                .await
+            {
+                eprintln!("failed to append breaker event: {error}");
+            }
+        }
+        Err(error) => eprintln!("failed to activate automatic breaker: {error}"),
     }
 }
 

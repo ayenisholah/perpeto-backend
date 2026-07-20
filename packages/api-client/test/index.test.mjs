@@ -367,6 +367,26 @@ describe("paper position contract", () => {
     assert.match(requestedUrl, /\/api\/v1\/positions$/u);
   });
 
+  it("sends deterministic per-leg fill recovery scenarios", async () => {
+    let body;
+    const client = new PerpetoClient({
+      baseUrl: "https://perpeto.test",
+      getAccessToken: () => "ephemeral",
+      fetchImplementation: async (_url, init) => {
+        body = JSON.parse(String(init.body));
+        return Response.json(position, { status: 201 });
+      },
+    });
+    await client.createPosition({
+      route_id: position.route_id,
+      fill_scenario: {
+        long: { outcome: "UNKNOWN", reconciled_fraction: 0.5 },
+        short: { outcome: "FULL" },
+      },
+    }, "recover-1");
+    assert.equal(body.fill_scenario.long.reconciled_fraction, 0.5);
+  });
+
   it("lists and fetches positions", async () => {
     const client = new PerpetoClient({
       baseUrl: "https://perpeto.test",
@@ -412,5 +432,41 @@ describe("paper position contract", () => {
     assert.equal(result.exit_reason, "MANUAL");
     assert.equal(method, "POST");
     assert.match(requestedUrl, /\/api\/v1\/positions\/.*\/close$/u);
+  });
+});
+
+describe("emergency controls contract", () => {
+  it("loads controls and sends emergency mutations", async () => {
+    const requests = [];
+    const breaker = {
+      id: "0190abcd-1111-7000-8000-000000000099",
+      scope: "GLOBAL",
+      scope_key: null,
+      action: "HALT_NEW_RISK",
+      source: "OPERATOR",
+      reason: "test",
+      created_by: "user-1",
+      active: true,
+      created_at: "2026-07-19T00:00:00Z",
+      resolved_at: null,
+    };
+    const client = new PerpetoClient({
+      baseUrl: "https://perpeto.test",
+      getAccessToken: () => "ephemeral",
+      fetchImplementation: async (url, init = {}) => {
+        requests.push([String(url), init.method ?? "GET"]);
+        if (String(url).endsWith("/controls/resume")) return Response.json({ resolved: 1 });
+        if (String(url).endsWith("/controls")) {
+          return Response.json({ effective_action: "HALT_NEW_RISK", breakers: [breaker] });
+        }
+        return Response.json(breaker);
+      },
+    });
+    assert.equal((await client.getControls()).breakers.length, 1);
+    await client.halt();
+    await client.disableVenue("BYBIT");
+    await client.flatten();
+    assert.equal((await client.resumeControls()).resolved, 1);
+    assert.equal(requests.filter(([, method]) => method === "POST").length, 4);
   });
 });

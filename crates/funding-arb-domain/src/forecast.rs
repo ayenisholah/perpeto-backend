@@ -63,7 +63,11 @@ impl Default for ForecastConfig {
 }
 
 fn abs(value: Decimal) -> Decimal {
-    if value.is_sign_negative() { -value } else { value }
+    if value.is_sign_negative() {
+        -value
+    } else {
+        value
+    }
 }
 
 /// Produce a deterministic forecast for one observation.
@@ -75,7 +79,11 @@ pub fn forecast(observation: &FundingObservation, config: &ForecastConfig) -> Fu
 
     let half_band = {
         let scaled = abs(predicted) * config.residual_band_ratio;
-        if scaled > config.min_band { scaled } else { config.min_band }
+        if scaled > config.min_band {
+            scaled
+        } else {
+            config.min_band
+        }
     };
 
     // P(rate keeps its sign): distance of the prediction from zero relative to

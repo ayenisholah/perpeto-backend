@@ -171,6 +171,10 @@ pub struct RiskLimitsDto {
     pub min_depth_multiple: f64,
     /// Effective cap on unmatched (residual) two-leg exposure, in USD.
     pub max_unmatched_usd: f64,
+    /// Maximum realized daily loss as a fraction of reference equity.
+    pub max_daily_loss_fraction: f64,
+    /// Maximum peak-to-current equity drawdown fraction.
+    pub max_drawdown_fraction: f64,
 }
 
 impl RiskLimitsDto {
@@ -189,6 +193,8 @@ impl RiskLimitsDto {
             max_entry_basis_bps: as_f64(limits.max_entry_basis_bps),
             min_depth_multiple: as_f64(limits.min_depth_multiple),
             max_unmatched_usd: as_f64(limits.max_unmatched()),
+            max_daily_loss_fraction: as_f64(limits.max_daily_loss_fraction),
+            max_drawdown_fraction: as_f64(limits.max_drawdown_fraction),
         }
     }
 }

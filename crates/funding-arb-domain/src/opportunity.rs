@@ -14,7 +14,11 @@ use crate::market::RouteType;
 use crate::risk::RiskLimits;
 
 fn abs(value: Decimal) -> Decimal {
-    if value.is_sign_negative() { -value } else { value }
+    if value.is_sign_negative() {
+        -value
+    } else {
+        value
+    }
 }
 
 fn clamp_unit(value: Decimal) -> Decimal {
@@ -85,7 +89,7 @@ impl Default for CostModel {
             carry_ratio: Decimal::new(2, 2),        // 0.02 (2% APR)
             risk_buffer_ratio: Decimal::new(10, 2), // 0.10 of gross
             holding_days: Decimal::from(14),
-            leverage: Decimal::from(2),             // 2.0x
+            leverage: Decimal::from(2), // 2.0x
         }
     }
 }
@@ -146,8 +150,8 @@ impl Opportunity {
         available_capacity: Decimal,
         cost: &CostModel,
     ) -> Self {
-        let gross =
-            short_leg.forecast.predicted_settlement_rate - long_leg.forecast.predicted_settlement_rate;
+        let gross = short_leg.forecast.predicted_settlement_rate
+            - long_leg.forecast.predicted_settlement_rate;
 
         let annualization = if cost.holding_days.is_zero() {
             Decimal::ZERO
@@ -163,7 +167,8 @@ impl Opportunity {
 
         let break_even_funding = entry_cost + exit_cost + carry_cost + risk_buffer;
         let net_apr = gross - break_even_funding;
-        let expected_net_pnl = available_capacity * net_apr * (cost.holding_days / Decimal::from(365));
+        let expected_net_pnl =
+            available_capacity * net_apr * (cost.holding_days / Decimal::from(365));
 
         let confidence = (long_leg.forecast.direction_probability
             + short_leg.forecast.direction_probability)
@@ -242,7 +247,10 @@ pub fn rank(mut opportunities: Vec<Opportunity>, limits: &RiskLimits) -> Vec<Opp
     opportunities.sort_by(|a, b| {
         b.net_apr
             .cmp(&a.net_apr)
-            .then_with(|| b.profitability_probability.cmp(&a.profitability_probability))
+            .then_with(|| {
+                b.profitability_probability
+                    .cmp(&a.profitability_probability)
+            })
             .then_with(|| b.available_capacity.cmp(&a.available_capacity))
             .then_with(|| a.next_funding_at.cmp(&b.next_funding_at))
             .then_with(|| a.route_id.cmp(&b.route_id))
@@ -304,8 +312,14 @@ mod tests {
         Opportunity::build(
             RouteType::PerpPerp,
             "BTC",
-            RouteLeg { is_long: true, forecast: forecast(&long, &config) },
-            RouteLeg { is_long: false, forecast: forecast(&short, &config) },
+            RouteLeg {
+                is_long: true,
+                forecast: forecast(&long, &config),
+            },
+            RouteLeg {
+                is_long: false,
+                forecast: forecast(&short, &config),
+            },
             capacity,
             &CostModel::default(),
         )
@@ -313,7 +327,11 @@ mod tests {
 
     #[test]
     fn build_populates_detail_fields() {
-        let opp = opportunity(Decimal::new(1, 4), Decimal::new(9, 4), Decimal::from(100_000));
+        let opp = opportunity(
+            Decimal::new(1, 4),
+            Decimal::new(9, 4),
+            Decimal::from(100_000),
+        );
         assert!(opp.break_even_funding > Decimal::ZERO);
         assert!(opp.required_capital > Decimal::ZERO);
         assert_eq!(opp.leverage, Decimal::from(2));
@@ -325,9 +343,21 @@ mod tests {
     #[test]
     fn ranking_orders_by_net_apr_and_drops_ineligible() {
         let limits = RiskLimits::default();
-        let strong = opportunity(Decimal::new(1, 4), Decimal::new(30, 4), Decimal::from(100_000));
-        let weak = opportunity(Decimal::new(1, 4), Decimal::new(9, 4), Decimal::from(100_000));
-        let losing = opportunity(Decimal::new(30, 4), Decimal::new(1, 4), Decimal::from(100_000));
+        let strong = opportunity(
+            Decimal::new(1, 4),
+            Decimal::new(30, 4),
+            Decimal::from(100_000),
+        );
+        let weak = opportunity(
+            Decimal::new(1, 4),
+            Decimal::new(9, 4),
+            Decimal::from(100_000),
+        );
+        let losing = opportunity(
+            Decimal::new(30, 4),
+            Decimal::new(1, 4),
+            Decimal::from(100_000),
+        );
         assert!(strong.net_apr > weak.net_apr);
         assert!(!limits.admits(&losing));
 

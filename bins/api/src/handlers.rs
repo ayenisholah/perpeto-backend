@@ -1,22 +1,27 @@
-//! HTTP handlers translating requests into auth-service calls.
+//! HTTP handlers translating requests into application-service calls.
+
+use std::str::FromStr;
 
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::{Extension, Json};
+use chrono::{DateTime, Utc};
 use funding_arb_auth_service::AuthError;
 use funding_arb_auth_service::dto::{
     AcknowledgeRecoveryRequest, BootstrapRequest, CreateChallengeRequest, ExchangeRequest,
     MfaConfirmRequest, MfaVerifyRequest, RefreshRequest,
 };
 use funding_arb_auth_service::service::CallerContext;
+use funding_arb_domain::market::Venue;
 use funding_arb_domain::risk::RiskLimits;
-use funding_arb_execution_service::{OpenError, OpenPositionRequest, PositionDto, PositionListDto};
+use funding_arb_execution_service::{
+    BreakerAction, BreakerScope, OpenError, OpenPositionRequest, PositionDto, PositionListDto,
+};
 use funding_arb_scanner_service::{OpportunityScanDto, RiskLimitsDto};
 use rust_decimal::Decimal;
 use rust_decimal::prelude::FromPrimitive;
 use serde::Deserialize;
-use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
 use crate::problem::ApiError;
@@ -228,7 +233,12 @@ pub struct OpportunityQuery {
 fn seconds_to_funding(next_funding_at: &str, now: DateTime<Utc>) -> Option<i64> {
     DateTime::parse_from_rfc3339(next_funding_at)
         .ok()
-        .map(|parsed| parsed.with_timezone(&Utc).signed_duration_since(now).num_seconds())
+        .map(|parsed| {
+            parsed
+                .with_timezone(&Utc)
+                .signed_duration_since(now)
+                .num_seconds()
+        })
 }
 
 /// `GET /api/v1/opportunities` — the latest ranked paper scan (read-only).
@@ -251,30 +261,36 @@ pub async fn list_opportunities(
 
     if let Some(route_type) = filter.route_type.as_deref() {
         let wanted = route_type.to_ascii_uppercase();
-        scan.opportunities.retain(|opportunity| opportunity.route_type == wanted);
+        scan.opportunities
+            .retain(|opportunity| opportunity.route_type == wanted);
     }
     if let Some(venue) = filter.venue.as_deref() {
         let wanted = venue.to_ascii_uppercase();
-        scan.opportunities
-            .retain(|opportunity| opportunity.long_venue == wanted || opportunity.short_venue == wanted);
+        scan.opportunities.retain(|opportunity| {
+            opportunity.long_venue == wanted || opportunity.short_venue == wanted
+        });
     }
     if let Some(underlying) = filter.underlying.as_deref() {
         let wanted = underlying.to_ascii_uppercase();
-        scan.opportunities.retain(|opportunity| opportunity.underlying == wanted);
+        scan.opportunities
+            .retain(|opportunity| opportunity.underlying == wanted);
     }
     if let Some(direction) = filter.funding_direction.as_deref() {
         let wanted = direction.to_ascii_uppercase();
-        scan.opportunities.retain(|opportunity| opportunity.funding_direction == wanted);
+        scan.opportunities
+            .retain(|opportunity| opportunity.funding_direction == wanted);
     }
     if let Some(minimum) = filter.min_net_apr {
-        scan.opportunities.retain(|opportunity| opportunity.net_apr >= minimum);
+        scan.opportunities
+            .retain(|opportunity| opportunity.net_apr >= minimum);
     }
     if let Some(minimum) = filter.min_probability {
         scan.opportunities
             .retain(|opportunity| opportunity.profitability_probability >= minimum);
     }
     if let Some(maximum) = filter.max_basis_bps {
-        scan.opportunities.retain(|opportunity| opportunity.entry_basis_bps <= maximum);
+        scan.opportunities
+            .retain(|opportunity| opportunity.entry_basis_bps <= maximum);
     }
     if let Some(maximum) = filter.max_time_to_funding_secs {
         let now = Utc::now();
@@ -284,13 +300,16 @@ pub async fn list_opportunities(
     }
 
     match filter.sort.as_deref() {
-        Some("net_apr") => scan.opportunities.sort_by(|a, b| b.net_apr.total_cmp(&a.net_apr)),
+        Some("net_apr") => scan
+            .opportunities
+            .sort_by(|a, b| b.net_apr.total_cmp(&a.net_apr)),
         Some("next_funding") => scan
             .opportunities
             .sort_by(|a, b| a.next_funding_at.cmp(&b.next_funding_at)),
-        Some("probability") => scan
-            .opportunities
-            .sort_by(|a, b| b.profitability_probability.total_cmp(&a.profitability_probability)),
+        Some("probability") => scan.opportunities.sort_by(|a, b| {
+            b.profitability_probability
+                .total_cmp(&a.profitability_probability)
+        }),
         Some("capacity") => scan
             .opportunities
             .sort_by(|a, b| b.available_capacity.total_cmp(&a.available_capacity)),
@@ -376,10 +395,46 @@ pub async fn create_position(
 
     let key = supplied_key.unwrap_or_else(|| Uuid::new_v4().to_string());
     let notional = request.notional.and_then(Decimal::from_f64);
-    let position = match state
-        .execution
-        .open(&request.route_id, notional, key.clone(), Utc::now())
-    {
+    let scenario = match request.fill_scenario.as_ref() {
+        Some(value) => match value.to_domain() {
+            Some(value) => value,
+            None => {
+                return Ok((
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    [(axum::http::header::CONTENT_TYPE, "application/problem+json")],
+                    r#"{"type":"about:blank","title":"Invalid fill scenario","status":422,"code":"INVALID_FILL_SCENARIO"}"#,
+                )
+                    .into_response());
+            }
+        },
+        None => Default::default(),
+    };
+    let controls = state.breakers.controls().await.map_err(internal)?;
+    let blocked = controls.breakers.iter().any(|breaker| {
+        matches!(
+            breaker.action,
+            BreakerAction::ReadOnly | BreakerAction::Flatten | BreakerAction::HaltNewRisk
+        ) || (breaker.action == BreakerAction::DisableVenue
+            && breaker
+                .scope_key
+                .as_ref()
+                .is_some_and(|venue| request.route_id.contains(venue)))
+    });
+    if blocked {
+        return Ok((
+            StatusCode::CONFLICT,
+            [(axum::http::header::CONTENT_TYPE, "application/problem+json")],
+            r#"{"type":"about:blank","title":"New risk is halted","status":409,"code":"RISK_HALTED"}"#,
+        )
+            .into_response());
+    }
+    let position = match state.execution.open_with_scenario(
+        &request.route_id,
+        notional,
+        key.clone(),
+        scenario,
+        Utc::now(),
+    ) {
         Ok(position) => position,
         Err(OpenError::RouteNotFound | OpenError::LegNotFound) => {
             return Ok(not_found("Route not open-eligible", "ROUTE_NOT_FOUND"));
@@ -465,8 +520,180 @@ pub async fn close_position(
     }
     let closed = state.execution.close(dto.to_domain(), Utc::now());
     let closed_dto = PositionDto::from_domain(&closed);
-    state.positions.update(&closed_dto).await.map_err(internal)?;
+    state
+        .positions
+        .update(&closed_dto)
+        .await
+        .map_err(internal)?;
     Ok((StatusCode::OK, Json(closed_dto)).into_response())
+}
+
+#[derive(Deserialize)]
+pub struct HaltRequest {
+    #[serde(default = "halt_new_risk")]
+    action: String,
+    #[serde(default = "operator_reason")]
+    reason: String,
+}
+
+fn halt_new_risk() -> String {
+    "HALT_NEW_RISK".to_owned()
+}
+
+fn operator_reason() -> String {
+    "Operator emergency control".to_owned()
+}
+
+#[derive(Deserialize)]
+pub struct ControlReasonRequest {
+    #[serde(default = "operator_reason")]
+    reason: String,
+}
+
+/// `GET /api/v1/controls` — active durable paper breakers.
+pub async fn get_controls(
+    State(state): State<AppState>,
+    Extension(caller): Extension<CallerContext>,
+) -> Result<impl IntoResponse, ApiError> {
+    caller.require_active()?;
+    Ok(Json(state.breakers.controls().await.map_err(internal)?))
+}
+
+/// `POST /api/v1/controls/halt` — halt new risk or enter read-only mode.
+pub async fn halt(
+    State(state): State<AppState>,
+    Extension(caller): Extension<CallerContext>,
+    Json(request): Json<HaltRequest>,
+) -> Result<Response, ApiError> {
+    caller.require_active()?;
+    if !caller.can_trade() {
+        return Err(AuthError::Forbidden.into());
+    }
+    let action = match request.action.as_str() {
+        "HALT_NEW_RISK" => BreakerAction::HaltNewRisk,
+        "READ_ONLY" => BreakerAction::ReadOnly,
+        _ => {
+            return Ok((
+                StatusCode::UNPROCESSABLE_ENTITY,
+                [(axum::http::header::CONTENT_TYPE, "application/problem+json")],
+                r#"{"type":"about:blank","title":"Invalid halt action","status":422,"code":"INVALID_BREAKER_ACTION"}"#,
+            )
+                .into_response());
+        }
+    };
+    activate_operator_breaker(
+        &state,
+        &caller,
+        BreakerScope::Global,
+        None,
+        action,
+        request.reason,
+    )
+    .await
+}
+
+/// `POST /api/v1/controls/venues/{venue}/disable`.
+pub async fn disable_venue(
+    State(state): State<AppState>,
+    Extension(caller): Extension<CallerContext>,
+    Path(venue): Path<String>,
+    Json(request): Json<ControlReasonRequest>,
+) -> Result<Response, ApiError> {
+    caller.require_active()?;
+    if !caller.can_trade() {
+        return Err(AuthError::Forbidden.into());
+    }
+    let venue = match Venue::from_str(&venue) {
+        Ok(value) => value.as_str().to_owned(),
+        Err(_) => return Ok(not_found("Venue not found", "VENUE_NOT_FOUND")),
+    };
+    activate_operator_breaker(
+        &state,
+        &caller,
+        BreakerScope::Venue,
+        Some(venue),
+        BreakerAction::DisableVenue,
+        request.reason,
+    )
+    .await
+}
+
+/// `POST /api/v1/controls/flatten` — OWNER-only emergency unwind request.
+pub async fn flatten(
+    State(state): State<AppState>,
+    Extension(caller): Extension<CallerContext>,
+    Json(request): Json<ControlReasonRequest>,
+) -> Result<Response, ApiError> {
+    caller.require_active()?;
+    if !caller.is_owner() {
+        return Err(AuthError::Forbidden.into());
+    }
+    activate_operator_breaker(
+        &state,
+        &caller,
+        BreakerScope::Global,
+        None,
+        BreakerAction::Flatten,
+        request.reason,
+    )
+    .await
+}
+
+async fn activate_operator_breaker(
+    state: &AppState,
+    caller: &CallerContext,
+    scope: BreakerScope,
+    scope_key: Option<String>,
+    action: BreakerAction,
+    reason: String,
+) -> Result<Response, ApiError> {
+    let now = Utc::now();
+    let breaker = state
+        .breakers
+        .activate(
+            scope,
+            scope_key,
+            action,
+            "OPERATOR",
+            reason,
+            Some(caller.user_id.clone()),
+            now,
+        )
+        .await
+        .map_err(internal)?;
+    state
+        .outbox
+        .append(
+            "CIRCUIT_BREAKER_ACTIVATED",
+            &breaker.id,
+            serde_json::to_value(&breaker)
+                .map_err(|error| ApiError(AuthError::Internal(error.to_string())))?,
+            now,
+        )
+        .await
+        .map_err(internal)?;
+    Ok((StatusCode::OK, Json(breaker)).into_response())
+}
+
+/// `POST /api/v1/controls/resume` — clear only operator-created controls.
+pub async fn resume(
+    State(state): State<AppState>,
+    Extension(caller): Extension<CallerContext>,
+) -> Result<Response, ApiError> {
+    caller.require_active()?;
+    if !caller.can_trade() {
+        return Err(AuthError::Forbidden.into());
+    }
+    let resolved = state
+        .breakers
+        .resolve_operator(Utc::now())
+        .await
+        .map_err(internal)?;
+    Ok((
+        StatusCode::OK,
+        Json(serde_json::json!({ "resolved": resolved })),
+    )
+        .into_response())
 }
 
 fn internal(error: sqlx::Error) -> ApiError {

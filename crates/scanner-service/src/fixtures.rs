@@ -25,11 +25,22 @@ pub enum InstrumentKind {
     Perp,
 }
 
+/// Deterministic venue health attached to a fixture observation.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum MarketStatus {
+    /// Venue data and paper execution are healthy.
+    Healthy,
+    /// Venue data is degraded and new exposure must be disabled.
+    Degraded,
+}
+
 /// A parsed fixture leg: its kind plus the normalized observation.
 #[derive(Clone, Debug)]
 pub struct MarketLeg {
     /// Whether the leg is spot or perpetual.
     pub kind: InstrumentKind,
+    /// Health of the venue at this fixture tick.
+    pub status: MarketStatus,
     /// The normalized funding observation.
     pub observation: FundingObservation,
 }
@@ -75,6 +86,12 @@ struct FixtureObservation {
     available_notional: f64,
     observed_at: String,
     next_funding_at: String,
+    #[serde(default = "healthy_status")]
+    status: String,
+}
+
+fn healthy_status() -> String {
+    "HEALTHY".to_owned()
 }
 
 fn decimal(value: f64) -> Decimal {
@@ -97,8 +114,14 @@ fn normalize(entries: Vec<FixtureObservation>) -> Result<Vec<MarketLeg>, Fixture
             "PERP" => InstrumentKind::Perp,
             other => return Err(FixtureError(format!("unknown instrument kind {other}"))),
         };
+        let status = match entry.status.to_ascii_uppercase().as_str() {
+            "HEALTHY" => MarketStatus::Healthy,
+            "DEGRADED" => MarketStatus::Degraded,
+            other => return Err(FixtureError(format!("unknown market status {other}"))),
+        };
         legs.push(MarketLeg {
             kind,
+            status,
             observation: FundingObservation {
                 instrument: InstrumentRef {
                     venue,
@@ -161,7 +184,7 @@ pub fn load_at(now: DateTime<Utc>) -> Result<Vec<MarketLeg>, FixtureError> {
 
 #[cfg(test)]
 mod tests {
-    use super::{InstrumentKind, MarketLeg, load, load_at};
+    use super::{InstrumentKind, MarketLeg, MarketStatus, load, load_at};
     use chrono::{TimeZone, Utc};
     use funding_arb_domain::market::Venue;
     use rust_decimal::Decimal;
@@ -183,7 +206,10 @@ mod tests {
         let at_t0 = load_at(t0).expect("load_at");
         assert_eq!(base.len(), at_t0.len());
         for (a, b) in base.iter().zip(&at_t0) {
-            assert_eq!(a.observation.instrument.symbol, b.observation.instrument.symbol);
+            assert_eq!(
+                a.observation.instrument.symbol,
+                b.observation.instrument.symbol
+            );
             assert_eq!(a.observation.mark_price, b.observation.mark_price);
             assert_eq!(a.observation.funding_rate, b.observation.funding_rate);
         }
@@ -216,8 +242,19 @@ mod tests {
     fn before_first_snapshot_falls_back_to_earliest() {
         let before = Utc.with_ymd_and_hms(2020, 1, 1, 0, 0, 0).unwrap();
         assert_eq!(
-            bybit_btc_perp(&load_at(before).unwrap()).observation.mark_price,
+            bybit_btc_perp(&load_at(before).unwrap())
+                .observation
+                .mark_price,
             Decimal::from(30_045),
+        );
+    }
+
+    #[test]
+    fn t4_degrades_bybit_without_changing_earlier_ticks() {
+        let t4 = Utc.with_ymd_and_hms(2026, 7, 19, 16, 0, 0).unwrap();
+        assert_eq!(
+            bybit_btc_perp(&load_at(t4).unwrap()).status,
+            MarketStatus::Degraded
         );
     }
 }

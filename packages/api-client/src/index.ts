@@ -1,4 +1,4 @@
-export const schemaVersion = "0.7.0" as const;
+export const schemaVersion = "0.8.0" as const;
 
 export type SocialProvider = "APPLE" | "GOOGLE";
 export type AuthNextState =
@@ -161,6 +161,8 @@ export interface RiskLimits {
   readonly max_entry_basis_bps: number;
   readonly min_depth_multiple: number;
   readonly max_unmatched_usd: number;
+  readonly max_daily_loss_fraction: number;
+  readonly max_drawdown_fraction: number;
 }
 
 export type PositionState =
@@ -169,6 +171,7 @@ export type PositionState =
   | "OPENING"
   | "OPEN"
   | "OPEN_FAILED"
+  | "RECOVERING"
   | "REHEDGING"
   | "CLOSING"
   | "CLOSED";
@@ -177,7 +180,19 @@ export type ExitReason =
   | "FUNDING_FLIP"
   | "THRESHOLD_BREACH"
   | "VENUE_UNHEALTHY"
-  | "MANUAL";
+  | "MANUAL"
+  | "RECOVERY_FAILURE"
+  | "CIRCUIT_BREAKER";
+
+export type FillOutcome =
+  | { readonly outcome: "FULL" }
+  | { readonly outcome: "PARTIAL"; readonly fraction: number }
+  | { readonly outcome: "UNKNOWN"; readonly reconciled_fraction: number };
+
+export interface PaperFillScenario {
+  readonly long: FillOutcome;
+  readonly short: FillOutcome;
+}
 
 export interface PaperOrder {
   readonly client_order_id: string;
@@ -236,6 +251,28 @@ export interface PositionList {
 export interface OpenPositionRequest {
   readonly route_id: string;
   readonly notional?: number;
+  readonly fill_scenario?: PaperFillScenario;
+}
+
+export type BreakerScope = "GLOBAL" | "VENUE" | "STRATEGY";
+export type BreakerAction = "HALT_NEW_RISK" | "DISABLE_VENUE" | "READ_ONLY" | "FLATTEN";
+
+export interface CircuitBreaker {
+  readonly id: string;
+  readonly scope: BreakerScope;
+  readonly scope_key: string | null;
+  readonly action: BreakerAction;
+  readonly source: string;
+  readonly reason: string;
+  readonly created_by: string | null;
+  readonly active: boolean;
+  readonly created_at: string;
+  readonly resolved_at: string | null;
+}
+
+export interface Controls {
+  readonly effective_action: BreakerAction | null;
+  readonly breakers: readonly CircuitBreaker[];
 }
 
 export interface OpportunityFilter {
@@ -314,6 +351,8 @@ export function isPosition(value: unknown): value is Position {
       "THRESHOLD_BREACH",
       "VENUE_UNHEALTHY",
       "MANUAL",
+      "RECOVERY_FAILURE",
+      "CIRCUIT_BREAKER",
     ].includes(String(position.exit_reason))) &&
     typeof position.long_leg === "object" && position.long_leg !== null;
 }
@@ -546,6 +585,38 @@ export class PerpetoClient {
       throw new Error("Perpeto position contract is incompatible");
     }
     return payload;
+  }
+
+  public getControls(): Promise<Controls> {
+    return this.#request("/api/v1/controls");
+  }
+
+  public halt(
+    action: "HALT_NEW_RISK" | "READ_ONLY" = "HALT_NEW_RISK",
+    reason = "Operator emergency control",
+  ): Promise<CircuitBreaker> {
+    return this.#request("/api/v1/controls/halt", {
+      method: "POST",
+      body: JSON.stringify({ action, reason }),
+    });
+  }
+
+  public disableVenue(venue: Venue, reason = "Operator disabled venue"): Promise<CircuitBreaker> {
+    return this.#request(`/api/v1/controls/venues/${venue}/disable`, {
+      method: "POST",
+      body: JSON.stringify({ reason }),
+    });
+  }
+
+  public flatten(reason = "Operator emergency flatten"): Promise<CircuitBreaker> {
+    return this.#request("/api/v1/controls/flatten", {
+      method: "POST",
+      body: JSON.stringify({ reason }),
+    });
+  }
+
+  public resumeControls(): Promise<{ readonly resolved: number }> {
+    return this.#request("/api/v1/controls/resume", { method: "POST" });
   }
 }
 

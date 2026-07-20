@@ -30,7 +30,10 @@ pub fn build_router(state: AppState) -> Router {
         )
         .route("/api/v1/account", delete(handlers::delete_account))
         .route("/api/v1/opportunities", get(handlers::list_opportunities))
-        .route("/api/v1/opportunities/{route_id}", get(handlers::get_opportunity))
+        .route(
+            "/api/v1/opportunities/{route_id}",
+            get(handlers::get_opportunity),
+        )
         .route("/api/v1/risk/limits", get(handlers::get_risk_limits))
         .route(
             "/api/v1/positions",
@@ -41,6 +44,14 @@ pub fn build_router(state: AppState) -> Router {
             "/api/v1/positions/{id}/close",
             post(handlers::close_position),
         )
+        .route("/api/v1/controls", get(handlers::get_controls))
+        .route("/api/v1/controls/halt", post(handlers::halt))
+        .route(
+            "/api/v1/controls/venues/{venue}/disable",
+            post(handlers::disable_venue),
+        )
+        .route("/api/v1/controls/flatten", post(handlers::flatten))
+        .route("/api/v1/controls/resume", post(handlers::resume))
         .layer(middleware::from_fn_with_state(state.clone(), require_auth));
 
     let public = Router::new()

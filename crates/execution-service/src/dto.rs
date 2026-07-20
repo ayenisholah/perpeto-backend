@@ -10,7 +10,8 @@ use chrono::{DateTime, Utc};
 use funding_arb_domain::market::{RouteType, Venue};
 use funding_arb_domain::opportunity::FundingDirection;
 use funding_arb_domain::position::{
-    ArbitragePosition, ExitReason, PaperFill, PaperOrder, PositionLeg, PositionState,
+    ArbitragePosition, ExitReason, FillOutcome, PaperFill, PaperFillScenario, PaperOrder,
+    PositionLeg, PositionState,
 };
 use rust_decimal::Decimal;
 use rust_decimal::prelude::ToPrimitive;
@@ -42,6 +43,58 @@ pub struct OpenPositionRequest {
     /// Optional notional (USD) to size each leg to; defaults to the reservation.
     #[serde(default)]
     pub notional: Option<f64>,
+    /// Optional deterministic paper-only per-leg fill scenario.
+    #[serde(default)]
+    pub fill_scenario: Option<PaperFillScenarioDto>,
+}
+
+/// One leg's deterministic paper submission result.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct FillOutcomeDto {
+    /// `FULL`, `PARTIAL`, or `UNKNOWN`.
+    pub outcome: String,
+    /// Authoritative fraction for `PARTIAL`.
+    #[serde(default)]
+    pub fraction: Option<f64>,
+    /// Authoritative queried fraction for `UNKNOWN`.
+    #[serde(default)]
+    pub reconciled_fraction: Option<f64>,
+}
+
+impl FillOutcomeDto {
+    /// Validate and project onto the decimal domain representation.
+    pub fn to_domain(&self) -> Option<FillOutcome> {
+        match self.outcome.as_str() {
+            "FULL" => Some(FillOutcome::Full),
+            "PARTIAL" => valid_fraction(self.fraction).map(FillOutcome::Partial),
+            "UNKNOWN" => valid_fraction(self.reconciled_fraction).map(FillOutcome::Unknown),
+            _ => None,
+        }
+    }
+}
+
+fn valid_fraction(value: Option<f64>) -> Option<Decimal> {
+    let value = value.and_then(Decimal::from_f64_retain)?;
+    (value > Decimal::ZERO && value <= Decimal::ONE).then_some(value)
+}
+
+/// Per-leg fill outcomes for deterministic paper recovery.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct PaperFillScenarioDto {
+    /// Long-leg outcome.
+    pub long: FillOutcomeDto,
+    /// Short-leg outcome.
+    pub short: FillOutcomeDto,
+}
+
+impl PaperFillScenarioDto {
+    /// Validate both outcomes.
+    pub fn to_domain(&self) -> Option<PaperFillScenario> {
+        Some(PaperFillScenario {
+            long: self.long.to_domain()?,
+            short: self.short.to_domain()?,
+        })
+    }
 }
 
 /// A recorded order intent, as served by the API.

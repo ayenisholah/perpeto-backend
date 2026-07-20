@@ -1,7 +1,7 @@
 //! Shared application state.
 
 use funding_arb_auth_service::AuthService;
-use funding_arb_execution_service::{ExecutionService, PositionsRepo};
+use funding_arb_execution_service::{BreakersRepo, ExecutionService, OutboxRepo, PositionsRepo};
 use funding_arb_scanner_service::ScannerRepo;
 
 /// Cloneable state shared across all handlers.
@@ -15,4 +15,8 @@ pub struct AppState {
     pub execution: ExecutionService,
     /// Persistence for opened paper positions.
     pub positions: PositionsRepo,
+    /// Durable emergency controls.
+    pub breakers: BreakersRepo,
+    /// Durable domain-event outbox.
+    pub outbox: OutboxRepo,
 }

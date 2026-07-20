@@ -13,7 +13,7 @@ use std::{env, thread, time::Duration};
 
 use funding_arb_auth_service::{AuthConfig, AuthService, LiveIdentityVerifier, Repo};
 use funding_arb_domain::TradingMode;
-use funding_arb_execution_service::{ExecutionService, PositionsRepo};
+use funding_arb_execution_service::{BreakersRepo, ExecutionService, OutboxRepo, PositionsRepo};
 use funding_arb_scanner_service::ScannerRepo;
 use sqlx::postgres::PgPoolOptions;
 
@@ -77,6 +77,8 @@ async fn run() -> ExitCode {
     };
     let scanner = ScannerRepo::new(pool.clone());
     let positions = PositionsRepo::new(pool.clone());
+    let breakers = BreakersRepo::new(pool.clone());
+    let outbox = OutboxRepo::new(pool.clone());
     let execution = ExecutionService::default();
     let repo = Repo::new(pool);
 
@@ -99,6 +101,8 @@ async fn run() -> ExitCode {
         scanner,
         execution,
         positions,
+        breakers,
+        outbox,
     });
 
     let listener = match tokio::net::TcpListener::bind(&config.bind_address).await {

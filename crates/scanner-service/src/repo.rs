@@ -38,7 +38,10 @@ impl ScannerRepo {
     /// # Errors
     /// Returns the underlying [`sqlx::Error`] if the query fails.
     pub async fn ping(&self) -> Result<(), sqlx::Error> {
-        sqlx::query("SELECT 1").execute(&self.pool).await.map(|_| ())
+        sqlx::query("SELECT 1")
+            .execute(&self.pool)
+            .await
+            .map(|_| ())
     }
 
     /// Persist a scan and its ranked opportunities in one transaction.
@@ -79,7 +82,13 @@ impl ScannerRepo {
         )
         .fetch_optional(&self.pool)
         .await?;
-        Ok(row.map(|row| (row.get("id"), row.get("scanned_at"), row.get("model_version"))))
+        Ok(row.map(|row| {
+            (
+                row.get("id"),
+                row.get("scanned_at"),
+                row.get("model_version"),
+            )
+        }))
     }
 
     /// Read the most recent scan as a wire DTO, or `None` if none exists.

@@ -2,7 +2,7 @@
 
 ## Snapshot
 
-- Milestone: M2 Slice 5a — deterministic paper re-hedge and auto-exit
+- Milestone: M2 Slice 5b — recovery, circuit breakers, and emergency controls
 - Overall state: In progress
 - Last verified: 2026-07-20
 
@@ -18,6 +18,7 @@
 - Accepted DEC-0007 and replaced the password flow in the canonical specification with Google/Apple identity and Perpeto-authoritative approval, MFA, sessions, and revocation.
 - Added the M1A PostgreSQL schema, authentication invariant model/tests, OpenAPI 0.2.0 contract, and typed TypeScript client.
 - Added M2 Slice 5a supervision: current-mark delta, two-tick corrective re-hedging, forecast/health exit decisions, manual/automatic exit reasons, engine persistence on an accelerated scenario clock, OpenAPI/client 0.7.0, and mobile re-hedge/exit monitoring.
+- Added M2 Slice 5b: deterministic partial/unknown fill reconciliation and bounded recovery, `RECOVERING` lifecycle support, durable paper circuit breakers/outbox, daily-loss/drawdown and degraded-venue enforcement, emergency-control APIs, OpenAPI/client 0.8.0, and mobile controls/badges.
 - Started M2 Slice 1: `funding-arb-domain` market/forecast/opportunity types with a transparent non-ML forecaster and PRODUCT_SPEC §4.5 ranking (unit-tested); a `funding-arb-scanner-service` crate driven by deterministic fixtures with Postgres persistence (`0003_market_scan.sql`); the engine as a paper scan loop; a read-only `GET /api/v1/opportunities` endpoint; and the additive OpenAPI 0.3.0 / `@ayenisholah/perpeto-api-client@0.3.0` contract with a mobile Scanner screen.
 - Started M2 Slice 2: richer opportunities (break-even funding, required capital, entry basis, leverage, per-leg forecast) and a `funding-arb-domain::risk` `RiskLimits` model (§6.2 safe-starter defaults) applied as scanner eligibility gates with per-opportunity paper reservations; the full §4.6 filter/sort set, `GET /api/v1/opportunities/{route_id}` detail, and `GET /api/v1/risk/limits`; OpenAPI 0.4.0 / client `0.4.0`; and a mobile filter/sort control, opportunity-detail sheet, and risk-limits card.
 - Started M2 Slice 4: `funding-arb-domain::position` gains deterministic funding capture (`settle_funding`, §3.3 signs, N settlements elapsed) and a `close_paper` path (`OPEN→CLOSING→CLOSED`) that flattens both legs with reduce-only/sell-owned fills and records realized PnL (funding + trading PnL − fees); each leg now carries its mark/funding rate/interval. `execution-service` adds `ExecutionService::close`, `PositionsRepo::update`, and a `PositionDto::to_domain` reload; the API adds RBAC-gated, state-idempotent `POST /api/v1/positions/{id}/close`. OpenAPI 0.6.0 / client `0.6.0` (`closePosition`; `Position.funding_captured/realized_pnl/closed_at`, `PositionLeg.mark_price/funding_rate/funding_interval_hours`); a mobile Close action and realized-PnL/funding display on the Positions screen.
@@ -26,17 +27,17 @@
 ## Not completed
 
 - The social-auth runtime adapters are implemented and deployed (`funding-arb-auth-service` + `axum` API). The shared v1 backend runs with `PERPETO_OPEN_REGISTRATION` enabled (DEC-0009), so new sign-ins get immediate full access; per-user backend isolation and the restored gated-approval/MFA flow are the v2 objective.
-- The scanner and supervised positions use deterministic fixtures only; no venue connector, double-entry ledger, or production-ready trading API exists. Partial-fill/unknown-outcome recovery, circuit breakers, and emergency controls remain Slice 5b. Position payloads persist as `f64`; lossless decimal persistence is deferred to the ledger slice.
+- The scanner and supervised positions use deterministic fixtures only; no venue connector, double-entry ledger, or production-ready trading API exists. Position payloads persist as `f64`; lossless decimal persistence is deferred to the ledger slice. Strategy configuration/auto-entry and complete monitoring remain Slices 6–7.
 - No venue has any certification evidence.
 - Live trading is unavailable by design.
 
 ## Blockers
 
-- Rust tooling is unavailable in the current local environment; compile, clippy, formatting, database-backed tests, and linked execution depend on GitHub Actions.
+- The local Windows Rust linker is unavailable; compile, clippy, database-backed tests, and linked execution depend on GitHub Actions.
 - VPS environment values and runtime configuration must be supplied before staging deployment.
 - A least-privilege cross-repository token is required before documentation and API-update automation can be enabled.
 - Client `0.2.0` publication and the permanent GitHub Packages pin await merge plus the versioned release workflow; mobile uses a verified vendored tarball meanwhile.
 
 ## Next verified task
 
-Verify Slice 5a in CI, including Rust format/clippy/workspace tests and the Postgres `t1→t2→t3` supervision round-trip; run the compose engine with the accelerated paper clock and confirm re-hedge then `FUNDING_FLIP` closure. Publish client 0.7.0, then begin Slice 5b recovery, circuit breakers, and emergency controls.
+Verify Slice 5b in CI, publish client 0.8.0, then implement Slice 6 strategy configuration and deterministic auto-entry.

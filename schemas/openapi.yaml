@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Perpeto Control API
-  version: 0.7.0
+  version: 0.8.0
   description: >-
     Social identity, MFA, and secure sessions plus the M2 deterministic paper
     scanner and coordinated simulated positions. Live execution remains unavailable.
@@ -35,6 +35,8 @@ tags:
     description: Read-only ranked funding-arbitrage opportunities from the deterministic paper scanner.
   - name: Positions
     description: Opening and monitoring coordinated paper arbitrage positions (no live trading).
+  - name: Controls
+    description: Durable paper circuit breakers and emergency controls.
   - name: Provider notifications
     description: Signed, idempotent identity-provider account-change callbacks.
 paths:
@@ -517,6 +519,8 @@ paths:
         "401": { $ref: "#/components/responses/ProblemResponse" }
         "403": { $ref: "#/components/responses/ProblemResponse" }
         "404": { $ref: "#/components/responses/ProblemResponse" }
+        "409": { $ref: "#/components/responses/ProblemResponse" }
+        "422": { $ref: "#/components/responses/ProblemResponse" }
   /api/v1/positions/{id}:
     get:
       tags: [Positions]
@@ -561,6 +565,98 @@ paths:
         "403": { $ref: "#/components/responses/ProblemResponse" }
         "404": { $ref: "#/components/responses/ProblemResponse" }
         "409": { $ref: "#/components/responses/ProblemResponse" }
+  /api/v1/controls:
+    get:
+      tags: [Controls]
+      summary: List active circuit breakers
+      operationId: getControls
+      responses:
+        "200":
+          description: Effective paper controls.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Controls" }
+        "401": { $ref: "#/components/responses/ProblemResponse" }
+        "403": { $ref: "#/components/responses/ProblemResponse" }
+  /api/v1/controls/halt:
+    post:
+      tags: [Controls]
+      summary: Halt new risk or enter read-only mode
+      operationId: halt
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/HaltRequest" }
+      responses:
+        "200":
+          description: Active breaker.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CircuitBreaker" }
+        "401": { $ref: "#/components/responses/ProblemResponse" }
+        "403": { $ref: "#/components/responses/ProblemResponse" }
+        "422": { $ref: "#/components/responses/ProblemResponse" }
+  /api/v1/controls/venues/{venue}/disable:
+    post:
+      tags: [Controls]
+      summary: Disable new exposure on a venue
+      operationId: disableVenue
+      parameters:
+        - in: path
+          name: venue
+          required: true
+          schema: { $ref: "#/components/schemas/Venue" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ControlReasonRequest" }
+      responses:
+        "200":
+          description: Active venue breaker.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CircuitBreaker" }
+        "401": { $ref: "#/components/responses/ProblemResponse" }
+        "403": { $ref: "#/components/responses/ProblemResponse" }
+        "404": { $ref: "#/components/responses/ProblemResponse" }
+  /api/v1/controls/flatten:
+    post:
+      tags: [Controls]
+      summary: Request OWNER-only emergency flatten
+      operationId: flatten
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ControlReasonRequest" }
+      responses:
+        "200":
+          description: Active flatten breaker.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CircuitBreaker" }
+        "401": { $ref: "#/components/responses/ProblemResponse" }
+        "403": { $ref: "#/components/responses/ProblemResponse" }
+  /api/v1/controls/resume:
+    post:
+      tags: [Controls]
+      summary: Resolve operator-created controls
+      operationId: resumeControls
+      responses:
+        "200":
+          description: Number of resolved controls.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [resolved]
+                properties:
+                  resolved: { type: integer, minimum: 0 }
+        "401": { $ref: "#/components/responses/ProblemResponse" }
+        "403": { $ref: "#/components/responses/ProblemResponse" }
   /api/v1/auth/apple/notifications:
     post:
       tags: [Provider notifications]
@@ -661,6 +757,8 @@ components:
         - max_entry_basis_bps
         - min_depth_multiple
         - max_unmatched_usd
+        - max_daily_loss_fraction
+        - max_drawdown_fraction
       properties:
         reference_equity: { type: number }
         max_portfolio_fraction: { type: number }
@@ -673,6 +771,8 @@ components:
         max_entry_basis_bps: { type: number }
         min_depth_multiple: { type: number }
         max_unmatched_usd: { type: number }
+        max_daily_loss_fraction: { type: number, minimum: 0, maximum: 1 }
+        max_drawdown_fraction: { type: number, minimum: 0, maximum: 1 }
     Opportunity:
       type: object
       additionalProperties: false
@@ -744,10 +844,25 @@ components:
           items: { $ref: "#/components/schemas/Opportunity" }
     PositionState:
       type: string
-      enum: [QUALIFIED, RESERVED, OPENING, OPEN, OPEN_FAILED, REHEDGING, CLOSING, CLOSED]
+      enum: [QUALIFIED, RESERVED, OPENING, OPEN, OPEN_FAILED, RECOVERING, REHEDGING, CLOSING, CLOSED]
     ExitReason:
       type: string
-      enum: [FUNDING_FLIP, THRESHOLD_BREACH, VENUE_UNHEALTHY, MANUAL]
+      enum: [FUNDING_FLIP, THRESHOLD_BREACH, VENUE_UNHEALTHY, MANUAL, RECOVERY_FAILURE, CIRCUIT_BREAKER]
+    FillOutcome:
+      type: object
+      additionalProperties: false
+      required: [outcome]
+      properties:
+        outcome: { type: string, enum: [FULL, PARTIAL, UNKNOWN] }
+        fraction: { type: number, exclusiveMinimum: 0, maximum: 1 }
+        reconciled_fraction: { type: number, exclusiveMinimum: 0, maximum: 1 }
+    PaperFillScenario:
+      type: object
+      additionalProperties: false
+      required: [long, short]
+      properties:
+        long: { $ref: "#/components/schemas/FillOutcome" }
+        short: { $ref: "#/components/schemas/FillOutcome" }
     OpenPositionRequest:
       type: object
       additionalProperties: false
@@ -757,6 +872,52 @@ components:
         notional:
           type: number
           description: Notional (USD) to size each leg to; defaults to the reservation.
+        fill_scenario:
+          $ref: "#/components/schemas/PaperFillScenario"
+    BreakerScope:
+      type: string
+      enum: [GLOBAL, VENUE, STRATEGY]
+    BreakerAction:
+      type: string
+      enum: [HALT_NEW_RISK, DISABLE_VENUE, READ_ONLY, FLATTEN]
+    CircuitBreaker:
+      type: object
+      additionalProperties: false
+      required: [id, scope, action, source, reason, active, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        scope: { $ref: "#/components/schemas/BreakerScope" }
+        scope_key: { type: [string, "null"] }
+        action: { $ref: "#/components/schemas/BreakerAction" }
+        source: { type: string }
+        reason: { type: string }
+        created_by: { type: [string, "null"] }
+        active: { type: boolean }
+        created_at: { type: string, format: date-time }
+        resolved_at: { type: [string, "null"], format: date-time }
+    Controls:
+      type: object
+      additionalProperties: false
+      required: [effective_action, breakers]
+      properties:
+        effective_action:
+          anyOf:
+            - { $ref: "#/components/schemas/BreakerAction" }
+            - { type: "null" }
+        breakers:
+          type: array
+          items: { $ref: "#/components/schemas/CircuitBreaker" }
+    HaltRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        action: { type: string, enum: [HALT_NEW_RISK, READ_ONLY], default: HALT_NEW_RISK }
+        reason: { type: string }
+    ControlReasonRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        reason: { type: string }
     PaperOrder:
       type: object
       additionalProperties: false
