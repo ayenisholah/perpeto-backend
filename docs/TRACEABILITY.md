@@ -30,4 +30,5 @@
 | Spec 14 security | auth, secret store and signer policy | Security tests, scanning and external review | Auth invariant tests plus Ed25519 access tokens, hashed rotating refresh tokens, JWKS provider verification, and AES-GCM TOTP-secret encryption implemented; external review pending |
 | Spec 15 deployment | Compose and staging deployment | Compose validation and paper-mode smoke test | Scaffolded |
 | Spec 17 acceptance | CI and certification evidence | Required checks and signed evidence | In progress |
+| Spec 17.6 CEX certification evidence | append-only `0014_connector_certification_evidence.sql`, fixture/public/credentialed probe CLI, certification runbook | hashed fixture output, public network probe, credentialed sandbox/shadow read and reconciliation records, timed soak reports | In progress (M3-S20 evidence tooling implemented; keys and timed evidence pending) |
 | Spec 18 CI/CD | GitHub Actions and GHCR | Workflow runs, SBOM, provenance and staging smoke | Scaffolded |

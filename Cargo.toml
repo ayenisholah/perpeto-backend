@@ -9,6 +9,7 @@ members = [
   "crates/connectors",
   "crates/venue-service",
   "bins/venue-admin",
+  "bins/connector-evidence",
   "bins/api",
   "bins/engine",
   "bins/reconciler",

@@ -715,6 +715,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "funding-arb-connector-evidence"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "funding-arb-connectors",
+ "funding-arb-domain",
+ "funding-arb-venue-service",
+ "futures-util",
+ "serde_json",
+ "sqlx",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
 name = "funding-arb-domain"
 version = "0.1.0"
 dependencies = [

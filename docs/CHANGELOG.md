@@ -6,6 +6,8 @@ All notable repository changes are recorded here using Keep a Changelog categori
 
 ### Added
 
+- M3 Slice 20 — added migration `0014_connector_certification_evidence.sql`, a credential-safe `funding-arb-connector-evidence` CLI for hashed fixtures, public no-key probes, and sanitized credentialed read/reconciliation probes, plus the M3 certification runbook. The probe performs no exchange writes; timed sandbox/shadow certification remains an explicit operational gate.
+
 - M3 Slice 19 — added exact connector observability over the durable execution and reconciliation records: recent normalized/native order intents, reconciliation summaries, and latest exact balance/venue-position snapshots are available through authenticated APIs and OpenAPI/client **0.13.0**. Decimal values remain strings and credential material is never returned.
 
 - M3 Slice 18 — wired encrypted account configuration into a fail-closed connector registry, live exact market snapshots into the existing scanner in `SHADOW`/`SANDBOX`, connector health/instrument persistence, scheduled account reconciliation, and durable preview/submit-once sandbox order APIs. OpenAPI/client **0.12.0** exposes exact string quantities, native payload hashes, acknowledgements, duplicates, and unknown outcomes; SHADOW and production submission remain blocked.

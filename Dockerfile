@@ -12,6 +12,7 @@ RUN useradd --create-home --uid 10001 perpeto
 COPY --from=builder /workspace/target/release/funding-arb-api /usr/local/bin/
 COPY --from=builder /workspace/target/release/funding-arb-engine /usr/local/bin/
 COPY --from=builder /workspace/target/release/funding-arb-reconciler /usr/local/bin/
+COPY --from=builder /workspace/target/release/funding-arb-connector-evidence /usr/local/bin/
 COPY --from=builder /workspace/target/release/funding-arb-worker /usr/local/bin/
 COPY --from=builder /workspace/target/release/funding-arb-signer /usr/local/bin/
 COPY --from=builder /workspace/target/release/funding-arb-migrate /usr/local/bin/
