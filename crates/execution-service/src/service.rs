@@ -72,7 +72,7 @@ impl ExecutionService {
         let opportunity = ranked.opportunity;
         let assessment = ranked.assessment;
 
-        let legs = fixtures::load().map_err(OpenError::Fixture)?;
+        let legs = fixtures::load_at(now).map_err(OpenError::Fixture)?;
         let long_exec = Self::leg_execution(
             &legs,
             opportunity.route_type,

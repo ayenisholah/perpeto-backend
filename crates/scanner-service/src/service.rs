@@ -53,7 +53,7 @@ impl Scanner {
     /// # Errors
     /// Returns [`FixtureError`] if the embedded market fixtures cannot load.
     pub fn scan(&self, now: DateTime<Utc>) -> Result<ScanResult, FixtureError> {
-        let legs = fixtures::load()?;
+        let legs = fixtures::load_at(now)?;
         let ranked = rank(self.build_opportunities(&legs), &self.risk_limits);
         let opportunities = ranked
             .into_iter()
