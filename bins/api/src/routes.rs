@@ -37,6 +37,10 @@ pub fn build_router(state: AppState) -> Router {
             get(handlers::list_positions).post(handlers::create_position),
         )
         .route("/api/v1/positions/{id}", get(handlers::get_position))
+        .route(
+            "/api/v1/positions/{id}/close",
+            post(handlers::close_position),
+        )
         .layer(middleware::from_fn_with_state(state.clone(), require_auth));
 
     let public = Router::new()

@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Perpeto Control API
-  version: 0.5.0
+  version: 0.6.0
   description: >-
     M1A social identity, MFA, and secure-session contract plus the M2 read-only
     paper opportunity scanner. Trade execution remains unavailable.
@@ -536,6 +536,31 @@ paths:
         "401": { $ref: "#/components/responses/ProblemResponse" }
         "403": { $ref: "#/components/responses/ProblemResponse" }
         "404": { $ref: "#/components/responses/ProblemResponse" }
+  /api/v1/positions/{id}/close:
+    post:
+      tags: [Positions]
+      summary: Close an open paper position
+      description: >-
+        Requires an active OWNER or TRADER. Captures funding for the settlements
+        the position was open across, flattens both legs, and records realized
+        PnL. Idempotent: an already-closed position is returned unchanged; a
+        non-open position is rejected with 409.
+      operationId: closePosition
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: The closed paper position.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Position" }
+        "401": { $ref: "#/components/responses/ProblemResponse" }
+        "403": { $ref: "#/components/responses/ProblemResponse" }
+        "404": { $ref: "#/components/responses/ProblemResponse" }
+        "409": { $ref: "#/components/responses/ProblemResponse" }
   /api/v1/auth/apple/notifications:
     post:
       tags: [Provider notifications]
@@ -751,11 +776,26 @@ components:
     PositionLeg:
       type: object
       additionalProperties: false
-      required: [venue, symbol, is_long, target_qty, filled_qty, avg_fill_price, fees, orders, fills]
+      required:
+        - venue
+        - symbol
+        - is_long
+        - mark_price
+        - funding_rate
+        - funding_interval_hours
+        - target_qty
+        - filled_qty
+        - avg_fill_price
+        - fees
+        - orders
+        - fills
       properties:
         venue: { $ref: "#/components/schemas/Venue" }
         symbol: { type: string }
         is_long: { type: boolean }
+        mark_price: { type: number }
+        funding_rate: { type: number }
+        funding_interval_hours: { type: integer, minimum: 1 }
         target_qty: { type: number }
         filled_qty: { type: number }
         avg_fill_price: { type: number }
@@ -779,6 +819,8 @@ components:
         - target_notional
         - reserved_capital
         - residual_delta_usd
+        - funding_captured
+        - realized_pnl
         - opened_at
         - long_leg
         - short_leg
@@ -792,7 +834,10 @@ components:
         target_notional: { type: number }
         reserved_capital: { type: number }
         residual_delta_usd: { type: number }
+        funding_captured: { type: number }
+        realized_pnl: { type: number }
         opened_at: { type: string, format: date-time }
+        closed_at: { type: string, format: date-time }
         long_leg: { $ref: "#/components/schemas/PositionLeg" }
         short_leg: { $ref: "#/components/schemas/PositionLeg" }
     PositionList:

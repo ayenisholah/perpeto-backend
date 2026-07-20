@@ -68,6 +68,21 @@ impl PositionsRepo {
         .map(|_| ())
     }
 
+    /// Update an existing position's state and payload (e.g. on close).
+    ///
+    /// # Errors
+    /// Returns the underlying [`sqlx::Error`] if the update fails.
+    pub async fn update(&self, dto: &PositionDto) -> Result<(), sqlx::Error> {
+        let payload = encode(dto)?;
+        sqlx::query("UPDATE positions SET state = $2, payload = $3 WHERE id = $1")
+            .bind(parse_uuid(&dto.id)?)
+            .bind(&dto.state)
+            .bind(&payload)
+            .execute(&self.pool)
+            .await
+            .map(|_| ())
+    }
+
     /// Read a position by the idempotency key it was opened under.
     ///
     /// # Errors

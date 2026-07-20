@@ -435,6 +435,40 @@ pub async fn get_position(
     }
 }
 
+/// `POST /api/v1/positions/{id}/close` — close an open paper position.
+///
+/// Requires an active OWNER or TRADER. Idempotent: an already-closed position is
+/// returned as-is; a non-open (`OPEN_FAILED`) position is rejected with `409`.
+pub async fn close_position(
+    State(state): State<AppState>,
+    Extension(caller): Extension<CallerContext>,
+    Path(id): Path<String>,
+) -> Result<Response, ApiError> {
+    caller.require_active()?;
+    if !caller.can_trade() {
+        return Err(AuthError::Forbidden.into());
+    }
+    let Some(dto) = state.positions.get(&id).await.map_err(internal)? else {
+        return Ok(not_found("Position not found", "POSITION_NOT_FOUND"));
+    };
+    match dto.state.as_str() {
+        "CLOSED" => return Ok((StatusCode::OK, Json(dto)).into_response()),
+        "OPEN" => {}
+        _ => {
+            return Ok((
+                StatusCode::CONFLICT,
+                [(axum::http::header::CONTENT_TYPE, "application/problem+json")],
+                r#"{"type":"about:blank","title":"Position is not open","status":409,"code":"POSITION_NOT_OPEN"}"#,
+            )
+                .into_response());
+        }
+    }
+    let closed = state.execution.close(dto.to_domain(), Utc::now());
+    let closed_dto = PositionDto::from_domain(&closed);
+    state.positions.update(&closed_dto).await.map_err(internal)?;
+    Ok((StatusCode::OK, Json(closed_dto)).into_response())
+}
+
 fn internal(error: sqlx::Error) -> ApiError {
     ApiError(AuthError::Internal(error.to_string()))
 }

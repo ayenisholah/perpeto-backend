@@ -1,4 +1,4 @@
-export const schemaVersion = "0.5.0" as const;
+export const schemaVersion = "0.6.0" as const;
 
 export type SocialProvider = "APPLE" | "GOOGLE";
 export type AuthNextState =
@@ -192,6 +192,9 @@ export interface PositionLeg {
   readonly venue: Venue;
   readonly symbol: string;
   readonly is_long: boolean;
+  readonly mark_price: number;
+  readonly funding_rate: number;
+  readonly funding_interval_hours: number;
   readonly target_qty: number;
   readonly filled_qty: number;
   readonly avg_fill_price: number;
@@ -210,7 +213,10 @@ export interface Position {
   readonly target_notional: number;
   readonly reserved_capital: number;
   readonly residual_delta_usd: number;
+  readonly funding_captured: number;
+  readonly realized_pnl: number;
   readonly opened_at: string;
+  readonly closed_at?: string;
   readonly long_leg: PositionLeg;
   readonly short_leg: PositionLeg;
 }
@@ -510,6 +516,17 @@ export class PerpetoClient {
 
   public async getPosition(id: string): Promise<Position> {
     const payload = await this.#request<unknown>(`/api/v1/positions/${encodeURIComponent(id)}`);
+    if (!isPosition(payload)) {
+      throw new Error("Perpeto position contract is incompatible");
+    }
+    return payload;
+  }
+
+  public async closePosition(id: string): Promise<Position> {
+    const payload = await this.#request<unknown>(
+      `/api/v1/positions/${encodeURIComponent(id)}/close`,
+      { method: "POST" },
+    );
     if (!isPosition(payload)) {
       throw new Error("Perpeto position contract is incompatible");
     }

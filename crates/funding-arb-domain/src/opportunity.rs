@@ -39,6 +39,16 @@ impl FundingDirection {
             Self::Negative => "NEGATIVE",
         }
     }
+
+    /// Parse the canonical wire spelling.
+    #[must_use]
+    pub fn from_wire(value: &str) -> Option<Self> {
+        match value {
+            "POSITIVE" => Some(Self::Positive),
+            "NEGATIVE" => Some(Self::Negative),
+            _ => None,
+        }
+    }
 }
 
 /// One leg of a two-leg route.

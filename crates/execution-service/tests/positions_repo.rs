@@ -106,3 +106,32 @@ async fn duplicate_idempotency_key_is_rejected() {
             .is_some_and(|db| db.is_unique_violation())
     );
 }
+
+#[tokio::test]
+async fn close_update_round_trips() {
+    let Some(pool) = pool().await else { return };
+    let _guard = TEST_LOCK.lock().await;
+    reset(&pool).await;
+
+    let service = ExecutionService::default();
+    let repo = PositionsRepo::new(pool.clone());
+    let opened = Utc.with_ymd_and_hms(2026, 7, 19, 0, 0, 0).unwrap();
+    let route_id = first_route_id(&service, opened);
+
+    let position = service
+        .open(&route_id, None, "idem-close".into(), opened)
+        .expect("open");
+    repo.create(&PositionDto::from_domain(&position), "idem-close")
+        .await
+        .expect("create");
+
+    let closed = service.close(position, opened + chrono::Duration::hours(24));
+    repo.update(&PositionDto::from_domain(&closed))
+        .await
+        .expect("update");
+
+    let fetched = repo.get(&closed.id).await.expect("get").expect("present");
+    assert_eq!(fetched.state, "CLOSED");
+    assert!(fetched.funding_captured > 0.0);
+    assert!(fetched.realized_pnl <= fetched.funding_captured);
+}

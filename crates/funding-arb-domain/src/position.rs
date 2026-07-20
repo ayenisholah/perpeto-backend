@@ -75,6 +75,22 @@ impl PositionState {
         }
     }
 
+    /// Parse the canonical wire spelling.
+    #[must_use]
+    pub fn from_wire(value: &str) -> Option<Self> {
+        Some(match value {
+            "QUALIFIED" => Self::Qualified,
+            "RESERVED" => Self::Reserved,
+            "OPENING" => Self::Opening,
+            "OPEN" => Self::Open,
+            "OPEN_FAILED" => Self::OpenFailed,
+            "REHEDGING" => Self::Rehedging,
+            "CLOSING" => Self::Closing,
+            "CLOSED" => Self::Closed,
+            _ => return None,
+        })
+    }
+
     /// Whether a direct transition to `next` is permitted by the state machine.
     #[must_use]
     pub fn can_transition(self, next: Self) -> bool {
@@ -124,6 +140,10 @@ pub struct LegExecution {
     pub symbol: String,
     /// The mark price used to size and fill the leg.
     pub mark_price: Decimal,
+    /// The normalized per-interval funding rate (positive ⇒ longs pay shorts).
+    pub funding_rate: Decimal,
+    /// The funding interval length, in hours.
+    pub funding_interval_hours: u32,
 }
 
 /// Deterministic paper-fill parameters.
@@ -178,17 +198,23 @@ pub struct PositionLeg {
     pub symbol: String,
     /// Whether the leg is held long.
     pub is_long: bool,
+    /// The mark price the leg was sized and filled against.
+    pub mark_price: Decimal,
+    /// The normalized per-interval funding rate for the leg's instrument.
+    pub funding_rate: Decimal,
+    /// The funding interval length, in hours.
+    pub funding_interval_hours: u32,
     /// The base quantity targeted.
     pub target_qty: Decimal,
-    /// The base quantity filled (equals target in paper).
+    /// The base quantity filled (zero once the leg is closed).
     pub filled_qty: Decimal,
-    /// The average fill price.
+    /// The average entry fill price.
     pub avg_fill_price: Decimal,
-    /// Total fees paid on the leg (USD).
+    /// Total fees paid on the leg over its lifetime (USD).
     pub fees: Decimal,
-    /// The order intents recorded for the leg.
+    /// The order intents recorded for the leg (open, then close).
     pub orders: Vec<PaperOrder>,
-    /// The simulated fills for the leg.
+    /// The simulated fills for the leg (open, then close).
     pub fills: Vec<PaperFill>,
 }
 
@@ -217,8 +243,14 @@ pub struct ArbitragePosition {
     pub reserved_capital: Decimal,
     /// Unmatched base-asset exposure valued in USD.
     pub residual_delta_usd: Decimal,
+    /// Net funding captured over the hold (USD); zero until close.
+    pub funding_captured: Decimal,
+    /// Realized PnL at close (funding + trading PnL − fees); zero until close.
+    pub realized_pnl: Decimal,
     /// When the position was opened.
     pub opened_at: DateTime<Utc>,
+    /// When the position was closed, if it has been.
+    pub closed_at: Option<DateTime<Utc>>,
     /// The idempotency key the open was requested under.
     pub idempotency_key: String,
 }
@@ -265,6 +297,9 @@ fn leg(
         venue,
         symbol: exec.symbol.clone(),
         is_long,
+        mark_price: exec.mark_price,
+        funding_rate: exec.funding_rate,
+        funding_interval_hours: exec.funding_interval_hours,
         target_qty,
         filled_qty: target_qty,
         avg_fill_price: price,
@@ -342,14 +377,118 @@ pub fn open_paper(
         target_notional: requested_notional,
         reserved_capital,
         residual_delta_usd,
+        funding_captured: Decimal::ZERO,
+        realized_pnl: Decimal::ZERO,
         opened_at: now,
+        closed_at: None,
         idempotency_key,
     }
 }
 
+/// Deterministic funding capture (PRODUCT_SPEC §3.3).
+///
+/// For each leg, the whole funding intervals elapsed since open are multiplied
+/// by the per-interval cashflow `−position_sign × leg_notional × funding_rate`.
+/// The short leg earns positive funding (a credit) and the long leg pays it (a
+/// debit); the net is returned in USD. Deterministic in `(position, now)`.
+#[must_use]
+pub fn settle_funding(position: &ArbitragePosition, now: DateTime<Utc>) -> Decimal {
+    let elapsed_hours = (now - position.opened_at).num_hours();
+    leg_funding(&position.long_leg, elapsed_hours) + leg_funding(&position.short_leg, elapsed_hours)
+}
+
+fn leg_funding(leg: &PositionLeg, elapsed_hours: i64) -> Decimal {
+    if leg.funding_interval_hours == 0 || elapsed_hours <= 0 {
+        return Decimal::ZERO;
+    }
+    let intervals = elapsed_hours / i64::from(leg.funding_interval_hours);
+    let notional = leg.filled_qty * leg.avg_fill_price;
+    let position_sign = if leg.is_long {
+        Decimal::ONE
+    } else {
+        -Decimal::ONE
+    };
+    -position_sign * notional * leg.funding_rate * Decimal::from(intervals)
+}
+
+fn close_leg(
+    position_short: &str,
+    label: &str,
+    mut leg: PositionLeg,
+    cost: &CostModel,
+) -> (PositionLeg, Decimal) {
+    // Closing reverses the open side: a long leg sells, a short leg buys.
+    let slip = if leg.is_long {
+        Decimal::ONE - cost.slippage
+    } else {
+        Decimal::ONE + cost.slippage
+    };
+    let close_price = leg.mark_price * slip;
+    let qty = leg.filled_qty;
+    let exit_fee = qty * close_price * cost.taker_fee;
+    let client_order_id = format!("fa-{position_short}-close-{label}-1");
+    let order = PaperOrder {
+        client_order_id: client_order_id.clone(),
+        side: if leg.is_long { "SELL" } else { "BUY" },
+        target_qty: qty,
+        price_cap: close_price,
+        time_in_force: "IOC",
+    };
+    let fill = PaperFill {
+        client_order_id,
+        qty,
+        price: close_price,
+        fee: exit_fee,
+    };
+    // Trading PnL from entry vs close fill prices (slippage is realized here;
+    // taker fees are tracked separately in `fees`).
+    let trading_pnl = if leg.is_long {
+        (close_price - leg.avg_fill_price) * qty
+    } else {
+        (leg.avg_fill_price - close_price) * qty
+    };
+    leg.orders.push(order);
+    leg.fills.push(fill);
+    leg.fees += exit_fee;
+    leg.filled_qty = Decimal::ZERO;
+    (leg, trading_pnl)
+}
+
+/// Close a paper position: capture funding, flatten both legs with reduce-only /
+/// sell-owned fills, and record realized PnL. Only an `Open` position closes; any
+/// other state (including an already-`Closed` one) is returned unchanged, so
+/// close is idempotent.
+#[must_use]
+pub fn close_paper(
+    mut position: ArbitragePosition,
+    now: DateTime<Utc>,
+    cost: &CostModel,
+) -> ArbitragePosition {
+    if position.state != PositionState::Open {
+        return position;
+    }
+    let funding_captured = settle_funding(&position, now);
+    let position_short: String = position.id.chars().take(8).collect();
+    let (long_leg, long_pnl) = close_leg(&position_short, "long", position.long_leg, cost);
+    let (short_leg, short_pnl) = close_leg(&position_short, "short", position.short_leg, cost);
+    let total_fees = long_leg.fees + short_leg.fees;
+    position.long_leg = long_leg;
+    position.short_leg = short_leg;
+    position.funding_captured = funding_captured;
+    position.realized_pnl = funding_captured + long_pnl + short_pnl - total_fees;
+    position.closed_at = Some(now);
+    position.state = PositionState::Open
+        .try_transition(PositionState::Closing)
+        .and_then(|state| state.try_transition(PositionState::Closed))
+        .unwrap_or(PositionState::Closed);
+    position
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{LegExecution, PaperFillConfig, PositionState, open_paper};
+    use super::{
+        LegExecution, PaperFillConfig, PositionState, close_paper, open_paper, settle_funding,
+    };
     use crate::forecast::{ForecastConfig, forecast};
     use crate::market::{FundingObservation, InstrumentRef, RouteType, Venue};
     use crate::opportunity::{CostModel, Opportunity, RouteLeg};
@@ -436,10 +575,14 @@ mod tests {
         let long_exec = LegExecution {
             symbol: "BTCUSDT".into(),
             mark_price: Decimal::from(30_000),
+            funding_rate: Decimal::new(1, 4),
+            funding_interval_hours: 8,
         };
         let short_exec = LegExecution {
             symbol: "BTCUSDT".into(),
             mark_price: Decimal::from(30_030),
+            funding_rate: Decimal::new(30, 4),
+            funding_interval_hours: 8,
         };
         let position = open_paper(
             "0190abcd-1111-7000-8000-000000000001".into(),
@@ -474,10 +617,14 @@ mod tests {
         let long_exec = LegExecution {
             symbol: "BTCUSDT".into(),
             mark_price: Decimal::from(30_000),
+            funding_rate: Decimal::new(1, 4),
+            funding_interval_hours: 8,
         };
         let short_exec = LegExecution {
             symbol: "ETHUSDT".into(),
             mark_price: Decimal::from(45_000),
+            funding_rate: Decimal::new(30, 4),
+            funding_interval_hours: 8,
         };
         let position = open_paper(
             "0190abcd-2222-7000-8000-000000000002".into(),
@@ -504,10 +651,14 @@ mod tests {
         let long_exec = LegExecution {
             symbol: "BTCUSDT".into(),
             mark_price: Decimal::from(30_000),
+            funding_rate: Decimal::new(1, 4),
+            funding_interval_hours: 8,
         };
         let short_exec = LegExecution {
             symbol: "BTCUSDT".into(),
             mark_price: Decimal::from(30_030),
+            funding_rate: Decimal::new(30, 4),
+            funding_interval_hours: 8,
         };
         let build = || {
             open_paper(
@@ -534,11 +685,110 @@ mod tests {
         assert_eq!(first.residual_delta_usd, second.residual_delta_usd);
     }
 
+    fn exec(symbol: &str, mark: i64, rate: Decimal) -> LegExecution {
+        LegExecution {
+            symbol: symbol.into(),
+            mark_price: Decimal::from(mark),
+            funding_rate: rate,
+            funding_interval_hours: 8,
+        }
+    }
+
+    fn open_at(id: &str, opened: chrono::DateTime<Utc>) -> super::ArbitragePosition {
+        let opp = opportunity();
+        open_paper(
+            id.into(),
+            "key".into(),
+            &opp,
+            &exec("BTCUSDT", 30_000, Decimal::new(1, 4)),
+            &exec("BTCUSDT", 30_030, Decimal::new(30, 4)),
+            Decimal::from(100_000),
+            Decimal::from(100_000),
+            &CostModel::default(),
+            &PaperFillConfig::default(),
+            &RiskLimits::default(),
+            opened,
+        )
+    }
+
+    #[test]
+    fn funding_capture_scales_with_intervals_and_is_net_positive() {
+        let opened = Utc.with_ymd_and_hms(2026, 7, 19, 0, 0, 0).unwrap();
+        let position = open_at("0190abcd-4444-7000-8000-000000000004", opened);
+        let one = settle_funding(&position, opened + chrono::Duration::hours(8));
+        let three = settle_funding(&position, opened + chrono::Duration::hours(24));
+        // Short earns 0.30%/interval, long pays 0.01%, so net capture is positive.
+        assert!(one > Decimal::ZERO);
+        assert_eq!(three, one * Decimal::from(3));
+        // Nothing settles before the first full interval.
+        assert_eq!(
+            settle_funding(&position, opened + chrono::Duration::hours(7)),
+            Decimal::ZERO,
+        );
+    }
+
+    #[test]
+    fn close_flattens_legs_and_records_realized_pnl() {
+        let opened = Utc.with_ymd_and_hms(2026, 7, 19, 0, 0, 0).unwrap();
+        let position = open_at("0190abcd-5555-7000-8000-000000000005", opened);
+        let entry_fees = position.long_leg.fees + position.short_leg.fees;
+        let closed = close_paper(
+            position,
+            opened + chrono::Duration::hours(24),
+            &CostModel::default(),
+        );
+
+        assert_eq!(closed.state, PositionState::Closed);
+        assert!(closed.closed_at.is_some());
+        assert!(closed.funding_captured > Decimal::ZERO);
+        assert_eq!(closed.long_leg.filled_qty, Decimal::ZERO);
+        assert_eq!(closed.short_leg.filled_qty, Decimal::ZERO);
+        // Each leg gained a close order + fill on top of its open pair.
+        assert_eq!(closed.long_leg.orders.len(), 2);
+        assert_eq!(closed.short_leg.fills.len(), 2);
+        assert!(
+            closed
+                .long_leg
+                .client_ids_contains("fa-0190abcd-close-long")
+        );
+        // Exit fees were charged and realized PnL is funding net of all costs.
+        assert!(closed.long_leg.fees + closed.short_leg.fees > entry_fees);
+        assert!(closed.realized_pnl <= closed.funding_captured);
+    }
+
+    #[test]
+    fn close_only_from_open_and_is_idempotent() {
+        let opened = Utc.with_ymd_and_hms(2026, 7, 19, 0, 0, 0).unwrap();
+        let position = open_at("0190abcd-6666-7000-8000-000000000006", opened);
+        let closed = close_paper(
+            position,
+            opened + chrono::Duration::hours(24),
+            &CostModel::default(),
+        );
+        assert_eq!(closed.state, PositionState::Closed);
+        // Closing again is a no-op: same state, funding, and order count.
+        let long_orders = closed.long_leg.orders.len();
+        let again = close_paper(
+            closed.clone(),
+            opened + chrono::Duration::hours(48),
+            &CostModel::default(),
+        );
+        assert_eq!(again.state, PositionState::Closed);
+        assert_eq!(again.funding_captured, closed.funding_captured);
+        assert_eq!(again.long_leg.orders.len(), long_orders);
+    }
+
     impl super::PositionLeg {
         fn client_ids_start_with(&self, prefix: &str) -> bool {
             self.orders
                 .iter()
                 .all(|order| order.client_order_id.starts_with(prefix))
+        }
+
+        fn client_ids_contains(&self, prefix: &str) -> bool {
+            self.orders
+                .iter()
+                .any(|order| order.client_order_id.starts_with(prefix))
         }
     }
 }

@@ -9,7 +9,9 @@ use std::fmt;
 
 use chrono::{DateTime, Utc};
 use funding_arb_domain::market::{RouteType, Venue};
-use funding_arb_domain::position::{ArbitragePosition, LegExecution, PaperFillConfig, open_paper};
+use funding_arb_domain::position::{
+    ArbitragePosition, LegExecution, PaperFillConfig, close_paper, open_paper,
+};
 use funding_arb_scanner_service::Scanner;
 use funding_arb_scanner_service::fixtures::{self, InstrumentKind, MarketLeg};
 use rust_decimal::Decimal;
@@ -138,8 +140,17 @@ impl ExecutionService {
             .map(|leg| LegExecution {
                 symbol: leg.observation.instrument.symbol.clone(),
                 mark_price: leg.observation.mark_price,
+                funding_rate: leg.observation.funding_rate,
+                funding_interval_hours: leg.observation.interval_hours,
             })
             .ok_or(OpenError::LegNotFound)
+    }
+
+    /// Close an open paper position: capture funding, flatten both legs, and
+    /// record realized PnL. A non-open position is returned unchanged.
+    #[must_use]
+    pub fn close(&self, position: ArbitragePosition, now: DateTime<Utc>) -> ArbitragePosition {
+        close_paper(position, now, &self.scanner.cost_model)
     }
 }
 
@@ -181,5 +192,22 @@ mod tests {
         let now = Utc.with_ymd_and_hms(2026, 7, 19, 0, 0, 0).unwrap();
         let result = service.open("PERP_PERP:BINANCE>BYBIT:NOPE", None, "key".into(), now);
         assert!(matches!(result, Err(super::OpenError::RouteNotFound)));
+    }
+
+    #[test]
+    fn close_captures_funding_and_flattens() {
+        let service = ExecutionService::default();
+        let opened = Utc.with_ymd_and_hms(2026, 7, 19, 0, 0, 0).unwrap();
+        let route_id = first_route_id(&service, opened);
+        let position = service
+            .open(&route_id, None, "key-close".into(), opened)
+            .expect("open");
+        assert_eq!(position.state.as_str(), "OPEN");
+
+        let closed = service.close(position, opened + chrono::Duration::hours(24));
+        assert_eq!(closed.state.as_str(), "CLOSED");
+        assert!(closed.closed_at.is_some());
+        assert!(closed.funding_captured > rust_decimal::Decimal::ZERO);
+        assert_eq!(closed.long_leg.filled_qty, rust_decimal::Decimal::ZERO);
     }
 }

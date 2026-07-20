@@ -297,11 +297,16 @@ describe("paper position contract", () => {
     target_notional: 100000,
     reserved_capital: 75000,
     residual_delta_usd: 90,
+    funding_captured: 0,
+    realized_pnl: 0,
     opened_at: "2026-07-19T00:00:00Z",
     long_leg: {
       venue: "BINANCE",
       symbol: "BTCUSDT",
       is_long: true,
+      mark_price: 30000,
+      funding_rate: 0.0001,
+      funding_interval_hours: 8,
       target_qty: 3.333,
       filled_qty: 3.333,
       avg_fill_price: 30009,
@@ -317,6 +322,9 @@ describe("paper position contract", () => {
       venue: "BYBIT",
       symbol: "BTCUSDT",
       is_long: false,
+      mark_price: 30030,
+      funding_rate: 0.003,
+      funding_interval_hours: 8,
       target_qty: 3.33,
       filled_qty: 3.33,
       avg_fill_price: 30021,
@@ -378,5 +386,26 @@ describe("paper position contract", () => {
       fetchImplementation: async () => Response.json({ id: 5 }),
     });
     await assert.rejects(client.getPosition("x"), /contract is incompatible/u);
+  });
+
+  it("closes a position via POST", async () => {
+    let requestedUrl;
+    let method;
+    const closed = { ...position, state: "CLOSED", funding_captured: 250, realized_pnl: 130, closed_at: "2026-07-20T00:00:00Z" };
+    const client = new PerpetoClient({
+      baseUrl: "https://perpeto.test",
+      getAccessToken: () => "ephemeral",
+      fetchImplementation: async (url, init) => {
+        requestedUrl = String(url);
+        method = init.method;
+        return Response.json(closed);
+      },
+    });
+
+    const result = await client.closePosition(position.id);
+    assert.equal(result.state, "CLOSED");
+    assert.equal(result.funding_captured, 250);
+    assert.equal(method, "POST");
+    assert.match(requestedUrl, /\/api\/v1\/positions\/.*\/close$/u);
   });
 });
