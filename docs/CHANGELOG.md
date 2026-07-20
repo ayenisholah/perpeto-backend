@@ -6,6 +6,8 @@ All notable repository changes are recorded here using Keep a Changelog categori
 
 ### Added
 
+- M3 Slice 4 — added `funding-arb-venue-service`, migration `0010_venue_accounts.sql`, masked serialized account/product read models, exact PostgreSQL numeric instrument metadata, reviewed mappings, fee schedules, health samples, certification/reconciliation state, transactional account creation, and instrument upserts without floating-point conversion.
+
 - M3 Slice 3 — added embedded, redacted, SHA-256-verified Binance/Bybit/OKX connector contract suites with pinned official-document provenance and required deterministic cases for metadata pagination, book reset/gap handling, order acknowledgements, partial fills, rate limits, and unknown submission outcomes.
 
 - M3 Slice 2 — introduced the `funding-arb-connectors` crate with a capability-driven async connector contract, exact normalized instrument/market/account/order/fill/funding types, boxed public/private event streams, explicit production/testnet/demo environments, terminal-order semantics, and stable retry/containment error categories.

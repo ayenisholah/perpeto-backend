@@ -1,0 +1,18 @@
+[package]
+name = "funding-arb-venue-service"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+funding-arb-connectors = { path = "../connectors" }
+funding-arb-domain = { path = "../funding-arb-domain" }
+chrono.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sqlx.workspace = true
+uuid.workspace = true
+
+[lints]
+workspace = true
