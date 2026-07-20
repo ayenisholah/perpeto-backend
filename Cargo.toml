@@ -8,6 +8,7 @@ members = [
   "crates/strategy-service",
   "crates/connectors",
   "crates/venue-service",
+  "bins/venue-admin",
   "bins/api",
   "bins/engine",
   "bins/reconciler",
@@ -39,6 +40,7 @@ tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "signal
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 uuid = { version = "1", features = ["v4", "serde"] }
+zeroize = { version = "1", features = ["derive"] }
 
 [workspace.package]
 version = "0.1.0"

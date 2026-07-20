@@ -701,6 +701,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "funding-arb-connectors"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "funding-arb-domain",
+ "futures-core",
+ "rust_decimal",
+ "serde",
+ "serde_json",
+ "sha2",
+]
+
+[[package]]
 name = "funding-arb-domain"
 version = "0.1.0"
 dependencies = [
@@ -786,8 +800,49 @@ dependencies = [
 ]
 
 [[package]]
+name = "funding-arb-venue-admin"
+version = "0.1.0"
+dependencies = [
+ "base64",
+ "chrono",
+ "funding-arb-venue-service",
+ "serde_json",
+ "sqlx",
+ "tokio",
+ "uuid",
+ "zeroize",
+]
+
+[[package]]
+name = "funding-arb-venue-service"
+version = "0.1.0"
+dependencies = [
+ "aes-gcm",
+ "async-trait",
+ "base64",
+ "chrono",
+ "funding-arb-connectors",
+ "funding-arb-domain",
+ "rand 0.8.7",
+ "serde",
+ "serde_json",
+ "sha2",
+ "sqlx",
+ "uuid",
+ "zeroize",
+]
+
+[[package]]
 name = "funding-arb-worker"
 version = "0.1.0"
+dependencies = [
+ "chrono",
+ "funding-arb-execution-service",
+ "serde_json",
+ "sqlx",
+ "tokio",
+ "uuid",
+]
 
 [[package]]
 name = "funty"

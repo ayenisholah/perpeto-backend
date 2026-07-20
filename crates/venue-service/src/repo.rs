@@ -4,7 +4,7 @@ use chrono::{DateTime, Utc};
 use sqlx::{PgPool, Row};
 use uuid::Uuid;
 
-use crate::{InstrumentDto, VenueAccountDto};
+use crate::{InstrumentDto, ProductConnectionDto, VenueAccountDto};
 
 #[derive(Clone)]
 pub struct VenueAccountsRepo {
@@ -91,6 +91,26 @@ impl VenueAccountsRepo {
         .bind(parse_optional_time(account.last_reconciled_at.as_deref())?)
         .bind(parse_optional_time(account.tombstoned_at.as_deref())?)
         .bind(encode(account)?)
+        .execute(&self.pool)
+        .await
+        .map(|_| ())
+    }
+
+    pub async fn update_connection(
+        &self,
+        account_id: &str,
+        connection: &ProductConnectionDto,
+    ) -> Result<(), sqlx::Error> {
+        sqlx::query(
+            "UPDATE venue_product_connections
+             SET secret_ref = $3, enabled = $4, payload = $5
+             WHERE id = $1 AND venue_account_id = $2",
+        )
+        .bind(parse_uuid(&connection.id)?)
+        .bind(parse_uuid(account_id)?)
+        .bind(&connection.secret_ref)
+        .bind(connection.status != "DISABLED")
+        .bind(serde_json::to_string(connection).map_err(protocol)?)
         .execute(&self.pool)
         .await
         .map(|_| ())

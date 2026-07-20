@@ -8,11 +8,17 @@ rust-version.workspace = true
 [dependencies]
 funding-arb-connectors = { path = "../connectors" }
 funding-arb-domain = { path = "../funding-arb-domain" }
+aes-gcm.workspace = true
+async-trait.workspace = true
+base64.workspace = true
 chrono.workspace = true
+rand.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+sha2.workspace = true
 sqlx.workspace = true
 uuid.workspace = true
+zeroize.workspace = true
 
 [lints]
 workspace = true
