@@ -8,9 +8,9 @@
 
 pub mod controls;
 pub mod dto;
+pub mod monitoring;
 pub mod repo;
 pub mod service;
-pub mod monitoring;
 
 pub use controls::{
     BreakerAction, BreakerScope, BreakersRepo, CircuitBreakerDto, ControlsDto, OutboxRepo,
@@ -19,6 +19,6 @@ pub use dto::{
     FillOutcomeDto, OpenPositionRequest, PaperFillScenarioDto, PositionDto, PositionLegDto,
     PositionListDto,
 };
+pub use monitoring::{AlertDto, HealthDto, MonitoringRepo, PortfolioDto};
 pub use repo::PositionsRepo;
 pub use service::{ExecutionService, OpenError, SuperviseError};
-pub use monitoring::{AlertDto, HealthDto, MonitoringRepo, PortfolioDto};

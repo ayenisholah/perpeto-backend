@@ -6,6 +6,8 @@ All notable repository changes are recorded here using Keep a Changelog categori
 
 ### Added
 
+- M3 foundation preparation — normalized the locally committed M2 Rust edits so the workspace formatting gate is clean before connector work begins; the linked Rust build remains delegated to the Linux verification environment because the local Windows host has no MSVC linker.
+
 - M2 Slices 6–7 — immutable versioned paper strategies with stricter admission rules, fixed/percent/dynamic allocation, concurrency/cooldown and auto-compound evaluation, engine auto-entry and position attribution; portfolio/PnL aggregation, synthetic venue/service health, durable deduplicated alerts and acknowledgement; migrations `0007`–`0009`, strategy/monitoring APIs, OpenAPI/client **0.10.0**, and complete mobile Strategies/Portfolio/Health/Alerts tabs. M2 is complete.
 
 - M2 Slice 5b — deterministic per-leg `FULL`/`PARTIAL`/`UNKNOWN` paper outcomes with reconcile-before-retry recovery, `OPENING→RECOVERING→OPEN|CLOSED`, slippage-capped completion or recovery flatten, daily-loss/drawdown limits, a degraded-venue fixture tick, durable circuit breakers and outbox events (`0006_circuit_breakers.sql`), engine breaker enforcement, and RBAC emergency-control APIs. OpenAPI/client **0.8.0** adds fill scenarios, `RECOVERING`, recovery/breaker exit reasons, controls, and breaker types; mobile adds breaker badges and halt/read-only/disable/flatten/resume controls.

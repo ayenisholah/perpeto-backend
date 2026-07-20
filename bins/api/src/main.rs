@@ -13,9 +13,11 @@ use std::{env, thread, time::Duration};
 
 use funding_arb_auth_service::{AuthConfig, AuthService, LiveIdentityVerifier, Repo};
 use funding_arb_domain::TradingMode;
-use funding_arb_execution_service::{BreakersRepo, ExecutionService, MonitoringRepo, OutboxRepo, PositionsRepo};
-use funding_arb_strategy_service::StrategiesRepo;
+use funding_arb_execution_service::{
+    BreakersRepo, ExecutionService, MonitoringRepo, OutboxRepo, PositionsRepo,
+};
 use funding_arb_scanner_service::ScannerRepo;
+use funding_arb_strategy_service::StrategiesRepo;
 use sqlx::postgres::PgPoolOptions;
 
 use crate::routes::build_router;
