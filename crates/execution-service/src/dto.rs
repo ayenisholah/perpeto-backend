@@ -10,7 +10,7 @@ use chrono::{DateTime, Utc};
 use funding_arb_domain::market::{RouteType, Venue};
 use funding_arb_domain::opportunity::FundingDirection;
 use funding_arb_domain::position::{
-    ArbitragePosition, PaperFill, PaperOrder, PositionLeg, PositionState,
+    ArbitragePosition, ExitReason, PaperFill, PaperOrder, PositionLeg, PositionState,
 };
 use rust_decimal::Decimal;
 use rust_decimal::prelude::ToPrimitive;
@@ -114,7 +114,7 @@ pub struct PositionDto {
     pub route_type: String,
     /// `POSITIVE` or `NEGATIVE` funding capture.
     pub funding_direction: String,
-    /// The lifecycle state (`OPEN` or `OPEN_FAILED` in this slice).
+    /// The current lifecycle state.
     pub state: String,
     /// The requested notional (USD) sized per leg.
     pub target_notional: f64,
@@ -122,6 +122,12 @@ pub struct PositionDto {
     pub reserved_capital: f64,
     /// Unmatched base-asset exposure valued in USD.
     pub residual_delta_usd: f64,
+    /// Consecutive supervision ticks above the residual limit.
+    #[serde(default)]
+    pub residual_breach_ticks: u32,
+    /// Why the position exited; explicitly null while it remains open.
+    #[serde(default)]
+    pub exit_reason: Option<String>,
     /// Net funding captured over the hold (USD); zero until close.
     pub funding_captured: f64,
     /// Realized PnL at close (USD); zero until close.
@@ -237,6 +243,10 @@ impl PositionDto {
             target_notional: as_f64(position.target_notional),
             reserved_capital: as_f64(position.reserved_capital),
             residual_delta_usd: as_f64(position.residual_delta_usd),
+            residual_breach_ticks: position.residual_breach_ticks,
+            exit_reason: position
+                .exit_reason
+                .map(|reason| reason.as_str().to_owned()),
             funding_captured: as_f64(position.funding_captured),
             realized_pnl: as_f64(position.realized_pnl),
             opened_at: position.opened_at.to_rfc3339(),
@@ -264,11 +274,44 @@ impl PositionDto {
             target_notional: dec(self.target_notional),
             reserved_capital: dec(self.reserved_capital),
             residual_delta_usd: dec(self.residual_delta_usd),
+            residual_breach_ticks: self.residual_breach_ticks,
+            exit_reason: self.exit_reason.as_deref().and_then(ExitReason::from_wire),
             funding_captured: dec(self.funding_captured),
             realized_pnl: dec(self.realized_pnl),
             opened_at: parse_time(&self.opened_at),
             closed_at: self.closed_at.as_deref().map(parse_time),
             idempotency_key: String::new(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::PositionDto;
+
+    #[test]
+    fn legacy_position_payload_defaults_supervision_fields() {
+        let payload = r#"{
+            "id":"0190abcd-1111-7000-8000-000000000001",
+            "route_id":"PERP_PERP:BINANCE>BYBIT:BTC",
+            "underlying":"BTC",
+            "route_type":"PERP_PERP",
+            "funding_direction":"POSITIVE",
+            "state":"OPEN",
+            "target_notional":100000.0,
+            "reserved_capital":50000.0,
+            "residual_delta_usd":10.0,
+            "funding_captured":0.0,
+            "realized_pnl":0.0,
+            "opened_at":"2026-07-19T00:00:00Z",
+            "long_leg":{"venue":"BINANCE","symbol":"BTCUSDT-PERP","is_long":true,"mark_price":30030.0,"funding_rate":0.0001,"funding_interval_hours":8,"target_qty":3.0,"filled_qty":3.0,"avg_fill_price":30039.0,"fees":45.0,"orders":[],"fills":[]},
+            "short_leg":{"venue":"BYBIT","symbol":"BTCUSDT-PERP","is_long":false,"mark_price":30045.0,"funding_rate":0.0009,"funding_interval_hours":8,"target_qty":3.0,"filled_qty":3.0,"avg_fill_price":30036.0,"fees":45.0,"orders":[],"fills":[]}
+        }"#;
+        let dto: PositionDto = serde_json::from_str(payload).expect("legacy payload");
+        assert_eq!(dto.residual_breach_ticks, 0);
+        assert_eq!(dto.exit_reason, None);
+        let domain = dto.to_domain();
+        assert_eq!(domain.residual_breach_ticks, 0);
+        assert_eq!(domain.exit_reason, None);
     }
 }

@@ -297,6 +297,8 @@ describe("paper position contract", () => {
     target_notional: 100000,
     reserved_capital: 75000,
     residual_delta_usd: 90,
+    residual_breach_ticks: 1,
+    exit_reason: null,
     funding_captured: 0,
     realized_pnl: 0,
     opened_at: "2026-07-19T00:00:00Z",
@@ -341,6 +343,8 @@ describe("paper position contract", () => {
   it("validates the position shape", () => {
     assert.equal(isPosition(position), true);
     assert.equal(isPosition({ id: "x" }), false);
+    assert.equal(isPosition({ ...position, residual_breach_ticks: undefined }), false);
+    assert.equal(isPosition({ ...position, exit_reason: "NOT_REAL" }), false);
     assert.equal(isPosition(null), false);
   });
 
@@ -391,7 +395,7 @@ describe("paper position contract", () => {
   it("closes a position via POST", async () => {
     let requestedUrl;
     let method;
-    const closed = { ...position, state: "CLOSED", funding_captured: 250, realized_pnl: 130, closed_at: "2026-07-20T00:00:00Z" };
+    const closed = { ...position, state: "CLOSED", exit_reason: "MANUAL", funding_captured: 250, realized_pnl: 130, closed_at: "2026-07-20T00:00:00Z" };
     const client = new PerpetoClient({
       baseUrl: "https://perpeto.test",
       getAccessToken: () => "ephemeral",
@@ -405,6 +409,7 @@ describe("paper position contract", () => {
     const result = await client.closePosition(position.id);
     assert.equal(result.state, "CLOSED");
     assert.equal(result.funding_captured, 250);
+    assert.equal(result.exit_reason, "MANUAL");
     assert.equal(method, "POST");
     assert.match(requestedUrl, /\/api\/v1\/positions\/.*\/close$/u);
   });

@@ -713,6 +713,7 @@ version = "0.1.0"
 dependencies = [
  "chrono",
  "funding-arb-domain",
+ "funding-arb-execution-service",
  "funding-arb-scanner-service",
  "sqlx",
  "tokio",

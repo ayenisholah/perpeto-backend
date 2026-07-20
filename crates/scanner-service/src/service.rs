@@ -69,6 +69,25 @@ impl Scanner {
         })
     }
 
+    /// Rebuild one route at `now` before risk/eligibility filtering.
+    ///
+    /// Position supervision must continue evaluating an existing route after a
+    /// funding flip makes it disappear from the eligible scanner output.
+    ///
+    /// # Errors
+    /// Returns [`FixtureError`] if the embedded market path cannot load.
+    pub fn opportunity_at(
+        &self,
+        route_id: &str,
+        now: DateTime<Utc>,
+    ) -> Result<Option<Opportunity>, FixtureError> {
+        let legs = fixtures::load_at(now)?;
+        Ok(self
+            .build_opportunities(&legs)
+            .into_iter()
+            .find(|opportunity| opportunity.route_id == route_id))
+    }
+
     fn build_opportunities(&self, legs: &[MarketLeg]) -> Vec<Opportunity> {
         let mut opportunities = Vec::new();
         let underlyings: BTreeSet<&str> = legs
@@ -162,5 +181,25 @@ mod tests {
         // Every ranked opportunity clears the hard risk gates and carries a reservation.
         assert!(first.opportunities.iter().all(|o| o.assessment.within_limits));
         assert!(first.opportunities.iter().all(|o| o.assessment.reserved_notional > rust_decimal::Decimal::ZERO));
+    }
+
+    #[test]
+    fn route_remains_evaluable_after_it_is_filtered_from_the_scan() {
+        let scanner = Scanner::default();
+        let route_id = "PERP_PERP:BINANCE>BYBIT:BTC";
+        let t3 = Utc.with_ymd_and_hms(2026, 7, 19, 12, 0, 0).unwrap();
+        assert!(
+            scanner
+                .scan(t3)
+                .expect("scan")
+                .opportunities
+                .iter()
+                .all(|ranked| ranked.opportunity.route_id != route_id),
+        );
+        let route = scanner
+            .opportunity_at(route_id, t3)
+            .expect("fixtures")
+            .expect("route");
+        assert!(route.net_apr <= rust_decimal::Decimal::ZERO);
     }
 }

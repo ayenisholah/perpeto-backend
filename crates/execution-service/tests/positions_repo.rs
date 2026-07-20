@@ -135,3 +135,53 @@ async fn close_update_round_trips() {
     assert!(fetched.funding_captured > 0.0);
     assert!(fetched.realized_pnl <= fetched.funding_captured);
 }
+
+#[tokio::test]
+async fn supervision_updates_round_trip_across_the_scenario() {
+    let Some(pool) = pool().await else { return };
+    let _guard = TEST_LOCK.lock().await;
+    reset(&pool).await;
+
+    let service = ExecutionService::default();
+    let repo = PositionsRepo::new(pool.clone());
+    let t0 = Utc.with_ymd_and_hms(2026, 7, 19, 0, 0, 0).unwrap();
+    let t1 = Utc.with_ymd_and_hms(2026, 7, 19, 4, 0, 0).unwrap();
+    let t2 = Utc.with_ymd_and_hms(2026, 7, 19, 8, 0, 0).unwrap();
+    let t3 = Utc.with_ymd_and_hms(2026, 7, 19, 12, 0, 0).unwrap();
+    let position = service
+        .open(
+            "PERP_PERP:BINANCE>BYBIT:BTC",
+            None,
+            "idem-supervise".into(),
+            t0,
+        )
+        .expect("open");
+    repo.create(&PositionDto::from_domain(&position), "idem-supervise")
+        .await
+        .expect("create");
+
+    let mut current = position;
+    for now in [t1, t2, t3] {
+        current = service.supervise(current, now).expect("supervise");
+        repo.update(&PositionDto::from_domain(&current))
+            .await
+            .expect("update");
+        current = repo
+            .get(&current.id)
+            .await
+            .expect("get")
+            .expect("present")
+            .to_domain();
+    }
+
+    let fetched = repo.get(&current.id).await.expect("get").expect("present");
+    assert_eq!(fetched.state, "CLOSED");
+    assert_eq!(fetched.exit_reason.as_deref(), Some("FUNDING_FLIP"));
+    assert!(
+        fetched
+            .long_leg
+            .orders
+            .iter()
+            .any(|order| order.client_order_id.contains("-hedge-long-")),
+    );
+}

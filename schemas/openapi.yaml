@@ -1,10 +1,10 @@
 openapi: 3.1.0
 info:
   title: Perpeto Control API
-  version: 0.6.0
+  version: 0.7.0
   description: >-
-    M1A social identity, MFA, and secure-session contract plus the M2 read-only
-    paper opportunity scanner. Trade execution remains unavailable.
+    Social identity, MFA, and secure sessions plus the M2 deterministic paper
+    scanner and coordinated simulated positions. Live execution remains unavailable.
   license:
     name: Proprietary
     url: https://github.com/ayenisholah/perpeto-backend#license
@@ -745,6 +745,9 @@ components:
     PositionState:
       type: string
       enum: [QUALIFIED, RESERVED, OPENING, OPEN, OPEN_FAILED, REHEDGING, CLOSING, CLOSED]
+    ExitReason:
+      type: string
+      enum: [FUNDING_FLIP, THRESHOLD_BREACH, VENUE_UNHEALTHY, MANUAL]
     OpenPositionRequest:
       type: object
       additionalProperties: false
@@ -819,6 +822,8 @@ components:
         - target_notional
         - reserved_capital
         - residual_delta_usd
+        - residual_breach_ticks
+        - exit_reason
         - funding_captured
         - realized_pnl
         - opened_at
@@ -834,6 +839,11 @@ components:
         target_notional: { type: number }
         reserved_capital: { type: number }
         residual_delta_usd: { type: number }
+        residual_breach_ticks: { type: integer, minimum: 0 }
+        exit_reason:
+          anyOf:
+            - { $ref: "#/components/schemas/ExitReason" }
+            - { type: "null" }
         funding_captured: { type: number }
         realized_pnl: { type: number }
         opened_at: { type: string, format: date-time }

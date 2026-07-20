@@ -4,8 +4,8 @@
 //! [`Opportunity`]: it sizes both legs, simulates a deterministic paired taker
 //! fill, measures residual (unmatched) delta, and gates it against the
 //! configured risk cap. It is pure and network-free — the same lifecycle will
-//! later drive live execution behind a connector. Funding capture, close, and
-//! re-hedge arrive in the next slice; this slice only reaches [`Open`].
+//! later drive live execution behind a connector. It also supervises open
+//! positions with deterministic re-hedging, funding capture, and exit.
 //!
 //! [`Open`]: PositionState::Open
 
@@ -23,6 +23,8 @@ fn abs(value: Decimal) -> Decimal {
         value
     }
 }
+
+const REHEDGE_PERSISTENCE_TICKS: u32 = 2;
 
 /// Round a quantity down to a whole multiple of `step` (a venue lot size).
 /// A non-positive `step` leaves the quantity unrounded.
@@ -51,11 +53,11 @@ pub enum PositionState {
     Open,
     /// Opening aborted (e.g. residual delta exceeded the cap).
     OpenFailed,
-    /// Reserved for the close/re-hedge slice.
+    /// A corrective hedge is being filled.
     Rehedging,
-    /// Reserved for the close/re-hedge slice.
+    /// Both legs are being flattened.
     Closing,
-    /// Reserved for the close/re-hedge slice.
+    /// The position is fully flattened.
     Closed,
 }
 
@@ -131,6 +133,53 @@ pub struct InvalidTransition {
     pub from: PositionState,
     /// The rejected target state.
     pub to: PositionState,
+}
+
+/// Why a position was exited (PRODUCT_SPEC §5.8).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ExitReason {
+    /// Route funding flipped so net funding is no longer positive.
+    FundingFlip,
+    /// Expected net return fell below the hold threshold.
+    ThresholdBreach,
+    /// A leg's venue became unhealthy.
+    VenueUnhealthy,
+    /// An operator closed the position.
+    Manual,
+}
+
+impl ExitReason {
+    /// The canonical wire spelling.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::FundingFlip => "FUNDING_FLIP",
+            Self::ThresholdBreach => "THRESHOLD_BREACH",
+            Self::VenueUnhealthy => "VENUE_UNHEALTHY",
+            Self::Manual => "MANUAL",
+        }
+    }
+
+    /// Parse the canonical wire spelling.
+    #[must_use]
+    pub fn from_wire(value: &str) -> Option<Self> {
+        match value {
+            "FUNDING_FLIP" => Some(Self::FundingFlip),
+            "THRESHOLD_BREACH" => Some(Self::ThresholdBreach),
+            "VENUE_UNHEALTHY" => Some(Self::VenueUnhealthy),
+            "MANUAL" => Some(Self::Manual),
+            _ => None,
+        }
+    }
+}
+
+/// The outcome of an exit evaluation.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ExitDecision {
+    /// Keep the position open.
+    Hold,
+    /// Exit now for the given reason.
+    Exit(ExitReason),
 }
 
 /// The executable snapshot of one leg at open time (from the ranked scan).
@@ -241,8 +290,12 @@ pub struct ArbitragePosition {
     pub target_notional: Decimal,
     /// Capital (USD) reserved for the position.
     pub reserved_capital: Decimal,
-    /// Unmatched base-asset exposure valued in USD.
+    /// Unmatched base-asset exposure valued in USD (re-measured on supervision).
     pub residual_delta_usd: Decimal,
+    /// Consecutive supervision ticks the residual cap has been breached.
+    pub residual_breach_ticks: u32,
+    /// Why the position was exited, once it has been.
+    pub exit_reason: Option<ExitReason>,
     /// Net funding captured over the hold (USD); zero until close.
     pub funding_captured: Decimal,
     /// Realized PnL at close (funding + trading PnL − fees); zero until close.
@@ -377,6 +430,8 @@ pub fn open_paper(
         target_notional: requested_notional,
         reserved_capital,
         residual_delta_usd,
+        residual_breach_ticks: 0,
+        exit_reason: None,
         funding_captured: Decimal::ZERO,
         realized_pnl: Decimal::ZERO,
         opened_at: now,
@@ -395,6 +450,171 @@ pub fn open_paper(
 pub fn settle_funding(position: &ArbitragePosition, now: DateTime<Utc>) -> Decimal {
     let elapsed_hours = (now - position.opened_at).num_hours();
     leg_funding(&position.long_leg, elapsed_hours) + leg_funding(&position.short_leg, elapsed_hours)
+}
+
+/// Signed two-leg delta at the supplied current marks (PRODUCT_SPEC §3.3).
+///
+/// Positive values mean the long leg is larger in USD terms; negative values
+/// mean the short leg is larger.
+#[must_use]
+pub fn net_delta_usd(
+    long_qty: Decimal,
+    long_mark: Decimal,
+    short_qty: Decimal,
+    short_mark: Decimal,
+) -> Decimal {
+    long_qty * long_mark - short_qty * short_mark
+}
+
+fn append_hedge_fill(
+    position_short: &str,
+    label: &str,
+    mut leg: PositionLeg,
+    mark: Decimal,
+    quantity: Decimal,
+    cost: &CostModel,
+) -> PositionLeg {
+    let slip = if leg.is_long {
+        Decimal::ONE + cost.slippage
+    } else {
+        Decimal::ONE - cost.slippage
+    };
+    let fill_price = mark * slip;
+    let fee = quantity * fill_price * cost.taker_fee;
+    let hedge_marker = format!("-hedge-{label}-");
+    let attempt = leg
+        .orders
+        .iter()
+        .filter(|order| order.client_order_id.contains(&hedge_marker))
+        .count()
+        + 1;
+    let client_order_id = format!("fa-{position_short}-hedge-{label}-{attempt}");
+    leg.orders.push(PaperOrder {
+        client_order_id: client_order_id.clone(),
+        side: if leg.is_long { "BUY" } else { "SELL" },
+        target_qty: quantity,
+        price_cap: fill_price,
+        time_in_force: "IOC",
+    });
+    leg.fills.push(PaperFill {
+        client_order_id,
+        qty: quantity,
+        price: fill_price,
+        fee,
+    });
+    let previous_qty = leg.filled_qty;
+    let combined_qty = previous_qty + quantity;
+    if !combined_qty.is_zero() {
+        leg.avg_fill_price =
+            (previous_qty * leg.avg_fill_price + quantity * fill_price) / combined_qty;
+    }
+    leg.filled_qty = combined_qty;
+    leg.fees += fee;
+    leg
+}
+
+/// Re-measure and, after two consecutive breaches, correct a paper position.
+///
+/// Slice 5a deliberately uses the existing unmatched-exposure limit and a
+/// two-tick persistence rule so the deterministic market path can exercise the
+/// supervisor. Production time/bps thresholds remain a later risk-control
+/// concern.
+#[must_use]
+pub fn re_hedge(
+    mut position: ArbitragePosition,
+    long_mark_now: Decimal,
+    short_mark_now: Decimal,
+    limits: &RiskLimits,
+    cost: &CostModel,
+) -> ArbitragePosition {
+    if position.state != PositionState::Open {
+        return position;
+    }
+    position.long_leg.mark_price = long_mark_now;
+    position.short_leg.mark_price = short_mark_now;
+    let net = net_delta_usd(
+        position.long_leg.filled_qty,
+        long_mark_now,
+        position.short_leg.filled_qty,
+        short_mark_now,
+    );
+    position.residual_delta_usd = abs(net);
+    if position.residual_delta_usd <= limits.max_unmatched() {
+        position.residual_breach_ticks = 0;
+        return position;
+    }
+
+    position.residual_breach_ticks = position.residual_breach_ticks.saturating_add(1);
+    if position.residual_breach_ticks < REHEDGE_PERSISTENCE_TICKS {
+        return position;
+    }
+
+    position.state = position
+        .state
+        .try_transition(PositionState::Rehedging)
+        .unwrap_or(PositionState::Rehedging);
+    let position_short: String = position.id.chars().take(8).collect();
+    let lot_step = PaperFillConfig::default().lot_step;
+    let mut corrected = false;
+    if net.is_sign_positive() && !short_mark_now.is_zero() {
+        let quantity = round_to_step(net / short_mark_now, lot_step);
+        if quantity > Decimal::ZERO {
+            position.short_leg = append_hedge_fill(
+                &position_short,
+                "short",
+                position.short_leg,
+                short_mark_now,
+                quantity,
+                cost,
+            );
+            corrected = true;
+        }
+    } else if net.is_sign_negative() && !long_mark_now.is_zero() {
+        let quantity = round_to_step(abs(net) / long_mark_now, lot_step);
+        if quantity > Decimal::ZERO {
+            position.long_leg = append_hedge_fill(
+                &position_short,
+                "long",
+                position.long_leg,
+                long_mark_now,
+                quantity,
+                cost,
+            );
+            corrected = true;
+        }
+    }
+    position.residual_delta_usd = abs(net_delta_usd(
+        position.long_leg.filled_qty,
+        long_mark_now,
+        position.short_leg.filled_qty,
+        short_mark_now,
+    ));
+    if corrected {
+        position.residual_breach_ticks = 0;
+    }
+    position.state = position
+        .state
+        .try_transition(PositionState::Open)
+        .unwrap_or(PositionState::Open);
+    position
+}
+
+/// Decide whether current forecasts and venue health require an exit.
+#[must_use]
+pub fn evaluate_exit(
+    net_funding_apr_now: Decimal,
+    venue_healthy: bool,
+    limits: &RiskLimits,
+) -> ExitDecision {
+    if !venue_healthy {
+        ExitDecision::Exit(ExitReason::VenueUnhealthy)
+    } else if net_funding_apr_now <= Decimal::ZERO {
+        ExitDecision::Exit(ExitReason::FundingFlip)
+    } else if net_funding_apr_now < limits.min_net_apr / Decimal::from(2) {
+        ExitDecision::Exit(ExitReason::ThresholdBreach)
+    } else {
+        ExitDecision::Hold
+    }
 }
 
 fn leg_funding(leg: &PositionLeg, elapsed_hours: i64) -> Decimal {
@@ -455,14 +675,15 @@ fn close_leg(
 }
 
 /// Close a paper position: capture funding, flatten both legs with reduce-only /
-/// sell-owned fills, and record realized PnL. Only an `Open` position closes; any
-/// other state (including an already-`Closed` one) is returned unchanged, so
-/// close is idempotent.
+/// sell-owned fills, and record realized PnL plus the supplied exit reason.
+/// Only an `Open` position closes; any other state (including an already-`Closed`
+/// one) is returned unchanged, so close is idempotent.
 #[must_use]
 pub fn close_paper(
     mut position: ArbitragePosition,
     now: DateTime<Utc>,
     cost: &CostModel,
+    exit_reason: ExitReason,
 ) -> ArbitragePosition {
     if position.state != PositionState::Open {
         return position;
@@ -476,6 +697,7 @@ pub fn close_paper(
     position.short_leg = short_leg;
     position.funding_captured = funding_captured;
     position.realized_pnl = funding_captured + long_pnl + short_pnl - total_fees;
+    position.exit_reason = Some(exit_reason);
     position.closed_at = Some(now);
     position.state = PositionState::Open
         .try_transition(PositionState::Closing)
@@ -487,7 +709,8 @@ pub fn close_paper(
 #[cfg(test)]
 mod tests {
     use super::{
-        LegExecution, PaperFillConfig, PositionState, close_paper, open_paper, settle_funding,
+        ExitDecision, ExitReason, LegExecution, PaperFillConfig, PositionState, close_paper,
+        evaluate_exit, net_delta_usd, open_paper, re_hedge, settle_funding,
     };
     use crate::forecast::{ForecastConfig, forecast};
     use crate::market::{FundingObservation, InstrumentRef, RouteType, Venue};
@@ -554,6 +777,8 @@ mod tests {
         assert!(PositionState::Reserved.can_transition(PositionState::Opening));
         assert!(PositionState::Opening.can_transition(PositionState::Open));
         assert!(PositionState::Opening.can_transition(PositionState::OpenFailed));
+        assert!(PositionState::Open.can_transition(PositionState::Rehedging));
+        assert!(PositionState::Rehedging.can_transition(PositionState::Open));
         // Illegal skips are rejected.
         assert!(!PositionState::Qualified.can_transition(PositionState::Open));
         assert!(!PositionState::Open.can_transition(PositionState::Opening));
@@ -728,6 +953,117 @@ mod tests {
     }
 
     #[test]
+    fn exit_reason_wire_values_round_trip() {
+        for reason in [
+            ExitReason::FundingFlip,
+            ExitReason::ThresholdBreach,
+            ExitReason::VenueUnhealthy,
+            ExitReason::Manual,
+        ] {
+            assert_eq!(ExitReason::from_wire(reason.as_str()), Some(reason));
+        }
+        assert_eq!(ExitReason::from_wire("UNKNOWN"), None);
+    }
+
+    #[test]
+    fn net_delta_is_signed_and_exit_precedence_is_deterministic() {
+        assert_eq!(
+            net_delta_usd(
+                Decimal::from(2),
+                Decimal::from(100),
+                Decimal::ONE,
+                Decimal::from(150),
+            ),
+            Decimal::from(50),
+        );
+        let limits = RiskLimits::default();
+        assert_eq!(
+            evaluate_exit(-Decimal::ONE, false, &limits),
+            ExitDecision::Exit(ExitReason::VenueUnhealthy),
+        );
+        assert_eq!(
+            evaluate_exit(Decimal::ZERO, true, &limits),
+            ExitDecision::Exit(ExitReason::FundingFlip),
+        );
+        assert_eq!(
+            evaluate_exit(Decimal::new(7, 2), true, &limits),
+            ExitDecision::Exit(ExitReason::ThresholdBreach),
+        );
+        assert_eq!(
+            evaluate_exit(limits.min_net_apr / Decimal::from(2), true, &limits),
+            ExitDecision::Hold,
+        );
+    }
+
+    #[test]
+    fn persistent_residual_rehedges_the_exposure_reducing_leg() {
+        let opened = Utc.with_ymd_and_hms(2026, 7, 19, 0, 0, 0).unwrap();
+        let position = open_at("0190abcd-7777-7000-8000-000000000007", opened);
+        let limits = RiskLimits::default();
+        let cost = CostModel::default();
+
+        let first = re_hedge(
+            position,
+            Decimal::from(30_000),
+            Decimal::from(32_000),
+            &limits,
+            &cost,
+        );
+        assert_eq!(first.state, PositionState::Open);
+        assert_eq!(first.residual_breach_ticks, 1);
+        assert_eq!(first.long_leg.orders.len(), 1);
+        let first_fees = first.long_leg.fees;
+
+        let second = re_hedge(
+            first.clone(),
+            Decimal::from(30_000),
+            Decimal::from(32_000),
+            &limits,
+            &cost,
+        );
+        let repeated = re_hedge(
+            first,
+            Decimal::from(30_000),
+            Decimal::from(32_000),
+            &limits,
+            &cost,
+        );
+        assert_eq!(second.state, PositionState::Open);
+        assert_eq!(second.residual_breach_ticks, 0);
+        assert!(second.residual_delta_usd <= limits.max_unmatched());
+        assert_eq!(second.long_leg.orders.len(), 2);
+        assert!(
+            second
+                .long_leg
+                .client_ids_contains("fa-0190abcd-hedge-long-1")
+        );
+        assert!(second.long_leg.fees > first_fees);
+        assert_eq!(
+            second.long_leg.orders[1].client_order_id,
+            repeated.long_leg.orders[1].client_order_id,
+        );
+        assert_eq!(second.residual_delta_usd, repeated.residual_delta_usd);
+    }
+
+    #[test]
+    fn residual_counter_resets_when_delta_returns_within_limit() {
+        let opened = Utc.with_ymd_and_hms(2026, 7, 19, 0, 0, 0).unwrap();
+        let mut position = open_at("0190abcd-8888-7000-8000-000000000008", opened);
+        position.residual_breach_ticks = 1;
+        let long_mark = Decimal::from(30_000);
+        let short_mark = position.long_leg.filled_qty * long_mark / position.short_leg.filled_qty;
+        let supervised = re_hedge(
+            position,
+            long_mark,
+            short_mark,
+            &RiskLimits::default(),
+            &CostModel::default(),
+        );
+        assert_eq!(supervised.residual_breach_ticks, 0);
+        assert_eq!(supervised.residual_delta_usd, Decimal::ZERO);
+    }
+
+    #[test]
     fn close_flattens_legs_and_records_realized_pnl() {
         let opened = Utc.with_ymd_and_hms(2026, 7, 19, 0, 0, 0).unwrap();
         let position = open_at("0190abcd-5555-7000-8000-000000000005", opened);
@@ -736,10 +1072,12 @@ mod tests {
             position,
             opened + chrono::Duration::hours(24),
             &CostModel::default(),
+            ExitReason::Manual,
         );
 
         assert_eq!(closed.state, PositionState::Closed);
         assert!(closed.closed_at.is_some());
+        assert_eq!(closed.exit_reason, Some(ExitReason::Manual));
         assert!(closed.funding_captured > Decimal::ZERO);
         assert_eq!(closed.long_leg.filled_qty, Decimal::ZERO);
         assert_eq!(closed.short_leg.filled_qty, Decimal::ZERO);
@@ -764,6 +1102,7 @@ mod tests {
             position,
             opened + chrono::Duration::hours(24),
             &CostModel::default(),
+            ExitReason::Manual,
         );
         assert_eq!(closed.state, PositionState::Closed);
         // Closing again is a no-op: same state, funding, and order count.
@@ -772,6 +1111,7 @@ mod tests {
             closed.clone(),
             opened + chrono::Duration::hours(48),
             &CostModel::default(),
+            ExitReason::FundingFlip,
         );
         assert_eq!(again.state, PositionState::Closed);
         assert_eq!(again.funding_captured, closed.funding_captured);

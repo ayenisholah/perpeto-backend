@@ -1,4 +1,4 @@
-export const schemaVersion = "0.6.0" as const;
+export const schemaVersion = "0.7.0" as const;
 
 export type SocialProvider = "APPLE" | "GOOGLE";
 export type AuthNextState =
@@ -173,6 +173,12 @@ export type PositionState =
   | "CLOSING"
   | "CLOSED";
 
+export type ExitReason =
+  | "FUNDING_FLIP"
+  | "THRESHOLD_BREACH"
+  | "VENUE_UNHEALTHY"
+  | "MANUAL";
+
 export interface PaperOrder {
   readonly client_order_id: string;
   readonly side: "BUY" | "SELL";
@@ -213,6 +219,8 @@ export interface Position {
   readonly target_notional: number;
   readonly reserved_capital: number;
   readonly residual_delta_usd: number;
+  readonly residual_breach_ticks: number;
+  readonly exit_reason: ExitReason | null;
   readonly funding_captured: number;
   readonly realized_pnl: number;
   readonly opened_at: string;
@@ -300,6 +308,13 @@ export function isPosition(value: unknown): value is Position {
   return typeof position.id === "string" &&
     typeof position.route_id === "string" &&
     typeof position.state === "string" &&
+    typeof position.residual_breach_ticks === "number" &&
+    (position.exit_reason === null || [
+      "FUNDING_FLIP",
+      "THRESHOLD_BREACH",
+      "VENUE_UNHEALTHY",
+      "MANUAL",
+    ].includes(String(position.exit_reason))) &&
     typeof position.long_leg === "object" && position.long_leg !== null;
 }
 

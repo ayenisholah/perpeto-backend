@@ -10,7 +10,8 @@ use std::fmt;
 use chrono::{DateTime, Utc};
 use funding_arb_domain::market::{RouteType, Venue};
 use funding_arb_domain::position::{
-    ArbitragePosition, LegExecution, PaperFillConfig, close_paper, open_paper,
+    ArbitragePosition, ExitDecision, ExitReason, LegExecution, PaperFillConfig, close_paper,
+    evaluate_exit, open_paper, re_hedge,
 };
 use funding_arb_scanner_service::Scanner;
 use funding_arb_scanner_service::fixtures::{self, InstrumentKind, MarketLeg};
@@ -39,6 +40,29 @@ impl fmt::Display for OpenError {
 }
 
 impl std::error::Error for OpenError {}
+
+/// Why supervision could not produce a safe updated position.
+#[derive(Debug)]
+pub enum SuperviseError {
+    /// A current leg could not be resolved from the market fixtures.
+    LegNotFound,
+    /// The position's original route no longer exists in the fixtures.
+    RouteNotFound,
+    /// The market fixtures could not be loaded.
+    Fixture(fixtures::FixtureError),
+}
+
+impl fmt::Display for SuperviseError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::LegNotFound => formatter.write_str("current position leg not found"),
+            Self::RouteNotFound => formatter.write_str("position route not found"),
+            Self::Fixture(error) => write!(formatter, "{error}"),
+        }
+    }
+}
+
+impl std::error::Error for SuperviseError {}
 
 /// The paper execution service: opens positions from ranked opportunities.
 #[derive(Clone, Copy, Debug, Default)]
@@ -150,7 +174,60 @@ impl ExecutionService {
     /// record realized PnL. A non-open position is returned unchanged.
     #[must_use]
     pub fn close(&self, position: ArbitragePosition, now: DateTime<Utc>) -> ArbitragePosition {
-        close_paper(position, now, &self.scanner.cost_model)
+        close_paper(position, now, &self.scanner.cost_model, ExitReason::Manual)
+    }
+
+    /// Re-mark, re-hedge, and evaluate one existing paper position at `now`.
+    ///
+    /// # Errors
+    /// Returns [`SuperviseError`] when current fixtures cannot resolve both
+    /// legs or the original route. The caller must retain the durable position
+    /// unchanged and retry on the next tick.
+    pub fn supervise(
+        &self,
+        position: ArbitragePosition,
+        now: DateTime<Utc>,
+    ) -> Result<ArbitragePosition, SuperviseError> {
+        if position.state.as_str() != "OPEN" {
+            return Ok(position);
+        }
+        let legs = fixtures::load_at(now).map_err(SuperviseError::Fixture)?;
+        let long_mark =
+            Self::current_mark(&legs, position.long_leg.venue, &position.long_leg.symbol)?;
+        let short_mark =
+            Self::current_mark(&legs, position.short_leg.venue, &position.short_leg.symbol)?;
+        let position = re_hedge(
+            position,
+            long_mark,
+            short_mark,
+            &self.scanner.risk_limits,
+            &self.scanner.cost_model,
+        );
+        let opportunity = self
+            .scanner
+            .opportunity_at(&position.route_id, now)
+            .map_err(SuperviseError::Fixture)?
+            .ok_or(SuperviseError::RouteNotFound)?;
+        match evaluate_exit(opportunity.net_apr, true, &self.scanner.risk_limits) {
+            ExitDecision::Hold => Ok(position),
+            ExitDecision::Exit(reason) => {
+                Ok(close_paper(position, now, &self.scanner.cost_model, reason))
+            }
+        }
+    }
+
+    fn current_mark(
+        legs: &[MarketLeg],
+        venue: Venue,
+        symbol: &str,
+    ) -> Result<Decimal, SuperviseError> {
+        legs.iter()
+            .find(|leg| {
+                leg.observation.instrument.venue == venue
+                    && leg.observation.instrument.symbol == symbol
+            })
+            .map(|leg| leg.observation.mark_price)
+            .ok_or(SuperviseError::LegNotFound)
     }
 }
 
@@ -158,6 +235,7 @@ impl ExecutionService {
 mod tests {
     use super::ExecutionService;
     use chrono::{TimeZone, Utc};
+    use funding_arb_domain::position::ExitReason;
 
     fn first_route_id(service: &ExecutionService, now: chrono::DateTime<Utc>) -> String {
         service
@@ -209,5 +287,46 @@ mod tests {
         assert!(closed.closed_at.is_some());
         assert!(closed.funding_captured > rust_decimal::Decimal::ZERO);
         assert_eq!(closed.long_leg.filled_qty, rust_decimal::Decimal::ZERO);
+        assert_eq!(closed.exit_reason, Some(ExitReason::Manual));
+    }
+
+    #[test]
+    fn supervise_rehedges_then_exits_across_the_market_path() {
+        let service = ExecutionService::default();
+        let t0 = Utc.with_ymd_and_hms(2026, 7, 19, 0, 0, 0).unwrap();
+        let t1 = Utc.with_ymd_and_hms(2026, 7, 19, 4, 0, 0).unwrap();
+        let t2 = Utc.with_ymd_and_hms(2026, 7, 19, 8, 0, 0).unwrap();
+        let t3 = Utc.with_ymd_and_hms(2026, 7, 19, 12, 0, 0).unwrap();
+        let position = service
+            .open(
+                "PERP_PERP:BINANCE>BYBIT:BTC",
+                None,
+                "key-supervise".into(),
+                t0,
+            )
+            .expect("open");
+
+        let at_t1 = service.supervise(position, t1).expect("t1 supervise");
+        assert_eq!(at_t1.state.as_str(), "OPEN");
+        assert_eq!(at_t1.residual_breach_ticks, 1);
+        let at_t2 = service.supervise(at_t1, t2).expect("t2 supervise");
+        assert_eq!(at_t2.state.as_str(), "OPEN");
+        assert_eq!(at_t2.residual_breach_ticks, 0);
+        assert!(
+            at_t2
+                .long_leg
+                .orders
+                .iter()
+                .any(|order| order.client_order_id.contains("-hedge-long-")),
+        );
+        let repeated = service
+            .supervise(at_t2.clone(), t2)
+            .expect("repeat t2 supervise");
+        assert_eq!(repeated.long_leg.orders.len(), at_t2.long_leg.orders.len());
+
+        let at_t3 = service.supervise(at_t2, t3).expect("t3 supervise");
+        assert_eq!(at_t3.state.as_str(), "CLOSED");
+        assert_eq!(at_t3.exit_reason, Some(ExitReason::FundingFlip));
+        assert_eq!(at_t3.long_leg.filled_qty, rust_decimal::Decimal::ZERO);
     }
 }

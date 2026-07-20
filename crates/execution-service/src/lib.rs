@@ -12,4 +12,4 @@ pub mod service;
 
 pub use dto::{OpenPositionRequest, PositionDto, PositionLegDto, PositionListDto};
 pub use repo::PositionsRepo;
-pub use service::{ExecutionService, OpenError};
+pub use service::{ExecutionService, OpenError, SuperviseError};
