@@ -6,6 +6,7 @@ mod bybit;
 mod credential;
 pub mod fixtures;
 mod model;
+mod okx;
 mod traits;
 
 pub use binance::BinanceConnector;
@@ -13,4 +14,5 @@ pub use book::{BookApply, BookState, BookStatus, BookView};
 pub use bybit::BybitConnector;
 pub use credential::ConnectorCredentials;
 pub use model::*;
+pub use okx::OkxConnector;
 pub use traits::{MarketEventStream, PrivateEventStream, VenueConnector};
