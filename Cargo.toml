@@ -5,6 +5,7 @@ members = [
   "crates/auth-service",
   "crates/scanner-service",
   "crates/execution-service",
+  "crates/strategy-service",
   "bins/api",
   "bins/engine",
   "bins/reconciler",

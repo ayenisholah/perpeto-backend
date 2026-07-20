@@ -19,6 +19,7 @@ use funding_arb_execution_service::{
     BreakerAction, BreakerScope, OpenError, OpenPositionRequest, PositionDto, PositionListDto,
 };
 use funding_arb_scanner_service::{OpportunityScanDto, RiskLimitsDto};
+use funding_arb_strategy_service::StrategyDto;
 use rust_decimal::Decimal;
 use rust_decimal::prelude::FromPrimitive;
 use serde::Deserialize;
@@ -694,6 +695,147 @@ pub async fn resume(
         Json(serde_json::json!({ "resolved": resolved })),
     )
         .into_response())
+}
+
+/// `GET /api/v1/strategies`.
+pub async fn list_strategies(
+    State(state): State<AppState>,
+    Extension(caller): Extension<CallerContext>,
+) -> Result<impl IntoResponse, ApiError> {
+    caller.require_active()?;
+    Ok(Json(state.strategies.list().await.map_err(internal)?))
+}
+
+/// `GET /api/v1/strategies/{id}`.
+pub async fn get_strategy(
+    State(state): State<AppState>,
+    Extension(caller): Extension<CallerContext>,
+    Path(id): Path<String>,
+) -> Result<Response, ApiError> {
+    caller.require_active()?;
+    match state.strategies.get(&id).await.map_err(internal)? {
+        Some(strategy) => Ok(Json(strategy).into_response()),
+        None => Ok(not_found("Strategy not found", "STRATEGY_NOT_FOUND")),
+    }
+}
+
+/// `POST /api/v1/strategies` creates version one.
+pub async fn create_strategy(
+    State(state): State<AppState>,
+    Extension(caller): Extension<CallerContext>,
+    Json(mut strategy): Json<StrategyDto>,
+) -> Result<Response, ApiError> {
+    require_strategy_write(&caller)?;
+    strategy.id = Uuid::new_v4().to_string();
+    strategy.current.version = 1;
+    strategy.current.creator = caller.user_id.clone();
+    strategy.current.created_at = Utc::now().to_rfc3339();
+    strategy.current.mode = "PAPER".to_owned();
+    validate_strategy(&strategy)?;
+    state.strategies.create(&strategy).await.map_err(internal)?;
+    Ok((StatusCode::CREATED, Json(strategy)).into_response())
+}
+
+/// `PUT /api/v1/strategies/{id}` creates an immutable new version.
+pub async fn update_strategy(
+    State(state): State<AppState>,
+    Extension(caller): Extension<CallerContext>,
+    Path(id): Path<String>,
+    Json(mut strategy): Json<StrategyDto>,
+) -> Result<Response, ApiError> {
+    require_strategy_write(&caller)?;
+    let Some(existing) = state.strategies.get(&id).await.map_err(internal)? else {
+        return Ok(not_found("Strategy not found", "STRATEGY_NOT_FOUND"));
+    };
+    strategy.id = id;
+    strategy.enabled = existing.enabled;
+    strategy.current.version = existing.current.version.saturating_add(1);
+    strategy.current.creator = caller.user_id.clone();
+    strategy.current.created_at = Utc::now().to_rfc3339();
+    strategy.current.mode = "PAPER".to_owned();
+    validate_strategy(&strategy)?;
+    state.strategies.update(&strategy).await.map_err(internal)?;
+    Ok(Json(strategy).into_response())
+}
+
+pub async fn delete_strategy(
+    State(state): State<AppState>,
+    Extension(caller): Extension<CallerContext>,
+    Path(id): Path<String>,
+) -> Result<Response, ApiError> {
+    require_strategy_write(&caller)?;
+    if state.strategies.delete(&id).await.map_err(internal)? == 0 {
+        return Ok(not_found("Strategy not found", "STRATEGY_NOT_FOUND"));
+    }
+    Ok(StatusCode::NO_CONTENT.into_response())
+}
+
+async fn set_strategy_enabled(state: &AppState, id: &str, enabled: bool) -> Result<Response, ApiError> {
+    let Some(mut strategy) = state.strategies.get(id).await.map_err(internal)? else {
+        return Ok(not_found("Strategy not found", "STRATEGY_NOT_FOUND"));
+    };
+    strategy.enabled = enabled;
+    state.strategies.update(&strategy).await.map_err(internal)?;
+    Ok(Json(strategy).into_response())
+}
+
+pub async fn enable_strategy(State(state): State<AppState>, Extension(caller): Extension<CallerContext>, Path(id): Path<String>) -> Result<Response, ApiError> {
+    require_strategy_write(&caller)?;
+    set_strategy_enabled(&state, &id, true).await
+}
+
+pub async fn disable_strategy(State(state): State<AppState>, Extension(caller): Extension<CallerContext>, Path(id): Path<String>) -> Result<Response, ApiError> {
+    require_strategy_write(&caller)?;
+    set_strategy_enabled(&state, &id, false).await
+}
+
+pub async fn apply_strategy_to_open(State(state): State<AppState>, Extension(caller): Extension<CallerContext>, Path(id): Path<String>) -> Result<Response, ApiError> {
+    require_strategy_write(&caller)?;
+    if state.strategies.get(&id).await.map_err(internal)?.is_none() {
+        return Ok(not_found("Strategy not found", "STRATEGY_NOT_FOUND"));
+    }
+    let mut applied = 0_u64;
+    for mut position in state.positions.list().await.map_err(internal)?.into_iter().filter(|position| position.state == "OPEN") {
+        position.strategy_id = Some(id.clone());
+        state.positions.update(&position).await.map_err(internal)?;
+        applied += 1;
+    }
+    Ok(Json(serde_json::json!({"applied": applied})).into_response())
+}
+
+fn require_strategy_write(caller: &CallerContext) -> Result<(), ApiError> {
+    caller.require_active()?;
+    if caller.can_trade() { Ok(()) } else { Err(AuthError::Forbidden.into()) }
+}
+
+fn validate_strategy(strategy: &StrategyDto) -> Result<(), ApiError> {
+    if strategy.name.trim().is_empty() || strategy.to_domain().is_none() {
+        return Err(ApiError(AuthError::BadRequest("invalid paper strategy configuration")));
+    }
+    Ok(())
+}
+
+pub async fn get_portfolio(State(state): State<AppState>, Extension(caller): Extension<CallerContext>) -> Result<impl IntoResponse, ApiError> {
+    caller.require_active()?;
+    Ok(Json(state.monitoring.portfolio(Utc::now()).await.map_err(internal)?))
+}
+
+pub async fn get_health(State(state): State<AppState>, Extension(caller): Extension<CallerContext>) -> Result<impl IntoResponse, ApiError> {
+    caller.require_active()?;
+    Ok(Json(state.monitoring.health(Utc::now()).await.map_err(internal)?))
+}
+
+pub async fn list_alerts(State(state): State<AppState>, Extension(caller): Extension<CallerContext>) -> Result<impl IntoResponse, ApiError> {
+    caller.require_active()?;
+    Ok(Json(state.monitoring.alerts().await.map_err(internal)?))
+}
+
+pub async fn ack_alert(State(state): State<AppState>, Extension(caller): Extension<CallerContext>, Path(id): Path<String>) -> Result<Response, ApiError> {
+    caller.require_active()?;
+    match state.monitoring.acknowledge(&id, &caller.user_id, Utc::now()).await.map_err(internal)? {
+        Some(alert) => Ok(Json(alert).into_response()),
+        None => Ok(not_found("Alert not found", "ALERT_NOT_FOUND")),
+    }
 }
 
 fn internal(error: sqlx::Error) -> ApiError {

@@ -8,6 +8,7 @@ rust-version.workspace = true
 [dependencies]
 funding-arb-domain = { path = "../../crates/funding-arb-domain" }
 funding-arb-execution-service = { path = "../../crates/execution-service" }
+funding-arb-strategy-service = { path = "../../crates/strategy-service" }
 funding-arb-scanner-service = { path = "../../crates/scanner-service" }
 chrono.workspace = true
 rust_decimal.workspace = true

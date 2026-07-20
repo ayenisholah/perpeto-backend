@@ -332,6 +332,8 @@ pub struct ArbitragePosition {
     pub id: String,
     /// The route the position was opened from.
     pub route_id: String,
+    /// Strategy that originated this position, if automatically opened.
+    pub strategy_id: Option<String>,
     /// The underlying asset.
     pub underlying: String,
     /// Spot-perp or perp-perp.
@@ -519,6 +521,7 @@ pub fn open_paper_with_scenario(
     let position = ArbitragePosition {
         id,
         route_id: opportunity.route_id.clone(),
+        strategy_id: None,
         underlying: opportunity.underlying.clone(),
         route_type: opportunity.route_type,
         funding_direction: opportunity.funding_direction,

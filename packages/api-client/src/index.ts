@@ -1,4 +1,4 @@
-export const schemaVersion = "0.8.0" as const;
+export const schemaVersion = "0.10.0" as const;
 
 export type SocialProvider = "APPLE" | "GOOGLE";
 export type AuthNextState =
@@ -227,6 +227,7 @@ export interface PositionLeg {
 export interface Position {
   readonly id: string;
   readonly route_id: string;
+  readonly strategy_id: string | null;
   readonly underlying: string;
   readonly route_type: RouteType;
   readonly funding_direction: FundingDirection;
@@ -274,6 +275,46 @@ export interface Controls {
   readonly effective_action: BreakerAction | null;
   readonly breakers: readonly CircuitBreaker[];
 }
+
+export interface StrategyAllocation {
+  readonly method: "FIXED" | "PERCENT_EQUITY" | "BOUNDED_DYNAMIC";
+  readonly value?: number;
+  readonly minimum?: number;
+  readonly maximum?: number;
+}
+
+export interface StrategyVersion {
+  readonly version: number;
+  readonly creator: string;
+  readonly created_at: string;
+  readonly mode: "PAPER";
+  readonly route_types: readonly RouteType[];
+  readonly allowed_venues: readonly Venue[];
+  readonly allowed_assets: readonly string[];
+  readonly min_net_apr: number;
+  readonly min_profitability: number;
+  readonly min_forecast_coverage: number;
+  readonly max_time_to_funding_minutes: number;
+  readonly max_basis_bps: number;
+  readonly allocation: StrategyAllocation;
+  readonly max_concurrent: number;
+  readonly cooldown_seconds: number;
+  readonly hold_seconds: number;
+  readonly auto_compound: { readonly enabled: boolean; readonly reinvest_fraction: number; readonly minimum_reinvest_amount: number };
+  readonly exit_net_apr: number;
+  readonly take_profit_fraction?: number;
+  readonly stop_loss_fraction?: number;
+  readonly max_drawdown_fraction: number;
+}
+
+export interface Strategy { readonly id: string; readonly name: string; readonly enabled: boolean; readonly current: StrategyVersion }
+
+export interface PortfolioAllocation { readonly key: string; readonly deployed_capital: number; readonly fraction: number }
+export interface Portfolio { readonly equity: number; readonly deployable_equity: number; readonly deployed_capital: number; readonly by_venue: readonly PortfolioAllocation[]; readonly by_underlying: readonly PortfolioAllocation[]; readonly pnl: { readonly realized_funding: number; readonly realized_trading: number; readonly unrealized_leg: number; readonly fees: number; readonly net: number; readonly return_on_deployed_capital: number }; readonly as_of: string }
+export interface VenueHealth { readonly venue: Venue; readonly status: "HEALTHY" | "DEGRADED"; readonly connected: boolean; readonly market_data_age_seconds: number; readonly clock_drift_ms: number }
+export interface ServiceHeartbeat { readonly service: string; readonly status: string; readonly observed_at: string }
+export interface SystemHealth { readonly venues: readonly VenueHealth[]; readonly services: readonly ServiceHeartbeat[]; readonly as_of: string }
+export interface Alert { readonly id: string; readonly dedup_key: string; readonly severity: "INFORMATIONAL" | "WARNING" | "CRITICAL"; readonly title: string; readonly message: string; readonly created_at: string; readonly acknowledged_at: string | null; readonly acknowledged_by: string | null }
 
 export interface OpportunityFilter {
   readonly route_type?: RouteType;
@@ -618,6 +659,19 @@ export class PerpetoClient {
   public resumeControls(): Promise<{ readonly resolved: number }> {
     return this.#request("/api/v1/controls/resume", { method: "POST" });
   }
+
+  public listStrategies(): Promise<readonly Strategy[]> { return this.#request("/api/v1/strategies"); }
+  public getStrategy(id: string): Promise<Strategy> { return this.#request(`/api/v1/strategies/${encodeURIComponent(id)}`); }
+  public createStrategy(strategy: Strategy): Promise<Strategy> { return this.#request("/api/v1/strategies", { method: "POST", body: JSON.stringify(strategy) }); }
+  public updateStrategy(id: string, strategy: Strategy): Promise<Strategy> { return this.#request(`/api/v1/strategies/${encodeURIComponent(id)}`, { method: "PUT", body: JSON.stringify(strategy) }); }
+  public deleteStrategy(id: string): Promise<void> { return this.#request(`/api/v1/strategies/${encodeURIComponent(id)}`, { method: "DELETE" }); }
+  public enableStrategy(id: string): Promise<Strategy> { return this.#request(`/api/v1/strategies/${encodeURIComponent(id)}/enable`, { method: "POST" }); }
+  public disableStrategy(id: string): Promise<Strategy> { return this.#request(`/api/v1/strategies/${encodeURIComponent(id)}/disable`, { method: "POST" }); }
+  public applyStrategyToOpen(id: string): Promise<{ readonly applied: number }> { return this.#request(`/api/v1/strategies/${encodeURIComponent(id)}/apply-to-open`, { method: "POST" }); }
+  public getPortfolio(): Promise<Portfolio> { return this.#request("/api/v1/portfolio"); }
+  public getSystemHealth(): Promise<SystemHealth> { return this.#request("/api/v1/health"); }
+  public listAlerts(): Promise<readonly Alert[]> { return this.#request("/api/v1/alerts"); }
+  public acknowledgeAlert(id: string): Promise<Alert> { return this.#request(`/api/v1/alerts/${encodeURIComponent(id)}/ack`, { method: "POST" }); }
 }
 
 function randomIdempotencyKey(): string {

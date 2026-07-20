@@ -11,6 +11,7 @@ pub mod market;
 pub mod opportunity;
 pub mod position;
 pub mod risk;
+pub mod strategy;
 
 /// Deployment trading mode. The initial scaffold supports paper mode only.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

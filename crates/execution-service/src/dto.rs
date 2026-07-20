@@ -161,6 +161,9 @@ pub struct PositionDto {
     pub id: String,
     /// The route the position was opened from.
     pub route_id: String,
+    /// Strategy that originated this position.
+    #[serde(default)]
+    pub strategy_id: Option<String>,
     /// The underlying asset.
     pub underlying: String,
     /// `SPOT_PERP` or `PERP_PERP`.
@@ -289,6 +292,7 @@ impl PositionDto {
         Self {
             id: position.id.clone(),
             route_id: position.route_id.clone(),
+            strategy_id: position.strategy_id.clone(),
             underlying: position.underlying.clone(),
             route_type: position.route_type.as_str().to_owned(),
             funding_direction: position.funding_direction.as_str().to_owned(),
@@ -317,6 +321,7 @@ impl PositionDto {
         ArbitragePosition {
             id: self.id.clone(),
             route_id: self.route_id.clone(),
+            strategy_id: self.strategy_id.clone(),
             underlying: self.underlying.clone(),
             route_type: RouteType::from_str(&self.route_type).unwrap_or(RouteType::PerpPerp),
             funding_direction: FundingDirection::from_wire(&self.funding_direction)

@@ -18,6 +18,7 @@ use funding_arb_execution_service::{
 };
 use funding_arb_scanner_service::fixtures::{self, MarketStatus};
 use funding_arb_scanner_service::{Scanner, ScannerRepo};
+use funding_arb_strategy_service::{PositionSummary, StrategiesRepo, StrategyService};
 use rust_decimal::Decimal;
 use sqlx::postgres::PgPoolOptions;
 
@@ -89,7 +90,8 @@ async fn run() -> ExitCode {
     let scan_repo = ScannerRepo::new(pool.clone());
     let positions = PositionsRepo::new(pool.clone());
     let breakers = BreakersRepo::new(pool.clone());
-    let outbox = OutboxRepo::new(pool);
+    let outbox = OutboxRepo::new(pool.clone());
+    let strategies = StrategiesRepo::new(pool);
     let execution = ExecutionService {
         scanner,
         ..ExecutionService::default()
@@ -114,6 +116,15 @@ async fn run() -> ExitCode {
                     eprintln!("failed to persist scan: {error}");
                 } else {
                     println!("scan complete at {now}: {count} eligible opportunities");
+                    auto_enter(
+                        &result.opportunities,
+                        &strategies,
+                        &positions,
+                        &breakers,
+                        &execution,
+                        now,
+                    )
+                    .await;
                 }
             }
             Err(error) => eprintln!("scan failed: {error}"),
@@ -126,6 +137,53 @@ async fn run() -> ExitCode {
             }
         };
         tokio::time::sleep(Duration::from_secs(interval_secs)).await;
+    }
+}
+
+async fn auto_enter(
+    opportunities: &[funding_arb_domain::opportunity::Opportunity],
+    strategies: &StrategiesRepo,
+    positions: &PositionsRepo,
+    breakers: &BreakersRepo,
+    execution: &ExecutionService,
+    now: DateTime<Utc>,
+) {
+    let controls = match breakers.controls().await {
+        Ok(value) => value,
+        Err(error) => { eprintln!("failed to read controls for auto-entry: {error}"); return; }
+    };
+    if controls.effective_action.is_some() { return; }
+    let stored = match positions.list().await {
+        Ok(value) => value,
+        Err(error) => { eprintln!("failed to read positions for auto-entry: {error}"); return; }
+    };
+    let summaries = stored.iter().map(|position| {
+        let domain = position.to_domain();
+        PositionSummary {
+            strategy_id: position.strategy_id.clone(), state: domain.state,
+            at: domain.closed_at.unwrap_or(domain.opened_at), realized_pnl: domain.realized_pnl,
+        }
+    }).collect::<Vec<_>>();
+    let allocated: Decimal = stored.iter().filter(|position| position.state != "CLOSED").map(|position| Decimal::from_f64_retain(position.reserved_capital).unwrap_or_default()).sum();
+    let free_equity = (execution.scanner.risk_limits.reference_equity - allocated).max(Decimal::ZERO);
+    let configured = match strategies.list().await {
+        Ok(value) => value,
+        Err(error) => { eprintln!("failed to read strategies for auto-entry: {error}"); return; }
+    };
+    for dto in configured.into_iter().filter(|strategy| strategy.enabled) {
+        let Some(strategy) = dto.to_domain() else { continue; };
+        for intent in StrategyService::evaluate(&strategy, opportunities, &summaries, &execution.scanner.risk_limits, free_equity, now) {
+            let key = format!("strategy:{}:{}:{}", intent.strategy_id, strategy.current.version, intent.route_id);
+            if positions.get_by_idempotency_key(&key).await.ok().flatten().is_some() { continue; }
+            match execution.open(&intent.route_id, intent.notional, now) {
+                Ok(mut position) => {
+                    position.strategy_id = Some(intent.strategy_id);
+                    let dto = PositionDto::from_domain(&position);
+                    if let Err(error) = positions.create(&dto, &key).await { eprintln!("failed to persist auto-entry: {error}"); }
+                }
+                Err(error) => eprintln!("strategy auto-entry failed: {error}"),
+            }
+        }
     }
 }
 

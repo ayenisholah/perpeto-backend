@@ -52,6 +52,15 @@ pub fn build_router(state: AppState) -> Router {
         )
         .route("/api/v1/controls/flatten", post(handlers::flatten))
         .route("/api/v1/controls/resume", post(handlers::resume))
+        .route("/api/v1/strategies", get(handlers::list_strategies).post(handlers::create_strategy))
+        .route("/api/v1/strategies/{id}", get(handlers::get_strategy).put(handlers::update_strategy).delete(handlers::delete_strategy))
+        .route("/api/v1/strategies/{id}/enable", post(handlers::enable_strategy))
+        .route("/api/v1/strategies/{id}/disable", post(handlers::disable_strategy))
+        .route("/api/v1/strategies/{id}/apply-to-open", post(handlers::apply_strategy_to_open))
+        .route("/api/v1/portfolio", get(handlers::get_portfolio))
+        .route("/api/v1/health", get(handlers::get_health))
+        .route("/api/v1/alerts", get(handlers::list_alerts))
+        .route("/api/v1/alerts/{id}/ack", post(handlers::ack_alert))
         .layer(middleware::from_fn_with_state(state.clone(), require_auth));
 
     let public = Router::new()

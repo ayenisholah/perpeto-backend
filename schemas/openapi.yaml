@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Perpeto Control API
-  version: 0.8.0
+  version: 0.10.0
   description: >-
     Social identity, MFA, and secure sessions plus the M2 deterministic paper
     scanner and coordinated simulated positions. Live execution remains unavailable.
@@ -37,6 +37,10 @@ tags:
     description: Opening and monitoring coordinated paper arbitrage positions (no live trading).
   - name: Controls
     description: Durable paper circuit breakers and emergency controls.
+  - name: Strategies
+    description: Versioned automated paper-strategy configuration.
+  - name: Monitoring
+    description: Paper portfolio, service health, and deduplicated alerts.
   - name: Provider notifications
     description: Signed, idempotent identity-provider account-change callbacks.
 paths:
@@ -657,6 +661,112 @@ paths:
                   resolved: { type: integer, minimum: 0 }
         "401": { $ref: "#/components/responses/ProblemResponse" }
         "403": { $ref: "#/components/responses/ProblemResponse" }
+  /api/v1/strategies:
+    get:
+      tags: [Strategies]
+      operationId: listStrategies
+      summary: List paper strategies
+      responses:
+        "200":
+          description: Strategies.
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/Strategy" } }
+        "401": { $ref: "#/components/responses/ProblemResponse" }
+    post:
+      tags: [Strategies]
+      operationId: createStrategy
+      summary: Create a paper strategy
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/Strategy" } } }
+      responses:
+        "201": { description: Created strategy., content: { application/json: { schema: { $ref: "#/components/schemas/Strategy" } } } }
+        "400": { $ref: "#/components/responses/ProblemResponse" }
+        "401": { $ref: "#/components/responses/ProblemResponse" }
+        "403": { $ref: "#/components/responses/ProblemResponse" }
+  /api/v1/strategies/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      tags: [Strategies]
+      summary: Get a strategy
+      operationId: getStrategy
+      responses:
+        "200": { description: Strategy., content: { application/json: { schema: { $ref: "#/components/schemas/Strategy" } } } }
+        "404": { $ref: "#/components/responses/ProblemResponse" }
+    put:
+      tags: [Strategies]
+      summary: Create a new strategy version
+      operationId: updateStrategy
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/Strategy" } } }
+      responses:
+        "200": { description: New immutable version., content: { application/json: { schema: { $ref: "#/components/schemas/Strategy" } } } }
+        "400": { $ref: "#/components/responses/ProblemResponse" }
+        "404": { $ref: "#/components/responses/ProblemResponse" }
+    delete:
+      tags: [Strategies]
+      summary: Delete a strategy
+      operationId: deleteStrategy
+      responses:
+        "204": { description: Deleted. }
+        "404": { $ref: "#/components/responses/ProblemResponse" }
+  /api/v1/strategies/{id}/enable:
+    post:
+      tags: [Strategies]
+      summary: Enable a strategy
+      operationId: enableStrategy
+      parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        "200": { description: Enabled., content: { application/json: { schema: { $ref: "#/components/schemas/Strategy" } } } }
+  /api/v1/strategies/{id}/disable:
+    post:
+      tags: [Strategies]
+      summary: Disable a strategy
+      operationId: disableStrategy
+      parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        "200": { description: Disabled., content: { application/json: { schema: { $ref: "#/components/schemas/Strategy" } } } }
+  /api/v1/strategies/{id}/apply-to-open:
+    post:
+      tags: [Strategies]
+      summary: Apply a strategy version to open positions
+      operationId: applyStrategyToOpen
+      parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        "200": { description: Open positions updated. }
+  /api/v1/portfolio:
+    get:
+      tags: [Monitoring]
+      summary: Get the paper portfolio
+      operationId: getPortfolio
+      responses:
+        "200": { description: Aggregated paper portfolio., content: { application/json: { schema: { $ref: "#/components/schemas/Portfolio" } } } }
+  /api/v1/health:
+    get:
+      tags: [Monitoring]
+      summary: Get venue and service health
+      operationId: getSystemHealth
+      responses:
+        "200": { description: Venue and service health., content: { application/json: { schema: { $ref: "#/components/schemas/SystemHealth" } } } }
+  /api/v1/alerts:
+    get:
+      tags: [Monitoring]
+      summary: List alerts
+      operationId: listAlerts
+      responses:
+        "200": { description: Alerts., content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/Alert" } } } } }
+  /api/v1/alerts/{id}/ack:
+    post:
+      tags: [Monitoring]
+      summary: Acknowledge an alert
+      operationId: acknowledgeAlert
+      parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        "200": { description: Acknowledged alert., content: { application/json: { schema: { $ref: "#/components/schemas/Alert" } } } }
+        "404": { $ref: "#/components/responses/ProblemResponse" }
   /api/v1/auth/apple/notifications:
     post:
       tags: [Provider notifications]
@@ -970,12 +1080,128 @@ components:
         fills:
           type: array
           items: { $ref: "#/components/schemas/PaperFill" }
+    PortfolioAllocation:
+      type: object
+      required: [key, deployed_capital, fraction]
+      properties:
+        key: { type: string }
+        deployed_capital: { type: number }
+        fraction: { type: number }
+    PnlBreakdown:
+      type: object
+      required: [realized_funding, realized_trading, unrealized_leg, fees, net, return_on_deployed_capital]
+      properties:
+        realized_funding: { type: number }
+        realized_trading: { type: number }
+        unrealized_leg: { type: number }
+        fees: { type: number }
+        net: { type: number }
+        return_on_deployed_capital: { type: number }
+    Portfolio:
+      type: object
+      required: [equity, deployable_equity, deployed_capital, by_venue, by_underlying, pnl, as_of]
+      properties:
+        equity: { type: number }
+        deployable_equity: { type: number }
+        deployed_capital: { type: number }
+        by_venue: { type: array, items: { $ref: "#/components/schemas/PortfolioAllocation" } }
+        by_underlying: { type: array, items: { $ref: "#/components/schemas/PortfolioAllocation" } }
+        pnl: { $ref: "#/components/schemas/PnlBreakdown" }
+        as_of: { type: string, format: date-time }
+    VenueHealth:
+      type: object
+      required: [venue, status, connected, market_data_age_seconds, clock_drift_ms]
+      properties:
+        venue: { $ref: "#/components/schemas/Venue" }
+        status: { type: string, enum: [HEALTHY, DEGRADED] }
+        connected: { type: boolean }
+        market_data_age_seconds: { type: integer }
+        clock_drift_ms: { type: integer }
+    ServiceHeartbeat:
+      type: object
+      required: [service, status, observed_at]
+      properties:
+        service: { type: string }
+        status: { type: string }
+        observed_at: { type: string, format: date-time }
+    SystemHealth:
+      type: object
+      required: [venues, services, as_of]
+      properties:
+        venues: { type: array, items: { $ref: "#/components/schemas/VenueHealth" } }
+        services: { type: array, items: { $ref: "#/components/schemas/ServiceHeartbeat" } }
+        as_of: { type: string, format: date-time }
+    Alert:
+      type: object
+      required: [id, dedup_key, severity, title, message, created_at, acknowledged_at, acknowledged_by]
+      properties:
+        id: { type: string, format: uuid }
+        dedup_key: { type: string }
+        severity: { type: string, enum: [INFORMATIONAL, WARNING, CRITICAL] }
+        title: { type: string }
+        message: { type: string }
+        created_at: { type: string, format: date-time }
+        acknowledged_at: { type: [string, "null"], format: date-time }
+        acknowledged_by: { type: [string, "null"], format: uuid }
+    StrategyAllocation:
+      type: object
+      additionalProperties: false
+      required: [method]
+      properties:
+        method: { type: string, enum: [FIXED, PERCENT_EQUITY, BOUNDED_DYNAMIC] }
+        value: { type: number }
+        minimum: { type: number }
+        maximum: { type: number }
+    AutoCompoundPolicy:
+      type: object
+      additionalProperties: false
+      required: [enabled, reinvest_fraction, minimum_reinvest_amount]
+      properties:
+        enabled: { type: boolean }
+        reinvest_fraction: { type: number, minimum: 0, maximum: 1 }
+        minimum_reinvest_amount: { type: number, minimum: 0 }
+    StrategyVersion:
+      type: object
+      additionalProperties: false
+      required: [version, creator, created_at, mode, route_types, allowed_venues, allowed_assets, min_net_apr, min_profitability, min_forecast_coverage, max_time_to_funding_minutes, max_basis_bps, allocation, max_concurrent, cooldown_seconds, hold_seconds, auto_compound, exit_net_apr, max_drawdown_fraction]
+      properties:
+        version: { type: integer, minimum: 1 }
+        creator: { type: string }
+        created_at: { type: string, format: date-time }
+        mode: { type: string, enum: [PAPER] }
+        route_types: { type: array, items: { $ref: "#/components/schemas/RouteType" } }
+        allowed_venues: { type: array, items: { $ref: "#/components/schemas/Venue" } }
+        allowed_assets: { type: array, items: { type: string } }
+        min_net_apr: { type: number }
+        min_profitability: { type: number, minimum: 0, maximum: 1 }
+        min_forecast_coverage: { type: number, minimum: 0, maximum: 1 }
+        max_time_to_funding_minutes: { type: integer, minimum: 0 }
+        max_basis_bps: { type: number, minimum: 0 }
+        allocation: { $ref: "#/components/schemas/StrategyAllocation" }
+        max_concurrent: { type: integer, minimum: 1 }
+        cooldown_seconds: { type: integer, minimum: 0 }
+        hold_seconds: { type: integer, minimum: 0 }
+        auto_compound: { $ref: "#/components/schemas/AutoCompoundPolicy" }
+        exit_net_apr: { type: number }
+        take_profit_fraction: { type: number }
+        stop_loss_fraction: { type: number }
+        max_drawdown_fraction: { type: number, minimum: 0, maximum: 1 }
+    Strategy:
+      type: object
+      additionalProperties: false
+      required: [id, name, enabled, current]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string, minLength: 1 }
+        enabled: { type: boolean }
+        current: { $ref: "#/components/schemas/StrategyVersion" }
     Position:
       type: object
       additionalProperties: false
       required:
         - id
         - route_id
+        - strategy_id
         - underlying
         - route_type
         - funding_direction
@@ -993,6 +1219,7 @@ components:
       properties:
         id: { type: string, format: uuid }
         route_id: { type: string }
+        strategy_id: { type: [string, "null"], format: uuid }
         underlying: { type: string }
         route_type: { $ref: "#/components/schemas/RouteType" }
         funding_direction: { $ref: "#/components/schemas/FundingDirection" }

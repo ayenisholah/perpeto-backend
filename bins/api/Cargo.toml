@@ -10,6 +10,7 @@ funding-arb-domain = { path = "../../crates/funding-arb-domain" }
 funding-arb-auth-service = { path = "../../crates/auth-service" }
 funding-arb-scanner-service = { path = "../../crates/scanner-service" }
 funding-arb-execution-service = { path = "../../crates/execution-service" }
+funding-arb-strategy-service = { path = "../../crates/strategy-service" }
 axum.workspace = true
 chrono.workspace = true
 rust_decimal.workspace = true
