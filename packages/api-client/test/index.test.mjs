@@ -493,7 +493,10 @@ describe("venue account contract", () => {
       fetchImplementation: async (url, init = {}) => {
         requests.push([String(url), init.method ?? "GET"]);
         if (String(url).endsWith("/venues")) return Response.json([]);
+        if (String(url).endsWith("/connector-orders")) return Response.json([{ state: "ACKNOWLEDGED", native_quantity: "0.001" }]);
+        if (String(url).endsWith("/reconciliations")) return Response.json([{ status: "RECONCILED", discrepancies: 0 }]);
         if (String(url).endsWith("/venue-accounts")) return Response.json([account]);
+        if (String(url).endsWith("/accounting")) return Response.json({ venue_account_id: account.id, run_id: null, balances: [], positions: [] });
         if (String(url).endsWith("/test")) {
           return Response.json({ account_id: account.id, status: "PASS", checked_at: account.created_at, checks: [] });
         }
@@ -507,8 +510,11 @@ describe("venue account contract", () => {
       },
     });
     assert.deepEqual(await client.listVenues(), []);
+    assert.equal((await client.listConnectorOrders())[0].native_quantity, "0.001");
+    assert.equal((await client.listReconciliations())[0].discrepancies, 0);
     assert.equal((await client.listVenueAccounts())[0].masked_identity, "****1234");
     assert.equal((await client.getVenueAccount(account.id)).masked_identity, "****1234");
+    assert.equal((await client.getConnectorAccounting(account.id)).venue_account_id, account.id);
     assert.equal((await client.testVenueAccount(account.id)).status, "PASS");
     const order = { product: "LINEAR_PERPETUAL", symbol: "BTCUSDT", side: "SELL", base_quantity: "0.001", limit_price: "60000", client_order_id: "perpeto-1" };
     assert.equal((await client.previewConnectorOrder(account.id, order)).native_quantity, "0.001");

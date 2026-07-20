@@ -946,6 +946,59 @@ pub async fn list_venue_accounts(
     Ok(Json(state.venues.list().await.map_err(internal)?))
 }
 
+/// `GET /api/v1/connector-orders` — recent exact connector order intents.
+pub async fn list_connector_orders(
+    State(state): State<AppState>,
+    Extension(caller): Extension<CallerContext>,
+) -> Result<impl IntoResponse, ApiError> {
+    caller.require_active()?;
+    Ok(Json(
+        state
+            .connector_monitoring
+            .orders()
+            .await
+            .map_err(internal)?,
+    ))
+}
+
+/// `GET /api/v1/reconciliations` — recent connector reconciliation runs.
+pub async fn list_reconciliations(
+    State(state): State<AppState>,
+    Extension(caller): Extension<CallerContext>,
+) -> Result<impl IntoResponse, ApiError> {
+    caller.require_active()?;
+    Ok(Json(
+        state
+            .connector_monitoring
+            .reconciliations()
+            .await
+            .map_err(internal)?,
+    ))
+}
+
+/// `GET /api/v1/venue-accounts/{id}/accounting` — latest exact venue snapshot.
+pub async fn get_connector_accounting(
+    State(state): State<AppState>,
+    Extension(caller): Extension<CallerContext>,
+    Path(id): Path<String>,
+) -> Result<Response, ApiError> {
+    caller.require_active()?;
+    if state.venues.get(&id).await.map_err(internal)?.is_none() {
+        return Ok(not_found(
+            "Venue account not found",
+            "VENUE_ACCOUNT_NOT_FOUND",
+        ));
+    }
+    Ok(Json(
+        state
+            .connector_monitoring
+            .accounting(&id)
+            .await
+            .map_err(internal)?,
+    )
+    .into_response())
+}
+
 /// `GET /api/v1/venue-accounts/{id}` — masked account detail.
 pub async fn get_venue_account(
     State(state): State<AppState>,

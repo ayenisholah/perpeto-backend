@@ -19,7 +19,8 @@ use funding_arb_execution_service::{
 use funding_arb_scanner_service::ScannerRepo;
 use funding_arb_strategy_service::StrategiesRepo;
 use funding_arb_venue_service::{
-    ConnectorExecutionCoordinator, ConnectorRegistry, VenueAccountsRepo, decode_master_key,
+    ConnectorExecutionCoordinator, ConnectorMonitoringRepo, ConnectorRegistry, VenueAccountsRepo,
+    decode_master_key,
 };
 use sqlx::postgres::PgPoolOptions;
 
@@ -88,6 +89,7 @@ async fn run() -> ExitCode {
     let strategies = StrategiesRepo::new(pool.clone());
     let monitoring = MonitoringRepo::new(pool.clone());
     let venues = VenueAccountsRepo::new(pool.clone());
+    let connector_monitoring = ConnectorMonitoringRepo::new(pool.clone());
     let connector_execution = ConnectorExecutionCoordinator::new(pool.clone());
     let connector_registry = if mode.is_paper() {
         None
@@ -136,6 +138,7 @@ async fn run() -> ExitCode {
         strategies,
         monitoring,
         venues,
+        connector_monitoring,
         connector_registry,
         connector_execution,
     });

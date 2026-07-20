@@ -1,4 +1,4 @@
-export const schemaVersion = "0.12.0" as const;
+export const schemaVersion = "0.13.0" as const;
 
 export type SocialProvider = "APPLE" | "GOOGLE";
 export type AuthNextState =
@@ -84,6 +84,70 @@ export interface ConnectorSubmission {
   readonly state: "DUPLICATE" | "ACKNOWLEDGED" | "UNKNOWN_OUTCOME" | "FAILED";
   readonly venue_order_id: string | null;
   readonly client_order_id: string;
+}
+
+export interface ConnectorOrder {
+  readonly id: string;
+  readonly venue: "BINANCE" | "BYBIT" | "OKX";
+  readonly venue_account_id: string;
+  readonly client_order_id: string;
+  readonly venue_order_id: string | null;
+  readonly symbol: string;
+  readonly product: "SPOT" | "LINEAR_PERPETUAL";
+  readonly side: "BUY" | "SELL";
+  readonly base_quantity: string;
+  readonly limit_price: string;
+  readonly native_quantity: string;
+  readonly native_price: string;
+  readonly equivalent_base_quantity: string;
+  readonly projected_delta_usd: string;
+  readonly reduce_only: boolean;
+  readonly environment: "PRODUCTION" | "TESTNET" | "DEMO";
+  readonly state: string;
+  readonly payload_hash: string;
+  readonly error_code: string | null;
+  readonly created_at: string;
+  readonly updated_at: string;
+}
+
+export interface ReconciliationRun {
+  readonly id: string;
+  readonly venue: "BINANCE" | "BYBIT" | "OKX";
+  readonly venue_account_id: string;
+  readonly status: string;
+  readonly started_at: string;
+  readonly completed_at: string | null;
+  readonly balances_seen: number;
+  readonly positions_seen: number;
+  readonly open_orders_seen: number;
+  readonly fills_seen: number;
+  readonly discrepancies: number;
+}
+
+export interface ExactBalance {
+  readonly asset: string;
+  readonly total: string;
+  readonly available: string;
+  readonly locked: string;
+  readonly received_at: string;
+}
+
+export interface ExactVenuePosition {
+  readonly symbol: string;
+  readonly product: "SPOT" | "LINEAR_PERPETUAL";
+  readonly quantity: string;
+  readonly entry_price: string;
+  readonly mark_price: string;
+  readonly leverage: string;
+  readonly liquidation_price: string | null;
+  readonly received_at: string;
+}
+
+export interface ConnectorAccounting {
+  readonly venue_account_id: string;
+  readonly run_id: string | null;
+  readonly balances: readonly ExactBalance[];
+  readonly positions: readonly ExactVenuePosition[];
 }
 
 export interface CurrentUser {
@@ -751,6 +815,9 @@ export class PerpetoClient {
   public disableVenueAccount(id: string): Promise<VenueAccount> { return this.#request(`/api/v1/venue-accounts/${encodeURIComponent(id)}/disable`, { method: "POST" }); }
   public previewConnectorOrder(id: string, request: ConnectorOrderRequest): Promise<ConnectorOrderPreview> { return this.#request(`/api/v1/venue-accounts/${encodeURIComponent(id)}/orders/preview`, { method: "POST", body: JSON.stringify(request) }); }
   public submitConnectorOrder(id: string, request: ConnectorOrderRequest): Promise<ConnectorSubmission> { return this.#request(`/api/v1/venue-accounts/${encodeURIComponent(id)}/orders`, { method: "POST", body: JSON.stringify(request) }); }
+  public listConnectorOrders(): Promise<readonly ConnectorOrder[]> { return this.#request("/api/v1/connector-orders"); }
+  public listReconciliations(): Promise<readonly ReconciliationRun[]> { return this.#request("/api/v1/reconciliations"); }
+  public getConnectorAccounting(id: string): Promise<ConnectorAccounting> { return this.#request(`/api/v1/venue-accounts/${encodeURIComponent(id)}/accounting`); }
 }
 
 function randomIdempotencyKey(): string {

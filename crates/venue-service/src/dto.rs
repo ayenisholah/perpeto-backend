@@ -21,6 +21,75 @@ pub struct ConnectionTestDto {
     pub checks: Vec<String>,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ConnectorOrderDto {
+    pub id: String,
+    pub venue: String,
+    pub venue_account_id: String,
+    pub client_order_id: String,
+    pub venue_order_id: Option<String>,
+    pub symbol: String,
+    pub product: String,
+    pub side: String,
+    pub base_quantity: String,
+    pub limit_price: String,
+    pub native_quantity: String,
+    pub native_price: String,
+    pub equivalent_base_quantity: String,
+    pub projected_delta_usd: String,
+    pub reduce_only: bool,
+    pub environment: String,
+    pub state: String,
+    pub payload_hash: String,
+    pub error_code: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ReconciliationRunDto {
+    pub id: String,
+    pub venue: String,
+    pub venue_account_id: String,
+    pub status: String,
+    pub started_at: String,
+    pub completed_at: Option<String>,
+    pub balances_seen: i32,
+    pub positions_seen: i32,
+    pub open_orders_seen: i32,
+    pub fills_seen: i32,
+    pub discrepancies: i64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ExactBalanceDto {
+    pub asset: String,
+    pub total: String,
+    pub available: String,
+    pub locked: String,
+    pub received_at: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ExactVenuePositionDto {
+    pub symbol: String,
+    pub product: String,
+    pub quantity: String,
+    pub entry_price: String,
+    pub mark_price: String,
+    pub leverage: String,
+    pub liquidation_price: Option<String>,
+    pub received_at: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ConnectorAccountingDto {
+    pub venue_account_id: String,
+    pub run_id: Option<String>,
+    pub balances: Vec<ExactBalanceDto>,
+    pub positions: Vec<ExactVenuePositionDto>,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum CertificationState {

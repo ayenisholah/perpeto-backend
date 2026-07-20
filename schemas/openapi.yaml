@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Perpeto Control API
-  version: 0.12.0
+  version: 0.13.0
   description: >-
     Social identity, MFA, and secure sessions plus the M2 deterministic paper
     scanner and coordinated simulated positions. Live execution remains unavailable.
@@ -812,6 +812,30 @@ paths:
             application/json:
               schema: { type: array, items: { $ref: "#/components/schemas/VenueAccount" } }
         "401": { $ref: "#/components/responses/ProblemResponse" }
+  /api/v1/connector-orders:
+    get:
+      tags: [Venues]
+      summary: List recent exact connector order intents
+      operationId: listConnectorOrders
+      responses:
+        "200":
+          description: Exact normalized and native order values.
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/ConnectorOrder" } }
+        "401": { $ref: "#/components/responses/ProblemResponse" }
+  /api/v1/reconciliations:
+    get:
+      tags: [Venues]
+      summary: List recent connector reconciliation runs
+      operationId: listReconciliations
+      responses:
+        "200":
+          description: Durable reconciliation summaries.
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/ReconciliationRun" } }
+        "401": { $ref: "#/components/responses/ProblemResponse" }
   /api/v1/venue-accounts/{id}:
     get:
       tags: [Venues]
@@ -832,6 +856,16 @@ paths:
         "200": { description: Configuration safety result., content: { application/json: { schema: { $ref: "#/components/schemas/ConnectionTest" } } } }
         "401": { $ref: "#/components/responses/ProblemResponse" }
         "403": { $ref: "#/components/responses/ProblemResponse" }
+        "404": { $ref: "#/components/responses/ProblemResponse" }
+  /api/v1/venue-accounts/{id}/accounting:
+    get:
+      tags: [Venues]
+      summary: Get the latest reconciled exact balance and position snapshot
+      operationId: getConnectorAccounting
+      parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        "200": { description: Latest exact accounting snapshot., content: { application/json: { schema: { $ref: "#/components/schemas/ConnectorAccounting" } } } }
+        "401": { $ref: "#/components/responses/ProblemResponse" }
         "404": { $ref: "#/components/responses/ProblemResponse" }
   /api/v1/venue-accounts/{id}/disable:
     post:
@@ -1000,6 +1034,80 @@ components:
         state: { type: string, enum: [DUPLICATE, ACKNOWLEDGED, UNKNOWN_OUTCOME, FAILED] }
         venue_order_id: { type: [string, "null"] }
         client_order_id: { type: string }
+    ConnectorOrder:
+      type: object
+      additionalProperties: false
+      required: [id, venue, venue_account_id, client_order_id, venue_order_id, symbol, product, side, base_quantity, limit_price, native_quantity, native_price, equivalent_base_quantity, projected_delta_usd, reduce_only, environment, state, payload_hash, error_code, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        venue: { type: string, enum: [BINANCE, BYBIT, OKX] }
+        venue_account_id: { type: string, format: uuid }
+        client_order_id: { type: string }
+        venue_order_id: { type: [string, "null"] }
+        symbol: { type: string }
+        product: { type: string, enum: [SPOT, LINEAR_PERPETUAL] }
+        side: { type: string, enum: [BUY, SELL] }
+        base_quantity: { type: string }
+        limit_price: { type: string }
+        native_quantity: { type: string }
+        native_price: { type: string }
+        equivalent_base_quantity: { type: string }
+        projected_delta_usd: { type: string }
+        reduce_only: { type: boolean }
+        environment: { type: string, enum: [PRODUCTION, TESTNET, DEMO] }
+        state: { type: string }
+        payload_hash: { type: string, pattern: "^[0-9a-f]{64}$" }
+        error_code: { type: [string, "null"] }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    ReconciliationRun:
+      type: object
+      additionalProperties: false
+      required: [id, venue, venue_account_id, status, started_at, completed_at, balances_seen, positions_seen, open_orders_seen, fills_seen, discrepancies]
+      properties:
+        id: { type: string, format: uuid }
+        venue: { type: string, enum: [BINANCE, BYBIT, OKX] }
+        venue_account_id: { type: string, format: uuid }
+        status: { type: string }
+        started_at: { type: string, format: date-time }
+        completed_at: { type: [string, "null"], format: date-time }
+        balances_seen: { type: integer, minimum: 0 }
+        positions_seen: { type: integer, minimum: 0 }
+        open_orders_seen: { type: integer, minimum: 0 }
+        fills_seen: { type: integer, minimum: 0 }
+        discrepancies: { type: integer, minimum: 0 }
+    ExactBalance:
+      type: object
+      additionalProperties: false
+      required: [asset, total, available, locked, received_at]
+      properties:
+        asset: { type: string }
+        total: { type: string }
+        available: { type: string }
+        locked: { type: string }
+        received_at: { type: string, format: date-time }
+    ExactVenuePosition:
+      type: object
+      additionalProperties: false
+      required: [symbol, product, quantity, entry_price, mark_price, leverage, liquidation_price, received_at]
+      properties:
+        symbol: { type: string }
+        product: { type: string, enum: [SPOT, LINEAR_PERPETUAL] }
+        quantity: { type: string }
+        entry_price: { type: string }
+        mark_price: { type: string }
+        leverage: { type: string }
+        liquidation_price: { type: [string, "null"] }
+        received_at: { type: string, format: date-time }
+    ConnectorAccounting:
+      type: object
+      additionalProperties: false
+      required: [venue_account_id, run_id, balances, positions]
+      properties:
+        venue_account_id: { type: string, format: uuid }
+        run_id: { type: [string, "null"], format: uuid }
+        balances: { type: array, items: { $ref: "#/components/schemas/ExactBalance" } }
+        positions: { type: array, items: { $ref: "#/components/schemas/ExactVenuePosition" } }
     SocialProvider:
       type: string
       enum: [APPLE, GOOGLE]

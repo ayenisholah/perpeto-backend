@@ -4,12 +4,136 @@ use chrono::{DateTime, Utc};
 use sqlx::{PgPool, Row};
 use uuid::Uuid;
 
-use crate::{InstrumentDto, ProductConnectionDto, VenueAccountDto};
+use crate::{
+    ConnectorAccountingDto, ConnectorOrderDto, ExactBalanceDto, ExactVenuePositionDto,
+    InstrumentDto, ProductConnectionDto, ReconciliationRunDto, VenueAccountDto,
+};
 use funding_arb_connectors::VenueHealth;
 
 #[derive(Clone)]
 pub struct VenueAccountsRepo {
     pool: PgPool,
+}
+
+#[derive(Clone)]
+pub struct ConnectorMonitoringRepo {
+    pool: PgPool,
+}
+
+impl ConnectorMonitoringRepo {
+    #[must_use]
+    pub fn new(pool: PgPool) -> Self {
+        Self { pool }
+    }
+
+    pub async fn orders(&self) -> Result<Vec<ConnectorOrderDto>, sqlx::Error> {
+        let rows = sqlx::query(
+            "SELECT id::text, venue, venue_account_id::text, client_order_id, venue_order_id,
+                    symbol, product, side, base_quantity::text, limit_price::text,
+                    native_quantity::text, native_price::text, equivalent_base_quantity::text,
+                    projected_delta_usd::text, reduce_only, environment, state, payload_hash,
+                    error_code, created_at, updated_at
+             FROM connector_order_intents ORDER BY created_at DESC LIMIT 100",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows.iter().map(order_dto).collect())
+    }
+
+    pub async fn reconciliations(&self) -> Result<Vec<ReconciliationRunDto>, sqlx::Error> {
+        let rows = sqlx::query(
+            "SELECT run.id::text, run.venue, run.venue_account_id::text, run.status,
+                    run.started_at, run.completed_at, run.balances_seen, run.positions_seen,
+                    run.open_orders_seen, run.fills_seen, COUNT(discrepancy.id)::bigint AS discrepancies
+             FROM connector_reconciliation_runs run
+             LEFT JOIN connector_discrepancies discrepancy ON discrepancy.run_id = run.id
+             GROUP BY run.id ORDER BY run.started_at DESC LIMIT 50",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows
+            .iter()
+            .map(|row| ReconciliationRunDto {
+                id: row.get("id"),
+                venue: row.get("venue"),
+                venue_account_id: row.get("venue_account_id"),
+                status: row.get("status"),
+                started_at: row.get::<DateTime<Utc>, _>("started_at").to_rfc3339(),
+                completed_at: row
+                    .get::<Option<DateTime<Utc>>, _>("completed_at")
+                    .map(|value| value.to_rfc3339()),
+                balances_seen: row.get("balances_seen"),
+                positions_seen: row.get("positions_seen"),
+                open_orders_seen: row.get("open_orders_seen"),
+                fills_seen: row.get("fills_seen"),
+                discrepancies: row.get("discrepancies"),
+            })
+            .collect())
+    }
+
+    pub async fn accounting(
+        &self,
+        account_id: &str,
+    ) -> Result<ConnectorAccountingDto, sqlx::Error> {
+        let run_id = sqlx::query_scalar::<_, Uuid>(
+            "SELECT id FROM connector_reconciliation_runs
+             WHERE venue_account_id = $1 AND status IN ('RECONCILED', 'REQUIRED')
+             ORDER BY started_at DESC LIMIT 1",
+        )
+        .bind(parse_uuid(account_id)?)
+        .fetch_optional(&self.pool)
+        .await?;
+        let Some(run_id) = run_id else {
+            return Ok(ConnectorAccountingDto {
+                venue_account_id: account_id.into(),
+                run_id: None,
+                balances: Vec::new(),
+                positions: Vec::new(),
+            });
+        };
+        let balances = sqlx::query(
+            "SELECT asset, total::text, available::text, locked::text, received_at
+             FROM connector_balance_snapshots WHERE run_id = $1 ORDER BY asset",
+        )
+        .bind(run_id)
+        .fetch_all(&self.pool)
+        .await?
+        .iter()
+        .map(|row| ExactBalanceDto {
+            asset: row.get("asset"),
+            total: row.get("total"),
+            available: row.get("available"),
+            locked: row.get("locked"),
+            received_at: row.get::<DateTime<Utc>, _>("received_at").to_rfc3339(),
+        })
+        .collect();
+        let positions = sqlx::query(
+            "SELECT symbol, product, quantity::text, entry_price::text, mark_price::text,
+                    leverage::text, liquidation_price::text, received_at
+             FROM connector_position_snapshots WHERE run_id = $1 ORDER BY symbol, product",
+        )
+        .bind(run_id)
+        .fetch_all(&self.pool)
+        .await?
+        .iter()
+        .map(|row| ExactVenuePositionDto {
+            symbol: row.get("symbol"),
+            product: row.get("product"),
+            quantity: row.get("quantity"),
+            entry_price: row.get("entry_price"),
+            mark_price: row.get("mark_price"),
+            leverage: row.get("leverage"),
+            liquidation_price: row.get("liquidation_price"),
+            received_at: row.get::<DateTime<Utc>, _>("received_at").to_rfc3339(),
+        })
+        .collect();
+        Ok(ConnectorAccountingDto {
+            venue_account_id: account_id.into(),
+            run_id: Some(run_id.to_string()),
+            balances,
+            positions,
+        })
+    }
 }
 
 impl VenueAccountsRepo {
@@ -219,6 +343,32 @@ fn reconciliation_wire(value: crate::ReconciliationState) -> &'static str {
         crate::ReconciliationState::Reconciled => "RECONCILED",
         crate::ReconciliationState::Required => "REQUIRED",
         crate::ReconciliationState::Frozen => "FROZEN",
+    }
+}
+
+fn order_dto(row: &sqlx::postgres::PgRow) -> ConnectorOrderDto {
+    ConnectorOrderDto {
+        id: row.get("id"),
+        venue: row.get("venue"),
+        venue_account_id: row.get("venue_account_id"),
+        client_order_id: row.get("client_order_id"),
+        venue_order_id: row.get("venue_order_id"),
+        symbol: row.get("symbol"),
+        product: row.get("product"),
+        side: row.get("side"),
+        base_quantity: row.get("base_quantity"),
+        limit_price: row.get("limit_price"),
+        native_quantity: row.get("native_quantity"),
+        native_price: row.get("native_price"),
+        equivalent_base_quantity: row.get("equivalent_base_quantity"),
+        projected_delta_usd: row.get("projected_delta_usd"),
+        reduce_only: row.get("reduce_only"),
+        environment: row.get("environment"),
+        state: row.get("state"),
+        payload_hash: row.get("payload_hash"),
+        error_code: row.get("error_code"),
+        created_at: row.get::<DateTime<Utc>, _>("created_at").to_rfc3339(),
+        updated_at: row.get::<DateTime<Utc>, _>("updated_at").to_rfc3339(),
     }
 }
 

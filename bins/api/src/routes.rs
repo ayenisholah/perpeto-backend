@@ -81,12 +81,24 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/v1/venues", get(handlers::list_venues))
         .route("/api/v1/venue-accounts", get(handlers::list_venue_accounts))
         .route(
+            "/api/v1/connector-orders",
+            get(handlers::list_connector_orders),
+        )
+        .route(
+            "/api/v1/reconciliations",
+            get(handlers::list_reconciliations),
+        )
+        .route(
             "/api/v1/venue-accounts/{id}",
             get(handlers::get_venue_account),
         )
         .route(
             "/api/v1/venue-accounts/{id}/test",
             post(handlers::test_venue_account),
+        )
+        .route(
+            "/api/v1/venue-accounts/{id}/accounting",
+            get(handlers::get_connector_accounting),
         )
         .route(
             "/api/v1/venue-accounts/{id}/disable",
