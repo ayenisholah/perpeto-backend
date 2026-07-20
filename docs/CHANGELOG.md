@@ -6,6 +6,8 @@ All notable repository changes are recorded here using Keep a Changelog categori
 
 ### Added
 
+- M3 Slice 8 — added durable exact-decimal connector order intents/events/fills and reconciliation tables (`0012_connector_execution.sql`) plus a sandbox-only submit-once coordinator. Intents are persisted before submission, duplicate client IDs never resubmit, production writes fail closed, and ambiguous responses require query-by-client-id reconciliation.
+
 - M3 Slice 7 — added an exact-decimal local order book that requires snapshots, accepts valid overlapping deltas, ignores duplicates, clears prices on sequence gaps, and computes deterministic executable VWAP without floating-point conversion.
 
 - M3 Slice 6 — added masked venue catalog/account/detail APIs, configuration-only account tests, Owner containment, fail-closed `PAPER`/`SANDBOX`/`SHADOW` API startup/readiness semantics, and OpenAPI/TypeScript client **0.11.0**. Raw credential import and rotation remain CLI-only.
