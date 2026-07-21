@@ -174,37 +174,37 @@ describe("opportunity scan contract", () => {
         funding_direction: "POSITIVE",
         long_venue: "BINANCE",
         short_venue: "BYBIT",
-        gross_funding_apr: 0.36,
-        entry_cost: 0.04,
-        exit_cost: 0.04,
-        carry_cost: 0.02,
-        risk_buffer: 0.036,
-        break_even_funding: 0.136,
-        net_apr: 0.22,
-        expected_net_pnl: 1180.5,
-        profitability_probability: 0.72,
-        entry_basis_bps: 5,
-        leverage: 2,
-        required_capital: 105000,
-        available_capacity: 140000,
-        reserved_notional: 100000,
-        reserved_capital: 75000,
-        capital_fraction: 0.075,
+        gross_funding_apr: "0.36",
+        entry_cost: "0.04",
+        exit_cost: "0.04",
+        carry_cost: "0.02",
+        risk_buffer: "0.036",
+        break_even_funding: "0.136",
+        net_apr: "0.22",
+        expected_net_pnl: "1180.5",
+        profitability_probability: "0.72",
+        entry_basis_bps: "5",
+        leverage: "2",
+        required_capital: "105000",
+        available_capacity: "140000",
+        reserved_notional: "100000",
+        reserved_capital: "75000",
+        capital_fraction: "0.075",
         within_limits: true,
         long_leg: {
           venue: "BINANCE",
-          predicted_rate: 0.1,
-          p10_rate: 0.05,
-          p90_rate: 0.15,
-          direction_probability: 0.9,
+          predicted_rate: "0.1",
+          p10_rate: "0.05",
+          p90_rate: "0.15",
+          direction_probability: "0.9",
           next_funding_at: "2026-07-19T08:00:00Z",
         },
         short_leg: {
           venue: "BYBIT",
-          predicted_rate: 0.46,
-          p10_rate: 0.34,
-          p90_rate: 0.58,
-          direction_probability: 0.88,
+          predicted_rate: "0.46",
+          p10_rate: "0.34",
+          p90_rate: "0.58",
+          direction_probability: "0.88",
           next_funding_at: "2026-07-19T08:00:00Z",
         },
         next_funding_at: "2026-07-19T08:00:00Z",
@@ -231,7 +231,7 @@ describe("opportunity scan contract", () => {
       },
     });
 
-    const result = await client.listOpportunities({ route_type: "PERP_PERP", min_net_apr: 0.1 });
+    const result = await client.listOpportunities({ route_type: "PERP_PERP", min_net_apr: "0.1" });
     assert.equal(result.opportunities[0].route_id, "PERP_PERP:BINANCE>BYBIT:BTC");
     assert.equal(authorization, "Bearer ephemeral");
     assert.match(requestedUrl, /route_type=PERP_PERP/u);
@@ -266,16 +266,16 @@ describe("opportunity scan contract", () => {
 
   it("reads the active risk limits", async () => {
     const limits = {
-      reference_equity: 1000000,
-      max_portfolio_fraction: 0.7,
-      max_opportunity_fraction: 0.1,
-      max_underlying_fraction: 0.2,
-      max_venue_fraction: 0.35,
-      max_leverage: 2,
-      min_profitability: 0.7,
-      min_net_apr: 0.15,
-      max_entry_basis_bps: 100,
-      min_depth_multiple: 5,
+      reference_equity: "1000000",
+      max_portfolio_fraction: "0.7",
+      max_opportunity_fraction: "0.1",
+      max_underlying_fraction: "0.2",
+      max_venue_fraction: "0.35",
+      max_leverage: "2",
+      min_profitability: "0.7",
+      min_net_apr: "0.15",
+      max_entry_basis_bps: "100",
+      min_depth_multiple: "5",
     };
     const client = new PerpetoClient({
       baseUrl: "https://perpeto.test",
@@ -294,48 +294,48 @@ describe("paper position contract", () => {
     route_type: "PERP_PERP",
     funding_direction: "POSITIVE",
     state: "OPEN",
-    target_notional: 100000,
-    reserved_capital: 75000,
-    residual_delta_usd: 90,
+    target_notional: "100000",
+    reserved_capital: "75000",
+    residual_delta_usd: "90",
     residual_breach_ticks: 1,
     exit_reason: null,
-    funding_captured: 0,
-    realized_pnl: 0,
+    funding_captured: "0",
+    realized_pnl: "0",
     opened_at: "2026-07-19T00:00:00Z",
     long_leg: {
       venue: "BINANCE",
       symbol: "BTCUSDT",
       is_long: true,
-      mark_price: 30000,
-      funding_rate: 0.0001,
+      mark_price: "30000",
+      funding_rate: "0.0001",
       funding_interval_hours: 8,
-      target_qty: 3.333,
-      filled_qty: 3.333,
-      avg_fill_price: 30009,
-      fees: 50,
+      target_qty: "3.333",
+      filled_qty: "3.333",
+      avg_fill_price: "30009",
+      fees: "50",
       orders: [
-        { client_order_id: "fa-0190abcd-open-long-1", side: "BUY", target_qty: 3.333, price_cap: 30009, time_in_force: "IOC" },
+        { client_order_id: "fa-0190abcd-open-long-1", side: "BUY", target_qty: "3.333", price_cap: "30009", time_in_force: "IOC" },
       ],
       fills: [
-        { client_order_id: "fa-0190abcd-open-long-1", qty: 3.333, price: 30009, fee: 50 },
+        { client_order_id: "fa-0190abcd-open-long-1", qty: "3.333", price: "30009", fee: "50" },
       ],
     },
     short_leg: {
       venue: "BYBIT",
       symbol: "BTCUSDT",
       is_long: false,
-      mark_price: 30030,
-      funding_rate: 0.003,
+      mark_price: "30030",
+      funding_rate: "0.003",
       funding_interval_hours: 8,
-      target_qty: 3.33,
-      filled_qty: 3.33,
-      avg_fill_price: 30021,
-      fees: 50,
+      target_qty: "3.33",
+      filled_qty: "3.33",
+      avg_fill_price: "30021",
+      fees: "50",
       orders: [
-        { client_order_id: "fa-0190abcd-open-short-1", side: "SELL", target_qty: 3.33, price_cap: 30021, time_in_force: "IOC" },
+        { client_order_id: "fa-0190abcd-open-short-1", side: "SELL", target_qty: "3.33", price_cap: "30021", time_in_force: "IOC" },
       ],
       fills: [
-        { client_order_id: "fa-0190abcd-open-short-1", qty: 3.33, price: 30021, fee: 50 },
+        { client_order_id: "fa-0190abcd-open-short-1", qty: "3.33", price: "30021", fee: "50" },
       ],
     },
   };
@@ -380,11 +380,11 @@ describe("paper position contract", () => {
     await client.createPosition({
       route_id: position.route_id,
       fill_scenario: {
-        long: { outcome: "UNKNOWN", reconciled_fraction: 0.5 },
+        long: { outcome: "UNKNOWN", reconciled_fraction: "0.5" },
         short: { outcome: "FULL" },
       },
     }, "recover-1");
-    assert.equal(body.fill_scenario.long.reconciled_fraction, 0.5);
+    assert.equal(body.fill_scenario.long.reconciled_fraction, "0.5");
   });
 
   it("lists and fetches positions", async () => {
@@ -415,7 +415,7 @@ describe("paper position contract", () => {
   it("closes a position via POST", async () => {
     let requestedUrl;
     let method;
-    const closed = { ...position, state: "CLOSED", exit_reason: "MANUAL", funding_captured: 250, realized_pnl: 130, closed_at: "2026-07-20T00:00:00Z" };
+    const closed = { ...position, state: "CLOSED", exit_reason: "MANUAL", funding_captured: "250", realized_pnl: "130", closed_at: "2026-07-20T00:00:00Z" };
     const client = new PerpetoClient({
       baseUrl: "https://perpeto.test",
       getAccessToken: () => "ephemeral",
@@ -428,7 +428,7 @@ describe("paper position contract", () => {
 
     const result = await client.closePosition(position.id);
     assert.equal(result.state, "CLOSED");
-    assert.equal(result.funding_captured, 250);
+    assert.equal(result.funding_captured, "250");
     assert.equal(result.exit_reason, "MANUAL");
     assert.equal(method, "POST");
     assert.match(requestedUrl, /\/api\/v1\/positions\/.*\/close$/u);

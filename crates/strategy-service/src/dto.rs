@@ -7,16 +7,7 @@ use funding_arb_domain::strategy::{
     AllocationMethod, AutoCompoundPolicy, Strategy, StrategyVersion,
 };
 use rust_decimal::Decimal;
-use rust_decimal::prelude::ToPrimitive;
 use serde::{Deserialize, Serialize};
-
-fn decimal(value: f64) -> Decimal {
-    Decimal::from_f64_retain(value).unwrap_or_default()
-}
-
-fn number(value: Decimal) -> f64 {
-    value.to_f64().unwrap_or_default()
-}
 
 /// Wire capital allocation configuration.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -24,11 +15,14 @@ pub struct AllocationDto {
     /// `FIXED`, `PERCENT_EQUITY`, or `BOUNDED_DYNAMIC`.
     pub method: String,
     /// Fixed notional or equity fraction.
-    pub value: Option<f64>,
+    #[serde(default, with = "rust_decimal::serde::str_option")]
+    pub value: Option<Decimal>,
     /// Dynamic lower bound.
-    pub minimum: Option<f64>,
+    #[serde(default, with = "rust_decimal::serde::str_option")]
+    pub minimum: Option<Decimal>,
     /// Dynamic upper bound.
-    pub maximum: Option<f64>,
+    #[serde(default, with = "rust_decimal::serde::str_option")]
+    pub maximum: Option<Decimal>,
 }
 
 /// Wire compounding policy.
@@ -37,9 +31,11 @@ pub struct AutoCompoundDto {
     /// Whether paper profits are reinvested.
     pub enabled: bool,
     /// Positive PnL fraction to reinvest.
-    pub reinvest_fraction: f64,
+    #[serde(with = "rust_decimal::serde::str")]
+    pub reinvest_fraction: Decimal,
     /// Profit threshold before reinvestment.
-    pub minimum_reinvest_amount: f64,
+    #[serde(with = "rust_decimal::serde::str")]
+    pub minimum_reinvest_amount: Decimal,
 }
 
 /// Immutable version payload.
@@ -52,20 +48,28 @@ pub struct StrategyVersionDto {
     pub route_types: Vec<String>,
     pub allowed_venues: Vec<String>,
     pub allowed_assets: Vec<String>,
-    pub min_net_apr: f64,
-    pub min_profitability: f64,
-    pub min_forecast_coverage: f64,
+    #[serde(with = "rust_decimal::serde::str")]
+    pub min_net_apr: Decimal,
+    #[serde(with = "rust_decimal::serde::str")]
+    pub min_profitability: Decimal,
+    #[serde(with = "rust_decimal::serde::str")]
+    pub min_forecast_coverage: Decimal,
     pub max_time_to_funding_minutes: u32,
-    pub max_basis_bps: f64,
+    #[serde(with = "rust_decimal::serde::str")]
+    pub max_basis_bps: Decimal,
     pub allocation: AllocationDto,
     pub max_concurrent: u32,
     pub cooldown_seconds: u64,
     pub hold_seconds: u64,
     pub auto_compound: AutoCompoundDto,
-    pub exit_net_apr: f64,
-    pub take_profit_fraction: Option<f64>,
-    pub stop_loss_fraction: Option<f64>,
-    pub max_drawdown_fraction: f64,
+    #[serde(with = "rust_decimal::serde::str")]
+    pub exit_net_apr: Decimal,
+    #[serde(default, with = "rust_decimal::serde::str_option")]
+    pub take_profit_fraction: Option<Decimal>,
+    #[serde(default, with = "rust_decimal::serde::str_option")]
+    pub stop_loss_fraction: Option<Decimal>,
+    #[serde(with = "rust_decimal::serde::str")]
+    pub max_drawdown_fraction: Decimal,
 }
 
 /// Strategy resource and create/update body.
@@ -84,11 +88,11 @@ impl StrategyDto {
     pub fn to_domain(&self) -> Option<Strategy> {
         let current = &self.current;
         let allocation = match current.allocation.method.as_str() {
-            "FIXED" => AllocationMethod::Fixed(decimal(current.allocation.value?)),
-            "PERCENT_EQUITY" => AllocationMethod::PercentEquity(decimal(current.allocation.value?)),
+            "FIXED" => AllocationMethod::Fixed(current.allocation.value?),
+            "PERCENT_EQUITY" => AllocationMethod::PercentEquity(current.allocation.value?),
             "BOUNDED_DYNAMIC" => AllocationMethod::BoundedDynamic {
-                minimum: decimal(current.allocation.minimum?),
-                maximum: decimal(current.allocation.maximum?),
+                minimum: current.allocation.minimum?,
+                maximum: current.allocation.maximum?,
             },
             _ => return None,
         };
@@ -114,24 +118,24 @@ impl StrategyDto {
                     .map(|value| Venue::from_str(value).ok())
                     .collect::<Option<Vec<_>>>()?,
                 allowed_assets: current.allowed_assets.clone(),
-                min_net_apr: decimal(current.min_net_apr),
-                min_profitability: decimal(current.min_profitability),
-                min_forecast_coverage: decimal(current.min_forecast_coverage),
+                min_net_apr: current.min_net_apr,
+                min_profitability: current.min_profitability,
+                min_forecast_coverage: current.min_forecast_coverage,
                 max_time_to_funding_minutes: current.max_time_to_funding_minutes,
-                max_basis_bps: decimal(current.max_basis_bps),
+                max_basis_bps: current.max_basis_bps,
                 allocation,
                 max_concurrent: current.max_concurrent,
                 cooldown_seconds: current.cooldown_seconds,
                 hold_seconds: current.hold_seconds,
                 auto_compound: AutoCompoundPolicy {
                     enabled: current.auto_compound.enabled,
-                    reinvest_fraction: decimal(current.auto_compound.reinvest_fraction),
-                    minimum_reinvest_amount: decimal(current.auto_compound.minimum_reinvest_amount),
+                    reinvest_fraction: current.auto_compound.reinvest_fraction,
+                    minimum_reinvest_amount: current.auto_compound.minimum_reinvest_amount,
                 },
-                exit_net_apr: decimal(current.exit_net_apr),
-                take_profit_fraction: current.take_profit_fraction.map(decimal),
-                stop_loss_fraction: current.stop_loss_fraction.map(decimal),
-                max_drawdown_fraction: decimal(current.max_drawdown_fraction),
+                exit_net_apr: current.exit_net_apr,
+                take_profit_fraction: current.take_profit_fraction,
+                stop_loss_fraction: current.stop_loss_fraction,
+                max_drawdown_fraction: current.max_drawdown_fraction,
             },
         })
     }
@@ -141,21 +145,21 @@ impl StrategyDto {
         let allocation = match strategy.current.allocation {
             AllocationMethod::Fixed(value) => AllocationDto {
                 method: "FIXED".into(),
-                value: Some(number(value)),
+                value: Some(value),
                 minimum: None,
                 maximum: None,
             },
             AllocationMethod::PercentEquity(value) => AllocationDto {
                 method: "PERCENT_EQUITY".into(),
-                value: Some(number(value)),
+                value: Some(value),
                 minimum: None,
                 maximum: None,
             },
             AllocationMethod::BoundedDynamic { minimum, maximum } => AllocationDto {
                 method: "BOUNDED_DYNAMIC".into(),
                 value: None,
-                minimum: Some(number(minimum)),
-                maximum: Some(number(maximum)),
+                minimum: Some(minimum),
+                maximum: Some(maximum),
             },
         };
         Self {
@@ -184,26 +188,24 @@ impl StrategyDto {
                     .map(|value| value.as_str().into())
                     .collect(),
                 allowed_assets: strategy.current.allowed_assets.clone(),
-                min_net_apr: number(strategy.current.min_net_apr),
-                min_profitability: number(strategy.current.min_profitability),
-                min_forecast_coverage: number(strategy.current.min_forecast_coverage),
+                min_net_apr: strategy.current.min_net_apr,
+                min_profitability: strategy.current.min_profitability,
+                min_forecast_coverage: strategy.current.min_forecast_coverage,
                 max_time_to_funding_minutes: strategy.current.max_time_to_funding_minutes,
-                max_basis_bps: number(strategy.current.max_basis_bps),
+                max_basis_bps: strategy.current.max_basis_bps,
                 allocation,
                 max_concurrent: strategy.current.max_concurrent,
                 cooldown_seconds: strategy.current.cooldown_seconds,
                 hold_seconds: strategy.current.hold_seconds,
                 auto_compound: AutoCompoundDto {
                     enabled: strategy.current.auto_compound.enabled,
-                    reinvest_fraction: number(strategy.current.auto_compound.reinvest_fraction),
-                    minimum_reinvest_amount: number(
-                        strategy.current.auto_compound.minimum_reinvest_amount,
-                    ),
+                    reinvest_fraction: strategy.current.auto_compound.reinvest_fraction,
+                    minimum_reinvest_amount: strategy.current.auto_compound.minimum_reinvest_amount,
                 },
-                exit_net_apr: number(strategy.current.exit_net_apr),
-                take_profit_fraction: strategy.current.take_profit_fraction.map(number),
-                stop_loss_fraction: strategy.current.stop_loss_fraction.map(number),
-                max_drawdown_fraction: number(strategy.current.max_drawdown_fraction),
+                exit_net_apr: strategy.current.exit_net_apr,
+                take_profit_fraction: strategy.current.take_profit_fraction,
+                stop_loss_fraction: strategy.current.stop_loss_fraction,
+                max_drawdown_fraction: strategy.current.max_drawdown_fraction,
             },
         }
     }

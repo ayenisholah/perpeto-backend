@@ -10,8 +10,8 @@ use std::str::FromStr;
 use chrono::{DateTime, Utc};
 use funding_arb_domain::market::{FundingObservation, InstrumentRef, Venue};
 use rust_decimal::Decimal;
-use rust_decimal::prelude::FromPrimitive;
 use serde::Deserialize;
+use serde_json::Number;
 
 const MARKETS_JSON: &str = include_str!("../fixtures/markets.json");
 const MARKET_PATH_JSON: &str = include_str!("../fixtures/market_path.json");
@@ -79,11 +79,11 @@ struct FixtureObservation {
     symbol: String,
     underlying: String,
     kind: String,
-    funding_rate: f64,
+    funding_rate: Number,
     interval_hours: u32,
-    mark_price: f64,
-    index_price: f64,
-    available_notional: f64,
+    mark_price: Number,
+    index_price: Number,
+    available_notional: Number,
     observed_at: String,
     next_funding_at: String,
     #[serde(default = "healthy_status")]
@@ -94,8 +94,8 @@ fn healthy_status() -> String {
     "HEALTHY".to_owned()
 }
 
-fn decimal(value: f64) -> Decimal {
-    Decimal::from_f64(value).unwrap_or_default()
+fn decimal(value: &Number) -> Result<Decimal, FixtureError> {
+    Decimal::from_str(&value.to_string()).map_err(|error| FixtureError(error.to_string()))
 }
 
 fn timestamp(value: &str) -> Result<DateTime<Utc>, FixtureError> {
@@ -128,11 +128,11 @@ fn normalize(entries: Vec<FixtureObservation>) -> Result<Vec<MarketLeg>, Fixture
                     symbol: entry.symbol,
                     underlying: entry.underlying,
                 },
-                funding_rate: decimal(entry.funding_rate),
+                funding_rate: decimal(&entry.funding_rate)?,
                 interval_hours: entry.interval_hours,
-                mark_price: decimal(entry.mark_price),
-                index_price: decimal(entry.index_price),
-                available_notional: decimal(entry.available_notional),
+                mark_price: decimal(&entry.mark_price)?,
+                index_price: decimal(&entry.index_price)?,
+                available_notional: decimal(&entry.available_notional)?,
                 observed_at: timestamp(&entry.observed_at)?,
                 next_funding_at: timestamp(&entry.next_funding_at)?,
             },

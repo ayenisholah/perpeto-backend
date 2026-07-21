@@ -1,4 +1,4 @@
-//! Wire DTOs for paper positions (numbers rendered as plain JSON floats).
+//! Wire DTOs for paper positions (decimals rendered as JSON strings).
 //!
 //! `PositionDto` is served by the API and is also the serialized payload
 //! persisted per position, so it derives `Deserialize` (mirroring the scanner's
@@ -14,16 +14,7 @@ use funding_arb_domain::position::{
     PositionLeg, PositionState,
 };
 use rust_decimal::Decimal;
-use rust_decimal::prelude::ToPrimitive;
 use serde::{Deserialize, Serialize};
-
-fn as_f64(value: Decimal) -> f64 {
-    value.to_f64().unwrap_or(0.0)
-}
-
-fn dec(value: f64) -> Decimal {
-    Decimal::from_f64_retain(value).unwrap_or_default()
-}
 
 fn parse_time(value: &str) -> DateTime<Utc> {
     DateTime::parse_from_rfc3339(value)
@@ -41,8 +32,8 @@ pub struct OpenPositionRequest {
     /// The route id from the latest scan to open.
     pub route_id: String,
     /// Optional notional (USD) to size each leg to; defaults to the reservation.
-    #[serde(default)]
-    pub notional: Option<f64>,
+    #[serde(default, with = "rust_decimal::serde::str_option")]
+    pub notional: Option<Decimal>,
     /// Optional deterministic paper-only per-leg fill scenario.
     #[serde(default)]
     pub fill_scenario: Option<PaperFillScenarioDto>,
@@ -54,11 +45,11 @@ pub struct FillOutcomeDto {
     /// `FULL`, `PARTIAL`, or `UNKNOWN`.
     pub outcome: String,
     /// Authoritative fraction for `PARTIAL`.
-    #[serde(default)]
-    pub fraction: Option<f64>,
+    #[serde(default, with = "rust_decimal::serde::str_option")]
+    pub fraction: Option<Decimal>,
     /// Authoritative queried fraction for `UNKNOWN`.
-    #[serde(default)]
-    pub reconciled_fraction: Option<f64>,
+    #[serde(default, with = "rust_decimal::serde::str_option")]
+    pub reconciled_fraction: Option<Decimal>,
 }
 
 impl FillOutcomeDto {
@@ -73,8 +64,8 @@ impl FillOutcomeDto {
     }
 }
 
-fn valid_fraction(value: Option<f64>) -> Option<Decimal> {
-    let value = value.and_then(Decimal::from_f64_retain)?;
+fn valid_fraction(value: Option<Decimal>) -> Option<Decimal> {
+    let value = value?;
     (value > Decimal::ZERO && value <= Decimal::ONE).then_some(value)
 }
 
@@ -105,9 +96,11 @@ pub struct PaperOrderDto {
     /// `BUY` or `SELL`.
     pub side: String,
     /// The base quantity requested.
-    pub target_qty: f64,
+    #[serde(with = "rust_decimal::serde::str")]
+    pub target_qty: Decimal,
     /// The price cap the IOC would not cross.
-    pub price_cap: f64,
+    #[serde(with = "rust_decimal::serde::str")]
+    pub price_cap: Decimal,
     /// Time in force (always `IOC` for the paired open).
     pub time_in_force: String,
 }
@@ -118,11 +111,14 @@ pub struct PaperFillDto {
     /// The client order id the fill belongs to.
     pub client_order_id: String,
     /// The filled base quantity.
-    pub qty: f64,
+    #[serde(with = "rust_decimal::serde::str")]
+    pub qty: Decimal,
     /// The fill price after modeled slippage.
-    pub price: f64,
+    #[serde(with = "rust_decimal::serde::str")]
+    pub price: Decimal,
     /// The taker fee paid (USD).
-    pub fee: f64,
+    #[serde(with = "rust_decimal::serde::str")]
+    pub fee: Decimal,
 }
 
 /// One leg of an opened paper position.
@@ -135,19 +131,25 @@ pub struct PositionLegDto {
     /// Whether the leg is held long.
     pub is_long: bool,
     /// The mark price the leg was sized and filled against.
-    pub mark_price: f64,
+    #[serde(with = "rust_decimal::serde::str")]
+    pub mark_price: Decimal,
     /// The normalized per-interval funding rate for the leg's instrument.
-    pub funding_rate: f64,
+    #[serde(with = "rust_decimal::serde::str")]
+    pub funding_rate: Decimal,
     /// The funding interval length, in hours.
     pub funding_interval_hours: u32,
     /// The base quantity targeted.
-    pub target_qty: f64,
+    #[serde(with = "rust_decimal::serde::str")]
+    pub target_qty: Decimal,
     /// The base quantity filled.
-    pub filled_qty: f64,
+    #[serde(with = "rust_decimal::serde::str")]
+    pub filled_qty: Decimal,
     /// The average fill price.
-    pub avg_fill_price: f64,
+    #[serde(with = "rust_decimal::serde::str")]
+    pub avg_fill_price: Decimal,
     /// Total fees on the leg (USD).
-    pub fees: f64,
+    #[serde(with = "rust_decimal::serde::str")]
+    pub fees: Decimal,
     /// The order intents recorded for the leg.
     pub orders: Vec<PaperOrderDto>,
     /// The simulated fills for the leg.
@@ -173,11 +175,14 @@ pub struct PositionDto {
     /// The current lifecycle state.
     pub state: String,
     /// The requested notional (USD) sized per leg.
-    pub target_notional: f64,
+    #[serde(with = "rust_decimal::serde::str")]
+    pub target_notional: Decimal,
     /// Capital (USD) reserved for the position.
-    pub reserved_capital: f64,
+    #[serde(with = "rust_decimal::serde::str")]
+    pub reserved_capital: Decimal,
     /// Unmatched base-asset exposure valued in USD.
-    pub residual_delta_usd: f64,
+    #[serde(with = "rust_decimal::serde::str")]
+    pub residual_delta_usd: Decimal,
     /// Consecutive supervision ticks above the residual limit.
     #[serde(default)]
     pub residual_breach_ticks: u32,
@@ -185,9 +190,11 @@ pub struct PositionDto {
     #[serde(default)]
     pub exit_reason: Option<String>,
     /// Net funding captured over the hold (USD); zero until close.
-    pub funding_captured: f64,
+    #[serde(with = "rust_decimal::serde::str")]
+    pub funding_captured: Decimal,
     /// Realized PnL at close (USD); zero until close.
-    pub realized_pnl: f64,
+    #[serde(with = "rust_decimal::serde::str")]
+    pub realized_pnl: Decimal,
     /// RFC 3339 timestamp of when the position was opened.
     pub opened_at: String,
     /// RFC 3339 timestamp of when the position was closed; absent while open.
@@ -211,8 +218,8 @@ impl PaperOrderDto {
         Self {
             client_order_id: order.client_order_id.clone(),
             side: order.side.to_owned(),
-            target_qty: as_f64(order.target_qty),
-            price_cap: as_f64(order.price_cap),
+            target_qty: order.target_qty,
+            price_cap: order.price_cap,
             time_in_force: order.time_in_force.to_owned(),
         }
     }
@@ -221,8 +228,8 @@ impl PaperOrderDto {
         PaperOrder {
             client_order_id: self.client_order_id.clone(),
             side: side_static(&self.side),
-            target_qty: dec(self.target_qty),
-            price_cap: dec(self.price_cap),
+            target_qty: self.target_qty,
+            price_cap: self.price_cap,
             // v1 only issues IOC orders.
             time_in_force: "IOC",
         }
@@ -233,18 +240,18 @@ impl PaperFillDto {
     fn from_domain(fill: &PaperFill) -> Self {
         Self {
             client_order_id: fill.client_order_id.clone(),
-            qty: as_f64(fill.qty),
-            price: as_f64(fill.price),
-            fee: as_f64(fill.fee),
+            qty: fill.qty,
+            price: fill.price,
+            fee: fill.fee,
         }
     }
 
     fn to_domain(&self) -> PaperFill {
         PaperFill {
             client_order_id: self.client_order_id.clone(),
-            qty: dec(self.qty),
-            price: dec(self.price),
-            fee: dec(self.fee),
+            qty: self.qty,
+            price: self.price,
+            fee: self.fee,
         }
     }
 }
@@ -255,13 +262,13 @@ impl PositionLegDto {
             venue: leg.venue.as_str().to_owned(),
             symbol: leg.symbol.clone(),
             is_long: leg.is_long,
-            mark_price: as_f64(leg.mark_price),
-            funding_rate: as_f64(leg.funding_rate),
+            mark_price: leg.mark_price,
+            funding_rate: leg.funding_rate,
             funding_interval_hours: leg.funding_interval_hours,
-            target_qty: as_f64(leg.target_qty),
-            filled_qty: as_f64(leg.filled_qty),
-            avg_fill_price: as_f64(leg.avg_fill_price),
-            fees: as_f64(leg.fees),
+            target_qty: leg.target_qty,
+            filled_qty: leg.filled_qty,
+            avg_fill_price: leg.avg_fill_price,
+            fees: leg.fees,
             orders: leg.orders.iter().map(PaperOrderDto::from_domain).collect(),
             fills: leg.fills.iter().map(PaperFillDto::from_domain).collect(),
         }
@@ -272,13 +279,13 @@ impl PositionLegDto {
             venue: Venue::from_str(&self.venue).unwrap_or(Venue::Binance),
             symbol: self.symbol.clone(),
             is_long: self.is_long,
-            mark_price: dec(self.mark_price),
-            funding_rate: dec(self.funding_rate),
+            mark_price: self.mark_price,
+            funding_rate: self.funding_rate,
             funding_interval_hours: self.funding_interval_hours,
-            target_qty: dec(self.target_qty),
-            filled_qty: dec(self.filled_qty),
-            avg_fill_price: dec(self.avg_fill_price),
-            fees: dec(self.fees),
+            target_qty: self.target_qty,
+            filled_qty: self.filled_qty,
+            avg_fill_price: self.avg_fill_price,
+            fees: self.fees,
             orders: self.orders.iter().map(PaperOrderDto::to_domain).collect(),
             fills: self.fills.iter().map(PaperFillDto::to_domain).collect(),
         }
@@ -297,15 +304,15 @@ impl PositionDto {
             route_type: position.route_type.as_str().to_owned(),
             funding_direction: position.funding_direction.as_str().to_owned(),
             state: position.state.as_str().to_owned(),
-            target_notional: as_f64(position.target_notional),
-            reserved_capital: as_f64(position.reserved_capital),
-            residual_delta_usd: as_f64(position.residual_delta_usd),
+            target_notional: position.target_notional,
+            reserved_capital: position.reserved_capital,
+            residual_delta_usd: position.residual_delta_usd,
             residual_breach_ticks: position.residual_breach_ticks,
             exit_reason: position
                 .exit_reason
                 .map(|reason| reason.as_str().to_owned()),
-            funding_captured: as_f64(position.funding_captured),
-            realized_pnl: as_f64(position.realized_pnl),
+            funding_captured: position.funding_captured,
+            realized_pnl: position.realized_pnl,
             opened_at: position.opened_at.to_rfc3339(),
             closed_at: position.closed_at.map(|at| at.to_rfc3339()),
             long_leg: PositionLegDto::from_domain(&position.long_leg),
@@ -314,8 +321,7 @@ impl PositionDto {
     }
 
     /// Reconstruct the domain position from its stored wire shape, so the close
-    /// path can operate on it. (Values round-trip through `f64`; lossless decimal
-    /// persistence is deferred to the ledger slice.)
+    /// path can operate on it without crossing an IEEE floating-point boundary.
     #[must_use]
     pub fn to_domain(&self) -> ArbitragePosition {
         ArbitragePosition {
@@ -329,13 +335,13 @@ impl PositionDto {
             state: PositionState::from_wire(&self.state).unwrap_or(PositionState::Open),
             long_leg: self.long_leg.to_domain(),
             short_leg: self.short_leg.to_domain(),
-            target_notional: dec(self.target_notional),
-            reserved_capital: dec(self.reserved_capital),
-            residual_delta_usd: dec(self.residual_delta_usd),
+            target_notional: self.target_notional,
+            reserved_capital: self.reserved_capital,
+            residual_delta_usd: self.residual_delta_usd,
             residual_breach_ticks: self.residual_breach_ticks,
             exit_reason: self.exit_reason.as_deref().and_then(ExitReason::from_wire),
-            funding_captured: dec(self.funding_captured),
-            realized_pnl: dec(self.realized_pnl),
+            funding_captured: self.funding_captured,
+            realized_pnl: self.realized_pnl,
             opened_at: parse_time(&self.opened_at),
             closed_at: self.closed_at.as_deref().map(parse_time),
             idempotency_key: String::new(),
@@ -356,14 +362,14 @@ mod tests {
             "route_type":"PERP_PERP",
             "funding_direction":"POSITIVE",
             "state":"OPEN",
-            "target_notional":100000.0,
-            "reserved_capital":50000.0,
-            "residual_delta_usd":10.0,
-            "funding_captured":0.0,
-            "realized_pnl":0.0,
+            "target_notional":"100000.0",
+            "reserved_capital":"50000.0",
+            "residual_delta_usd":"10.0",
+            "funding_captured":"0.0",
+            "realized_pnl":"0.0",
             "opened_at":"2026-07-19T00:00:00Z",
-            "long_leg":{"venue":"BINANCE","symbol":"BTCUSDT-PERP","is_long":true,"mark_price":30030.0,"funding_rate":0.0001,"funding_interval_hours":8,"target_qty":3.0,"filled_qty":3.0,"avg_fill_price":30039.0,"fees":45.0,"orders":[],"fills":[]},
-            "short_leg":{"venue":"BYBIT","symbol":"BTCUSDT-PERP","is_long":false,"mark_price":30045.0,"funding_rate":0.0009,"funding_interval_hours":8,"target_qty":3.0,"filled_qty":3.0,"avg_fill_price":30036.0,"fees":45.0,"orders":[],"fills":[]}
+            "long_leg":{"venue":"BINANCE","symbol":"BTCUSDT-PERP","is_long":true,"mark_price":"30030.0","funding_rate":"0.0001","funding_interval_hours":8,"target_qty":"3.0","filled_qty":"3.0","avg_fill_price":"30039.0","fees":"45.0","orders":[],"fills":[]},
+            "short_leg":{"venue":"BYBIT","symbol":"BTCUSDT-PERP","is_long":false,"mark_price":"30045.0","funding_rate":"0.0009","funding_interval_hours":8,"target_qty":"3.0","filled_qty":"3.0","avg_fill_price":"30036.0","fees":"45.0","orders":[],"fills":[]}
         }"#;
         let dto: PositionDto = serde_json::from_str(payload).expect("legacy payload");
         assert_eq!(dto.residual_breach_ticks, 0);

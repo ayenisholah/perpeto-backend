@@ -419,15 +419,15 @@ paths:
         - in: query
           name: min_net_apr
           required: false
-          schema: { type: number }
+          schema: { $ref: "#/components/schemas/DecimalString" }
         - in: query
           name: min_probability
           required: false
-          schema: { type: number, minimum: 0, maximum: 1 }
+          schema: { $ref: "#/components/schemas/DecimalString" }
         - in: query
           name: max_basis_bps
           required: false
-          schema: { type: number }
+          schema: { $ref: "#/components/schemas/DecimalString" }
         - in: query
           name: max_time_to_funding_secs
           required: false
@@ -1129,16 +1129,20 @@ components:
     FundingDirection:
       type: string
       enum: [POSITIVE, NEGATIVE]
+    DecimalString:
+      type: string
+      pattern: '^-?(0|[1-9][0-9]*)(\.[0-9]+)?$'
+      description: Canonical base-10 decimal; never converted through IEEE-754.
     OpportunityLeg:
       type: object
       additionalProperties: false
       required: [venue, predicted_rate, p10_rate, p90_rate, direction_probability, next_funding_at]
       properties:
         venue: { $ref: "#/components/schemas/Venue" }
-        predicted_rate: { type: number }
-        p10_rate: { type: number }
-        p90_rate: { type: number }
-        direction_probability: { type: number, minimum: 0, maximum: 1 }
+        predicted_rate: { $ref: "#/components/schemas/DecimalString" }
+        p10_rate: { $ref: "#/components/schemas/DecimalString" }
+        p90_rate: { $ref: "#/components/schemas/DecimalString" }
+        direction_probability: { $ref: "#/components/schemas/DecimalString" }
         next_funding_at: { type: string, format: date-time }
     RiskLimits:
       type: object
@@ -1158,19 +1162,19 @@ components:
         - max_daily_loss_fraction
         - max_drawdown_fraction
       properties:
-        reference_equity: { type: number }
-        max_portfolio_fraction: { type: number }
-        max_opportunity_fraction: { type: number }
-        max_underlying_fraction: { type: number }
-        max_venue_fraction: { type: number }
-        max_leverage: { type: number }
-        min_profitability: { type: number }
-        min_net_apr: { type: number }
-        max_entry_basis_bps: { type: number }
-        min_depth_multiple: { type: number }
-        max_unmatched_usd: { type: number }
-        max_daily_loss_fraction: { type: number, minimum: 0, maximum: 1 }
-        max_drawdown_fraction: { type: number, minimum: 0, maximum: 1 }
+        reference_equity: { $ref: "#/components/schemas/DecimalString" }
+        max_portfolio_fraction: { $ref: "#/components/schemas/DecimalString" }
+        max_opportunity_fraction: { $ref: "#/components/schemas/DecimalString" }
+        max_underlying_fraction: { $ref: "#/components/schemas/DecimalString" }
+        max_venue_fraction: { $ref: "#/components/schemas/DecimalString" }
+        max_leverage: { $ref: "#/components/schemas/DecimalString" }
+        min_profitability: { $ref: "#/components/schemas/DecimalString" }
+        min_net_apr: { $ref: "#/components/schemas/DecimalString" }
+        max_entry_basis_bps: { $ref: "#/components/schemas/DecimalString" }
+        min_depth_multiple: { $ref: "#/components/schemas/DecimalString" }
+        max_unmatched_usd: { $ref: "#/components/schemas/DecimalString" }
+        max_daily_loss_fraction: { $ref: "#/components/schemas/DecimalString" }
+        max_drawdown_fraction: { $ref: "#/components/schemas/DecimalString" }
     Opportunity:
       type: object
       additionalProperties: false
@@ -1208,22 +1212,22 @@ components:
         funding_direction: { $ref: "#/components/schemas/FundingDirection" }
         long_venue: { $ref: "#/components/schemas/Venue" }
         short_venue: { $ref: "#/components/schemas/Venue" }
-        gross_funding_apr: { type: number }
-        entry_cost: { type: number }
-        exit_cost: { type: number }
-        carry_cost: { type: number }
-        risk_buffer: { type: number }
-        break_even_funding: { type: number }
-        net_apr: { type: number }
-        expected_net_pnl: { type: number }
-        profitability_probability: { type: number, minimum: 0, maximum: 1 }
-        entry_basis_bps: { type: number }
-        leverage: { type: number }
-        required_capital: { type: number }
-        available_capacity: { type: number }
-        reserved_notional: { type: number }
-        reserved_capital: { type: number }
-        capital_fraction: { type: number }
+        gross_funding_apr: { $ref: "#/components/schemas/DecimalString" }
+        entry_cost: { $ref: "#/components/schemas/DecimalString" }
+        exit_cost: { $ref: "#/components/schemas/DecimalString" }
+        carry_cost: { $ref: "#/components/schemas/DecimalString" }
+        risk_buffer: { $ref: "#/components/schemas/DecimalString" }
+        break_even_funding: { $ref: "#/components/schemas/DecimalString" }
+        net_apr: { $ref: "#/components/schemas/DecimalString" }
+        expected_net_pnl: { $ref: "#/components/schemas/DecimalString" }
+        profitability_probability: { $ref: "#/components/schemas/DecimalString" }
+        entry_basis_bps: { $ref: "#/components/schemas/DecimalString" }
+        leverage: { $ref: "#/components/schemas/DecimalString" }
+        required_capital: { $ref: "#/components/schemas/DecimalString" }
+        available_capacity: { $ref: "#/components/schemas/DecimalString" }
+        reserved_notional: { $ref: "#/components/schemas/DecimalString" }
+        reserved_capital: { $ref: "#/components/schemas/DecimalString" }
+        capital_fraction: { $ref: "#/components/schemas/DecimalString" }
         within_limits: { type: boolean }
         long_leg: { $ref: "#/components/schemas/OpportunityLeg" }
         short_leg: { $ref: "#/components/schemas/OpportunityLeg" }
@@ -1252,8 +1256,8 @@ components:
       required: [outcome]
       properties:
         outcome: { type: string, enum: [FULL, PARTIAL, UNKNOWN] }
-        fraction: { type: number, exclusiveMinimum: 0, maximum: 1 }
-        reconciled_fraction: { type: number, exclusiveMinimum: 0, maximum: 1 }
+        fraction: { $ref: "#/components/schemas/DecimalString" }
+        reconciled_fraction: { $ref: "#/components/schemas/DecimalString" }
     PaperFillScenario:
       type: object
       additionalProperties: false
@@ -1268,7 +1272,7 @@ components:
       properties:
         route_id: { type: string }
         notional:
-          type: number
+          $ref: "#/components/schemas/DecimalString"
           description: Notional (USD) to size each leg to; defaults to the reservation.
         fill_scenario:
           $ref: "#/components/schemas/PaperFillScenario"
@@ -1323,8 +1327,8 @@ components:
       properties:
         client_order_id: { type: string }
         side: { type: string, enum: [BUY, SELL] }
-        target_qty: { type: number }
-        price_cap: { type: number }
+        target_qty: { $ref: "#/components/schemas/DecimalString" }
+        price_cap: { $ref: "#/components/schemas/DecimalString" }
         time_in_force: { type: string }
     PaperFill:
       type: object
@@ -1332,9 +1336,9 @@ components:
       required: [client_order_id, qty, price, fee]
       properties:
         client_order_id: { type: string }
-        qty: { type: number }
-        price: { type: number }
-        fee: { type: number }
+        qty: { $ref: "#/components/schemas/DecimalString" }
+        price: { $ref: "#/components/schemas/DecimalString" }
+        fee: { $ref: "#/components/schemas/DecimalString" }
     PositionLeg:
       type: object
       additionalProperties: false
@@ -1355,13 +1359,13 @@ components:
         venue: { $ref: "#/components/schemas/Venue" }
         symbol: { type: string }
         is_long: { type: boolean }
-        mark_price: { type: number }
-        funding_rate: { type: number }
+        mark_price: { $ref: "#/components/schemas/DecimalString" }
+        funding_rate: { $ref: "#/components/schemas/DecimalString" }
         funding_interval_hours: { type: integer, minimum: 1 }
-        target_qty: { type: number }
-        filled_qty: { type: number }
-        avg_fill_price: { type: number }
-        fees: { type: number }
+        target_qty: { $ref: "#/components/schemas/DecimalString" }
+        filled_qty: { $ref: "#/components/schemas/DecimalString" }
+        avg_fill_price: { $ref: "#/components/schemas/DecimalString" }
+        fees: { $ref: "#/components/schemas/DecimalString" }
         orders:
           type: array
           items: { $ref: "#/components/schemas/PaperOrder" }
@@ -1373,25 +1377,25 @@ components:
       required: [key, deployed_capital, fraction]
       properties:
         key: { type: string }
-        deployed_capital: { type: number }
-        fraction: { type: number }
+        deployed_capital: { $ref: "#/components/schemas/DecimalString" }
+        fraction: { $ref: "#/components/schemas/DecimalString" }
     PnlBreakdown:
       type: object
       required: [realized_funding, realized_trading, unrealized_leg, fees, net, return_on_deployed_capital]
       properties:
-        realized_funding: { type: number }
-        realized_trading: { type: number }
-        unrealized_leg: { type: number }
-        fees: { type: number }
-        net: { type: number }
-        return_on_deployed_capital: { type: number }
+        realized_funding: { $ref: "#/components/schemas/DecimalString" }
+        realized_trading: { $ref: "#/components/schemas/DecimalString" }
+        unrealized_leg: { $ref: "#/components/schemas/DecimalString" }
+        fees: { $ref: "#/components/schemas/DecimalString" }
+        net: { $ref: "#/components/schemas/DecimalString" }
+        return_on_deployed_capital: { $ref: "#/components/schemas/DecimalString" }
     Portfolio:
       type: object
       required: [equity, deployable_equity, deployed_capital, by_venue, by_underlying, pnl, as_of]
       properties:
-        equity: { type: number }
-        deployable_equity: { type: number }
-        deployed_capital: { type: number }
+        equity: { $ref: "#/components/schemas/DecimalString" }
+        deployable_equity: { $ref: "#/components/schemas/DecimalString" }
+        deployed_capital: { $ref: "#/components/schemas/DecimalString" }
         by_venue: { type: array, items: { $ref: "#/components/schemas/PortfolioAllocation" } }
         by_underlying: { type: array, items: { $ref: "#/components/schemas/PortfolioAllocation" } }
         pnl: { $ref: "#/components/schemas/PnlBreakdown" }
@@ -1437,17 +1441,17 @@ components:
       required: [method]
       properties:
         method: { type: string, enum: [FIXED, PERCENT_EQUITY, BOUNDED_DYNAMIC] }
-        value: { type: number }
-        minimum: { type: number }
-        maximum: { type: number }
+        value: { $ref: "#/components/schemas/DecimalString" }
+        minimum: { $ref: "#/components/schemas/DecimalString" }
+        maximum: { $ref: "#/components/schemas/DecimalString" }
     AutoCompoundPolicy:
       type: object
       additionalProperties: false
       required: [enabled, reinvest_fraction, minimum_reinvest_amount]
       properties:
         enabled: { type: boolean }
-        reinvest_fraction: { type: number, minimum: 0, maximum: 1 }
-        minimum_reinvest_amount: { type: number, minimum: 0 }
+        reinvest_fraction: { $ref: "#/components/schemas/DecimalString" }
+        minimum_reinvest_amount: { $ref: "#/components/schemas/DecimalString" }
     StrategyVersion:
       type: object
       additionalProperties: false
@@ -1460,20 +1464,20 @@ components:
         route_types: { type: array, items: { $ref: "#/components/schemas/RouteType" } }
         allowed_venues: { type: array, items: { $ref: "#/components/schemas/Venue" } }
         allowed_assets: { type: array, items: { type: string } }
-        min_net_apr: { type: number }
-        min_profitability: { type: number, minimum: 0, maximum: 1 }
-        min_forecast_coverage: { type: number, minimum: 0, maximum: 1 }
+        min_net_apr: { $ref: "#/components/schemas/DecimalString" }
+        min_profitability: { $ref: "#/components/schemas/DecimalString" }
+        min_forecast_coverage: { $ref: "#/components/schemas/DecimalString" }
         max_time_to_funding_minutes: { type: integer, minimum: 0 }
-        max_basis_bps: { type: number, minimum: 0 }
+        max_basis_bps: { $ref: "#/components/schemas/DecimalString" }
         allocation: { $ref: "#/components/schemas/StrategyAllocation" }
         max_concurrent: { type: integer, minimum: 1 }
         cooldown_seconds: { type: integer, minimum: 0 }
         hold_seconds: { type: integer, minimum: 0 }
         auto_compound: { $ref: "#/components/schemas/AutoCompoundPolicy" }
-        exit_net_apr: { type: number }
-        take_profit_fraction: { type: number }
-        stop_loss_fraction: { type: number }
-        max_drawdown_fraction: { type: number, minimum: 0, maximum: 1 }
+        exit_net_apr: { $ref: "#/components/schemas/DecimalString" }
+        take_profit_fraction: { $ref: "#/components/schemas/DecimalString" }
+        stop_loss_fraction: { $ref: "#/components/schemas/DecimalString" }
+        max_drawdown_fraction: { $ref: "#/components/schemas/DecimalString" }
     Strategy:
       type: object
       additionalProperties: false
@@ -1512,16 +1516,16 @@ components:
         route_type: { $ref: "#/components/schemas/RouteType" }
         funding_direction: { $ref: "#/components/schemas/FundingDirection" }
         state: { $ref: "#/components/schemas/PositionState" }
-        target_notional: { type: number }
-        reserved_capital: { type: number }
-        residual_delta_usd: { type: number }
+        target_notional: { $ref: "#/components/schemas/DecimalString" }
+        reserved_capital: { $ref: "#/components/schemas/DecimalString" }
+        residual_delta_usd: { $ref: "#/components/schemas/DecimalString" }
         residual_breach_ticks: { type: integer, minimum: 0 }
         exit_reason:
           anyOf:
             - { $ref: "#/components/schemas/ExitReason" }
             - { type: "null" }
-        funding_captured: { type: number }
-        realized_pnl: { type: number }
+        funding_captured: { $ref: "#/components/schemas/DecimalString" }
+        realized_pnl: { $ref: "#/components/schemas/DecimalString" }
         opened_at: { type: string, format: date-time }
         closed_at: { type: string, format: date-time }
         long_leg: { $ref: "#/components/schemas/PositionLeg" }

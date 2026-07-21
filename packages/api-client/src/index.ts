@@ -230,6 +230,8 @@ export interface MfaEnrollment {
 }
 
 export type Venue = "BINANCE" | "BYBIT" | "OKX" | "DYDX" | "HYPERLIQUID";
+/** Canonical base-10 decimal serialized without an IEEE-754 conversion. */
+export type DecimalString = string;
 export type RouteType = "SPOT_PERP" | "PERP_PERP";
 export type FundingDirection = "POSITIVE" | "NEGATIVE";
 export type OpportunitySort =
@@ -242,10 +244,10 @@ export type OpportunitySort =
 
 export interface OpportunityLeg {
   readonly venue: Venue;
-  readonly predicted_rate: number;
-  readonly p10_rate: number;
-  readonly p90_rate: number;
-  readonly direction_probability: number;
+  readonly predicted_rate: DecimalString;
+  readonly p10_rate: DecimalString;
+  readonly p90_rate: DecimalString;
+  readonly direction_probability: DecimalString;
   readonly next_funding_at: string;
 }
 
@@ -256,22 +258,22 @@ export interface Opportunity {
   readonly funding_direction: FundingDirection;
   readonly long_venue: Venue;
   readonly short_venue: Venue;
-  readonly gross_funding_apr: number;
-  readonly entry_cost: number;
-  readonly exit_cost: number;
-  readonly carry_cost: number;
-  readonly risk_buffer: number;
-  readonly break_even_funding: number;
-  readonly net_apr: number;
-  readonly expected_net_pnl: number;
-  readonly profitability_probability: number;
-  readonly entry_basis_bps: number;
-  readonly leverage: number;
-  readonly required_capital: number;
-  readonly available_capacity: number;
-  readonly reserved_notional: number;
-  readonly reserved_capital: number;
-  readonly capital_fraction: number;
+  readonly gross_funding_apr: DecimalString;
+  readonly entry_cost: DecimalString;
+  readonly exit_cost: DecimalString;
+  readonly carry_cost: DecimalString;
+  readonly risk_buffer: DecimalString;
+  readonly break_even_funding: DecimalString;
+  readonly net_apr: DecimalString;
+  readonly expected_net_pnl: DecimalString;
+  readonly profitability_probability: DecimalString;
+  readonly entry_basis_bps: DecimalString;
+  readonly leverage: DecimalString;
+  readonly required_capital: DecimalString;
+  readonly available_capacity: DecimalString;
+  readonly reserved_notional: DecimalString;
+  readonly reserved_capital: DecimalString;
+  readonly capital_fraction: DecimalString;
   readonly within_limits: boolean;
   readonly long_leg: OpportunityLeg;
   readonly short_leg: OpportunityLeg;
@@ -285,19 +287,19 @@ export interface OpportunityScan {
 }
 
 export interface RiskLimits {
-  readonly reference_equity: number;
-  readonly max_portfolio_fraction: number;
-  readonly max_opportunity_fraction: number;
-  readonly max_underlying_fraction: number;
-  readonly max_venue_fraction: number;
-  readonly max_leverage: number;
-  readonly min_profitability: number;
-  readonly min_net_apr: number;
-  readonly max_entry_basis_bps: number;
-  readonly min_depth_multiple: number;
-  readonly max_unmatched_usd: number;
-  readonly max_daily_loss_fraction: number;
-  readonly max_drawdown_fraction: number;
+  readonly reference_equity: DecimalString;
+  readonly max_portfolio_fraction: DecimalString;
+  readonly max_opportunity_fraction: DecimalString;
+  readonly max_underlying_fraction: DecimalString;
+  readonly max_venue_fraction: DecimalString;
+  readonly max_leverage: DecimalString;
+  readonly min_profitability: DecimalString;
+  readonly min_net_apr: DecimalString;
+  readonly max_entry_basis_bps: DecimalString;
+  readonly min_depth_multiple: DecimalString;
+  readonly max_unmatched_usd: DecimalString;
+  readonly max_daily_loss_fraction: DecimalString;
+  readonly max_drawdown_fraction: DecimalString;
 }
 
 export type PositionState =
@@ -321,8 +323,8 @@ export type ExitReason =
 
 export type FillOutcome =
   | { readonly outcome: "FULL" }
-  | { readonly outcome: "PARTIAL"; readonly fraction: number }
-  | { readonly outcome: "UNKNOWN"; readonly reconciled_fraction: number };
+  | { readonly outcome: "PARTIAL"; readonly fraction: DecimalString }
+  | { readonly outcome: "UNKNOWN"; readonly reconciled_fraction: DecimalString };
 
 export interface PaperFillScenario {
   readonly long: FillOutcome;
@@ -332,29 +334,29 @@ export interface PaperFillScenario {
 export interface PaperOrder {
   readonly client_order_id: string;
   readonly side: "BUY" | "SELL";
-  readonly target_qty: number;
-  readonly price_cap: number;
+  readonly target_qty: DecimalString;
+  readonly price_cap: DecimalString;
   readonly time_in_force: string;
 }
 
 export interface PaperFill {
   readonly client_order_id: string;
-  readonly qty: number;
-  readonly price: number;
-  readonly fee: number;
+  readonly qty: DecimalString;
+  readonly price: DecimalString;
+  readonly fee: DecimalString;
 }
 
 export interface PositionLeg {
   readonly venue: Venue;
   readonly symbol: string;
   readonly is_long: boolean;
-  readonly mark_price: number;
-  readonly funding_rate: number;
+  readonly mark_price: DecimalString;
+  readonly funding_rate: DecimalString;
   readonly funding_interval_hours: number;
-  readonly target_qty: number;
-  readonly filled_qty: number;
-  readonly avg_fill_price: number;
-  readonly fees: number;
+  readonly target_qty: DecimalString;
+  readonly filled_qty: DecimalString;
+  readonly avg_fill_price: DecimalString;
+  readonly fees: DecimalString;
   readonly orders: readonly PaperOrder[];
   readonly fills: readonly PaperFill[];
 }
@@ -367,13 +369,13 @@ export interface Position {
   readonly route_type: RouteType;
   readonly funding_direction: FundingDirection;
   readonly state: PositionState;
-  readonly target_notional: number;
-  readonly reserved_capital: number;
-  readonly residual_delta_usd: number;
+  readonly target_notional: DecimalString;
+  readonly reserved_capital: DecimalString;
+  readonly residual_delta_usd: DecimalString;
   readonly residual_breach_ticks: number;
   readonly exit_reason: ExitReason | null;
-  readonly funding_captured: number;
-  readonly realized_pnl: number;
+  readonly funding_captured: DecimalString;
+  readonly realized_pnl: DecimalString;
   readonly opened_at: string;
   readonly closed_at?: string;
   readonly long_leg: PositionLeg;
@@ -386,7 +388,7 @@ export interface PositionList {
 
 export interface OpenPositionRequest {
   readonly route_id: string;
-  readonly notional?: number;
+  readonly notional?: DecimalString;
   readonly fill_scenario?: PaperFillScenario;
 }
 
@@ -413,9 +415,9 @@ export interface Controls {
 
 export interface StrategyAllocation {
   readonly method: "FIXED" | "PERCENT_EQUITY" | "BOUNDED_DYNAMIC";
-  readonly value?: number;
-  readonly minimum?: number;
-  readonly maximum?: number;
+  readonly value?: DecimalString;
+  readonly minimum?: DecimalString;
+  readonly maximum?: DecimalString;
 }
 
 export interface StrategyVersion {
@@ -426,26 +428,26 @@ export interface StrategyVersion {
   readonly route_types: readonly RouteType[];
   readonly allowed_venues: readonly Venue[];
   readonly allowed_assets: readonly string[];
-  readonly min_net_apr: number;
-  readonly min_profitability: number;
-  readonly min_forecast_coverage: number;
+  readonly min_net_apr: DecimalString;
+  readonly min_profitability: DecimalString;
+  readonly min_forecast_coverage: DecimalString;
   readonly max_time_to_funding_minutes: number;
-  readonly max_basis_bps: number;
+  readonly max_basis_bps: DecimalString;
   readonly allocation: StrategyAllocation;
   readonly max_concurrent: number;
   readonly cooldown_seconds: number;
   readonly hold_seconds: number;
-  readonly auto_compound: { readonly enabled: boolean; readonly reinvest_fraction: number; readonly minimum_reinvest_amount: number };
-  readonly exit_net_apr: number;
-  readonly take_profit_fraction?: number;
-  readonly stop_loss_fraction?: number;
-  readonly max_drawdown_fraction: number;
+  readonly auto_compound: { readonly enabled: boolean; readonly reinvest_fraction: DecimalString; readonly minimum_reinvest_amount: DecimalString };
+  readonly exit_net_apr: DecimalString;
+  readonly take_profit_fraction?: DecimalString;
+  readonly stop_loss_fraction?: DecimalString;
+  readonly max_drawdown_fraction: DecimalString;
 }
 
 export interface Strategy { readonly id: string; readonly name: string; readonly enabled: boolean; readonly current: StrategyVersion }
 
-export interface PortfolioAllocation { readonly key: string; readonly deployed_capital: number; readonly fraction: number }
-export interface Portfolio { readonly equity: number; readonly deployable_equity: number; readonly deployed_capital: number; readonly by_venue: readonly PortfolioAllocation[]; readonly by_underlying: readonly PortfolioAllocation[]; readonly pnl: { readonly realized_funding: number; readonly realized_trading: number; readonly unrealized_leg: number; readonly fees: number; readonly net: number; readonly return_on_deployed_capital: number }; readonly as_of: string }
+export interface PortfolioAllocation { readonly key: string; readonly deployed_capital: DecimalString; readonly fraction: DecimalString }
+export interface Portfolio { readonly equity: DecimalString; readonly deployable_equity: DecimalString; readonly deployed_capital: DecimalString; readonly by_venue: readonly PortfolioAllocation[]; readonly by_underlying: readonly PortfolioAllocation[]; readonly pnl: { readonly realized_funding: DecimalString; readonly realized_trading: DecimalString; readonly unrealized_leg: DecimalString; readonly fees: DecimalString; readonly net: DecimalString; readonly return_on_deployed_capital: DecimalString }; readonly as_of: string }
 export interface VenueHealth { readonly venue: Venue; readonly status: "HEALTHY" | "DEGRADED"; readonly connected: boolean; readonly market_data_age_seconds: number; readonly clock_drift_ms: number }
 export interface ServiceHeartbeat { readonly service: string; readonly status: string; readonly observed_at: string }
 export interface SystemHealth { readonly venues: readonly VenueHealth[]; readonly services: readonly ServiceHeartbeat[]; readonly as_of: string }
@@ -456,9 +458,9 @@ export interface OpportunityFilter {
   readonly venue?: Venue;
   readonly underlying?: string;
   readonly funding_direction?: FundingDirection;
-  readonly min_net_apr?: number;
-  readonly min_probability?: number;
-  readonly max_basis_bps?: number;
+  readonly min_net_apr?: DecimalString;
+  readonly min_probability?: DecimalString;
+  readonly max_basis_bps?: DecimalString;
   readonly max_time_to_funding_secs?: number;
   readonly sort?: OpportunitySort;
 }
@@ -512,7 +514,7 @@ export function isOpportunity(value: unknown): value is Opportunity {
   if (typeof value !== "object" || value === null) return false;
   const opportunity = value as Record<string, unknown>;
   return typeof opportunity.route_id === "string" &&
-    typeof opportunity.net_apr === "number" &&
+    typeof opportunity.net_apr === "string" &&
     typeof opportunity.long_leg === "object" && opportunity.long_leg !== null;
 }
 

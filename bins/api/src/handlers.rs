@@ -26,7 +26,6 @@ use funding_arb_strategy_service::StrategyDto;
 use funding_arb_venue_service::{CertificationState, ConnectionTestDto, VenueSummaryDto};
 use funding_arb_venue_service::{ConfiguredConnector, SubmissionState};
 use rust_decimal::Decimal;
-use rust_decimal::prelude::FromPrimitive;
 use serde::Deserialize;
 use uuid::Uuid;
 
@@ -231,11 +230,11 @@ pub struct OpportunityQuery {
     /// `POSITIVE` or `NEGATIVE` funding capture (case-insensitive).
     pub funding_direction: Option<String>,
     /// Minimum net APR (fraction, e.g. `0.15`).
-    pub min_net_apr: Option<f64>,
+    pub min_net_apr: Option<Decimal>,
     /// Minimum profitability probability, `[0, 1]`.
-    pub min_probability: Option<f64>,
+    pub min_probability: Option<Decimal>,
     /// Maximum entry basis magnitude, in basis points.
-    pub max_basis_bps: Option<f64>,
+    pub max_basis_bps: Option<Decimal>,
     /// Maximum seconds until the next funding settlement.
     pub max_time_to_funding_secs: Option<i64>,
     /// Sort: `default`, `net_apr`, `next_funding`, `probability`, `capacity`, `expected_pnl`.
@@ -312,22 +311,20 @@ pub async fn list_opportunities(
     }
 
     match filter.sort.as_deref() {
-        Some("net_apr") => scan
-            .opportunities
-            .sort_by(|a, b| b.net_apr.total_cmp(&a.net_apr)),
+        Some("net_apr") => scan.opportunities.sort_by(|a, b| b.net_apr.cmp(&a.net_apr)),
         Some("next_funding") => scan
             .opportunities
             .sort_by(|a, b| a.next_funding_at.cmp(&b.next_funding_at)),
         Some("probability") => scan.opportunities.sort_by(|a, b| {
             b.profitability_probability
-                .total_cmp(&a.profitability_probability)
+                .cmp(&a.profitability_probability)
         }),
         Some("capacity") => scan
             .opportunities
-            .sort_by(|a, b| b.available_capacity.total_cmp(&a.available_capacity)),
+            .sort_by(|a, b| b.available_capacity.cmp(&a.available_capacity)),
         Some("expected_pnl") => scan
             .opportunities
-            .sort_by(|a, b| b.expected_net_pnl.total_cmp(&a.expected_net_pnl)),
+            .sort_by(|a, b| b.expected_net_pnl.cmp(&a.expected_net_pnl)),
         _ => {} // default: persisted rank order
     }
 
@@ -406,7 +403,7 @@ pub async fn create_position(
     }
 
     let key = supplied_key.unwrap_or_else(|| Uuid::new_v4().to_string());
-    let notional = request.notional.and_then(Decimal::from_f64);
+    let notional = request.notional;
     let scenario = match request.fill_scenario.as_ref() {
         Some(value) => match value.to_domain() {
             Some(value) => value,

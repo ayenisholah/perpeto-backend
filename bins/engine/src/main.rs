@@ -394,7 +394,7 @@ async fn auto_enter(
     let allocated: Decimal = stored
         .iter()
         .filter(|position| position.state != "CLOSED")
-        .map(|position| Decimal::from_f64_retain(position.reserved_capital).unwrap_or_default())
+        .map(|position| position.reserved_capital)
         .sum();
     let free_equity =
         (execution.scanner.risk_limits.reference_equity - allocated).max(Decimal::ZERO);

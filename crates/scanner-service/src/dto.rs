@@ -1,4 +1,4 @@
-//! Wire DTOs for the opportunity scan (numbers rendered as plain JSON floats).
+//! Wire DTOs for the opportunity scan (decimals rendered as JSON strings).
 //!
 //! `OpportunityDto` is used for both the list and the detail view, and is also
 //! the serialized payload persisted per opportunity, so it derives `Deserialize`.
@@ -6,12 +6,7 @@
 use funding_arb_domain::opportunity::Opportunity;
 use funding_arb_domain::risk::{RiskAssessment, RiskLimits};
 use rust_decimal::Decimal;
-use rust_decimal::prelude::ToPrimitive;
 use serde::{Deserialize, Serialize};
-
-fn as_f64(value: Decimal) -> f64 {
-    value.to_f64().unwrap_or(0.0)
-}
 
 /// A ranked scan with provenance, as served by the API.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -30,13 +25,17 @@ pub struct LegDto {
     /// The leg's venue.
     pub venue: String,
     /// Annualized predicted settlement rate.
-    pub predicted_rate: f64,
+    #[serde(with = "rust_decimal::serde::str")]
+    pub predicted_rate: Decimal,
     /// Lower (p10) annualized-rate bound.
-    pub p10_rate: f64,
+    #[serde(with = "rust_decimal::serde::str")]
+    pub p10_rate: Decimal,
     /// Upper (p90) annualized-rate bound.
-    pub p90_rate: f64,
+    #[serde(with = "rust_decimal::serde::str")]
+    pub p90_rate: Decimal,
     /// Probability the rate keeps its sign.
-    pub direction_probability: f64,
+    #[serde(with = "rust_decimal::serde::str")]
+    pub direction_probability: Decimal,
     /// RFC 3339 timestamp of the leg's next funding settlement.
     pub next_funding_at: String,
 }
@@ -57,37 +56,53 @@ pub struct OpportunityDto {
     /// The venue held short.
     pub short_venue: String,
     /// Gross funding APR before costs.
-    pub gross_funding_apr: f64,
+    #[serde(with = "rust_decimal::serde::str")]
+    pub gross_funding_apr: Decimal,
     /// Annualized entry cost.
-    pub entry_cost: f64,
+    #[serde(with = "rust_decimal::serde::str")]
+    pub entry_cost: Decimal,
     /// Annualized exit cost.
-    pub exit_cost: f64,
+    #[serde(with = "rust_decimal::serde::str")]
+    pub exit_cost: Decimal,
     /// Annualized carry cost.
-    pub carry_cost: f64,
+    #[serde(with = "rust_decimal::serde::str")]
+    pub carry_cost: Decimal,
     /// Risk buffer deducted from APR.
-    pub risk_buffer: f64,
+    #[serde(with = "rust_decimal::serde::str")]
+    pub risk_buffer: Decimal,
     /// Gross funding APR required to break even.
-    pub break_even_funding: f64,
+    #[serde(with = "rust_decimal::serde::str")]
+    pub break_even_funding: Decimal,
     /// Net APR after costs.
-    pub net_apr: f64,
+    #[serde(with = "rust_decimal::serde::str")]
+    pub net_apr: Decimal,
     /// Expected net PnL (USD) over the holding period.
-    pub expected_net_pnl: f64,
+    #[serde(with = "rust_decimal::serde::str")]
+    pub expected_net_pnl: Decimal,
     /// Probability net PnL is positive, in `[0, 1]`.
-    pub profitability_probability: f64,
+    #[serde(with = "rust_decimal::serde::str")]
+    pub profitability_probability: Decimal,
     /// Entry basis between legs, in basis points.
-    pub entry_basis_bps: f64,
+    #[serde(with = "rust_decimal::serde::str")]
+    pub entry_basis_bps: Decimal,
     /// Assumed leverage on each perpetual leg.
-    pub leverage: f64,
+    #[serde(with = "rust_decimal::serde::str")]
+    pub leverage: Decimal,
     /// Capital (USD) tied up at full capacity.
-    pub required_capital: f64,
+    #[serde(with = "rust_decimal::serde::str")]
+    pub required_capital: Decimal,
     /// Depth-limited executable capacity (USD).
-    pub available_capacity: f64,
+    #[serde(with = "rust_decimal::serde::str")]
+    pub available_capacity: Decimal,
     /// Notional (USD) reserved under the per-opportunity cap.
-    pub reserved_notional: f64,
+    #[serde(with = "rust_decimal::serde::str")]
+    pub reserved_notional: Decimal,
     /// Capital (USD) reserved.
-    pub reserved_capital: f64,
+    #[serde(with = "rust_decimal::serde::str")]
+    pub reserved_capital: Decimal,
     /// Reserved capital as a fraction of reference equity.
-    pub capital_fraction: f64,
+    #[serde(with = "rust_decimal::serde::str")]
+    pub capital_fraction: Decimal,
     /// Whether the opportunity clears every hard risk gate.
     pub within_limits: bool,
     /// The long leg's forecast summary.
@@ -102,10 +117,10 @@ impl LegDto {
     fn from_domain(leg: &funding_arb_domain::opportunity::RouteLeg) -> Self {
         Self {
             venue: leg.forecast.venue.as_str().to_owned(),
-            predicted_rate: as_f64(leg.forecast.predicted_settlement_rate),
-            p10_rate: as_f64(leg.forecast.p10_rate),
-            p90_rate: as_f64(leg.forecast.p90_rate),
-            direction_probability: as_f64(leg.forecast.direction_probability),
+            predicted_rate: leg.forecast.predicted_settlement_rate,
+            p10_rate: leg.forecast.p10_rate,
+            p90_rate: leg.forecast.p90_rate,
+            direction_probability: leg.forecast.direction_probability,
             next_funding_at: leg.forecast.next_funding_at.to_rfc3339(),
         }
     }
@@ -122,22 +137,22 @@ impl OpportunityDto {
             funding_direction: opportunity.funding_direction.as_str().to_owned(),
             long_venue: opportunity.long_leg.forecast.venue.as_str().to_owned(),
             short_venue: opportunity.short_leg.forecast.venue.as_str().to_owned(),
-            gross_funding_apr: as_f64(opportunity.gross_funding_apr),
-            entry_cost: as_f64(opportunity.entry_cost),
-            exit_cost: as_f64(opportunity.exit_cost),
-            carry_cost: as_f64(opportunity.carry_cost),
-            risk_buffer: as_f64(opportunity.risk_buffer),
-            break_even_funding: as_f64(opportunity.break_even_funding),
-            net_apr: as_f64(opportunity.net_apr),
-            expected_net_pnl: as_f64(opportunity.expected_net_pnl),
-            profitability_probability: as_f64(opportunity.profitability_probability),
-            entry_basis_bps: as_f64(opportunity.entry_basis_bps),
-            leverage: as_f64(opportunity.leverage),
-            required_capital: as_f64(opportunity.required_capital),
-            available_capacity: as_f64(opportunity.available_capacity),
-            reserved_notional: as_f64(assessment.reserved_notional),
-            reserved_capital: as_f64(assessment.reserved_capital),
-            capital_fraction: as_f64(assessment.capital_fraction),
+            gross_funding_apr: opportunity.gross_funding_apr,
+            entry_cost: opportunity.entry_cost,
+            exit_cost: opportunity.exit_cost,
+            carry_cost: opportunity.carry_cost,
+            risk_buffer: opportunity.risk_buffer,
+            break_even_funding: opportunity.break_even_funding,
+            net_apr: opportunity.net_apr,
+            expected_net_pnl: opportunity.expected_net_pnl,
+            profitability_probability: opportunity.profitability_probability,
+            entry_basis_bps: opportunity.entry_basis_bps,
+            leverage: opportunity.leverage,
+            required_capital: opportunity.required_capital,
+            available_capacity: opportunity.available_capacity,
+            reserved_notional: assessment.reserved_notional,
+            reserved_capital: assessment.reserved_capital,
+            capital_fraction: assessment.capital_fraction,
             within_limits: assessment.within_limits,
             long_leg: LegDto::from_domain(&opportunity.long_leg),
             short_leg: LegDto::from_domain(&opportunity.short_leg),
@@ -150,31 +165,44 @@ impl OpportunityDto {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct RiskLimitsDto {
     /// Reference net equity used to size reservations.
-    pub reference_equity: f64,
+    #[serde(with = "rust_decimal::serde::str")]
+    pub reference_equity: Decimal,
     /// Maximum deployed portfolio capital, as a fraction of equity.
-    pub max_portfolio_fraction: f64,
+    #[serde(with = "rust_decimal::serde::str")]
+    pub max_portfolio_fraction: Decimal,
     /// Maximum capital in one opportunity, as a fraction of equity.
-    pub max_opportunity_fraction: f64,
+    #[serde(with = "rust_decimal::serde::str")]
+    pub max_opportunity_fraction: Decimal,
     /// Maximum capital in one underlying, as a fraction of equity.
-    pub max_underlying_fraction: f64,
+    #[serde(with = "rust_decimal::serde::str")]
+    pub max_underlying_fraction: Decimal,
     /// Maximum capital in one venue, as a fraction of equity.
-    pub max_venue_fraction: f64,
+    #[serde(with = "rust_decimal::serde::str")]
+    pub max_venue_fraction: Decimal,
     /// Maximum leverage on any perpetual leg.
-    pub max_leverage: f64,
+    #[serde(with = "rust_decimal::serde::str")]
+    pub max_leverage: Decimal,
     /// Minimum route profitability probability.
-    pub min_profitability: f64,
+    #[serde(with = "rust_decimal::serde::str")]
+    pub min_profitability: Decimal,
     /// Minimum expected net APR.
-    pub min_net_apr: f64,
+    #[serde(with = "rust_decimal::serde::str")]
+    pub min_net_apr: Decimal,
     /// Maximum entry basis magnitude, in basis points.
-    pub max_entry_basis_bps: f64,
+    #[serde(with = "rust_decimal::serde::str")]
+    pub max_entry_basis_bps: Decimal,
     /// Minimum depth inside the slippage cap, as a multiple of leg notional.
-    pub min_depth_multiple: f64,
+    #[serde(with = "rust_decimal::serde::str")]
+    pub min_depth_multiple: Decimal,
     /// Effective cap on unmatched (residual) two-leg exposure, in USD.
-    pub max_unmatched_usd: f64,
+    #[serde(with = "rust_decimal::serde::str")]
+    pub max_unmatched_usd: Decimal,
     /// Maximum realized daily loss as a fraction of reference equity.
-    pub max_daily_loss_fraction: f64,
+    #[serde(with = "rust_decimal::serde::str")]
+    pub max_daily_loss_fraction: Decimal,
     /// Maximum peak-to-current equity drawdown fraction.
-    pub max_drawdown_fraction: f64,
+    #[serde(with = "rust_decimal::serde::str")]
+    pub max_drawdown_fraction: Decimal,
 }
 
 impl RiskLimitsDto {
@@ -182,19 +210,44 @@ impl RiskLimitsDto {
     #[must_use]
     pub fn from_domain(limits: &RiskLimits) -> Self {
         Self {
-            reference_equity: as_f64(limits.reference_equity),
-            max_portfolio_fraction: as_f64(limits.max_portfolio_fraction),
-            max_opportunity_fraction: as_f64(limits.max_opportunity_fraction),
-            max_underlying_fraction: as_f64(limits.max_underlying_fraction),
-            max_venue_fraction: as_f64(limits.max_venue_fraction),
-            max_leverage: as_f64(limits.max_leverage),
-            min_profitability: as_f64(limits.min_profitability),
-            min_net_apr: as_f64(limits.min_net_apr),
-            max_entry_basis_bps: as_f64(limits.max_entry_basis_bps),
-            min_depth_multiple: as_f64(limits.min_depth_multiple),
-            max_unmatched_usd: as_f64(limits.max_unmatched()),
-            max_daily_loss_fraction: as_f64(limits.max_daily_loss_fraction),
-            max_drawdown_fraction: as_f64(limits.max_drawdown_fraction),
+            reference_equity: limits.reference_equity,
+            max_portfolio_fraction: limits.max_portfolio_fraction,
+            max_opportunity_fraction: limits.max_opportunity_fraction,
+            max_underlying_fraction: limits.max_underlying_fraction,
+            max_venue_fraction: limits.max_venue_fraction,
+            max_leverage: limits.max_leverage,
+            min_profitability: limits.min_profitability,
+            min_net_apr: limits.min_net_apr,
+            max_entry_basis_bps: limits.max_entry_basis_bps,
+            min_depth_multiple: limits.min_depth_multiple,
+            max_unmatched_usd: limits.max_unmatched(),
+            max_daily_loss_fraction: limits.max_daily_loss_fraction,
+            max_drawdown_fraction: limits.max_drawdown_fraction,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::LegDto;
+    use rust_decimal::Decimal;
+    use std::str::FromStr;
+
+    #[test]
+    fn decimal_wire_values_round_trip_without_precision_loss() {
+        let exact = Decimal::from_str("0.123456789012345678").expect("exact decimal");
+        let leg = LegDto {
+            venue: "BYBIT".to_owned(),
+            predicted_rate: exact,
+            p10_rate: exact,
+            p90_rate: exact,
+            direction_probability: exact,
+            next_funding_at: "2026-07-19T08:00:00Z".to_owned(),
+        };
+
+        let encoded = serde_json::to_string(&leg).expect("serialize leg");
+        assert!(encoded.contains("\"predicted_rate\":\"0.123456789012345678\""));
+        let decoded: LegDto = serde_json::from_str(&encoded).expect("deserialize leg");
+        assert_eq!(decoded.predicted_rate, exact);
     }
 }

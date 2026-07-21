@@ -3,39 +3,42 @@
 use crate::{BreakersRepo, PositionDto, PositionsRepo};
 use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
-use rust_decimal::prelude::ToPrimitive;
 use serde::{Deserialize, Serialize};
 use sqlx::{PgPool, Row};
 use std::collections::BTreeMap;
 use uuid::Uuid;
 
-fn number(value: Decimal) -> f64 {
-    value.to_f64().unwrap_or_default()
-}
-fn decimal(value: f64) -> Decimal {
-    Decimal::from_f64_retain(value).unwrap_or_default()
-}
-
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct AllocationDto {
     pub key: String,
-    pub deployed_capital: f64,
-    pub fraction: f64,
+    #[serde(with = "rust_decimal::serde::str")]
+    pub deployed_capital: Decimal,
+    #[serde(with = "rust_decimal::serde::str")]
+    pub fraction: Decimal,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct PnlDto {
-    pub realized_funding: f64,
-    pub realized_trading: f64,
-    pub unrealized_leg: f64,
-    pub fees: f64,
-    pub net: f64,
-    pub return_on_deployed_capital: f64,
+    #[serde(with = "rust_decimal::serde::str")]
+    pub realized_funding: Decimal,
+    #[serde(with = "rust_decimal::serde::str")]
+    pub realized_trading: Decimal,
+    #[serde(with = "rust_decimal::serde::str")]
+    pub unrealized_leg: Decimal,
+    #[serde(with = "rust_decimal::serde::str")]
+    pub fees: Decimal,
+    #[serde(with = "rust_decimal::serde::str")]
+    pub net: Decimal,
+    #[serde(with = "rust_decimal::serde::str")]
+    pub return_on_deployed_capital: Decimal,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct PortfolioDto {
-    pub equity: f64,
-    pub deployable_equity: f64,
-    pub deployed_capital: f64,
+    #[serde(with = "rust_decimal::serde::str")]
+    pub equity: Decimal,
+    #[serde(with = "rust_decimal::serde::str")]
+    pub deployable_equity: Decimal,
+    #[serde(with = "rust_decimal::serde::str")]
+    pub deployed_capital: Decimal,
     pub by_venue: Vec<AllocationDto>,
     pub by_underlying: Vec<AllocationDto>,
     pub pnl: PnlDto,
@@ -179,26 +182,23 @@ fn aggregate(positions: &[PositionDto], now: DateTime<Utc>) -> PortfolioDto {
     let mut unrealized = Decimal::ZERO;
     let mut fees = Decimal::ZERO;
     for position in positions {
-        let capital = decimal(position.reserved_capital);
+        let capital = position.reserved_capital;
         if position.state != "CLOSED" {
             deployed += capital;
         }
         *assets.entry(position.underlying.clone()).or_default() += capital;
         *venues.entry(position.long_leg.venue.clone()).or_default() += capital / Decimal::from(2);
         *venues.entry(position.short_leg.venue.clone()).or_default() += capital / Decimal::from(2);
-        funding += decimal(position.funding_captured);
-        let position_fees = decimal(position.long_leg.fees + position.short_leg.fees);
+        funding += position.funding_captured;
+        let position_fees = position.long_leg.fees + position.short_leg.fees;
         fees += position_fees;
         if position.state == "CLOSED" {
-            trading +=
-                decimal(position.realized_pnl) - decimal(position.funding_captured) + position_fees;
+            trading += position.realized_pnl - position.funding_captured + position_fees;
         } else {
-            unrealized += decimal(position.long_leg.filled_qty)
-                * (decimal(position.long_leg.mark_price)
-                    - decimal(position.long_leg.avg_fill_price))
-                + decimal(position.short_leg.filled_qty)
-                    * (decimal(position.short_leg.avg_fill_price)
-                        - decimal(position.short_leg.mark_price));
+            unrealized += position.long_leg.filled_qty
+                * (position.long_leg.mark_price - position.long_leg.avg_fill_price)
+                + position.short_leg.filled_qty
+                    * (position.short_leg.avg_fill_price - position.short_leg.mark_price);
         }
     }
     let net = funding + trading + unrealized - fees;
@@ -207,32 +207,32 @@ fn aggregate(positions: &[PositionDto], now: DateTime<Utc>) -> PortfolioDto {
             .into_iter()
             .map(|(key, value)| AllocationDto {
                 key,
-                deployed_capital: number(value),
-                fraction: number(if deployed.is_zero() {
+                deployed_capital: value,
+                fraction: if deployed.is_zero() {
                     Decimal::ZERO
                 } else {
                     value / deployed
-                }),
+                },
             })
             .collect()
     };
     PortfolioDto {
-        equity: number(reference + net),
-        deployable_equity: number((reference - deployed).max(Decimal::ZERO)),
-        deployed_capital: number(deployed),
+        equity: reference + net,
+        deployable_equity: (reference - deployed).max(Decimal::ZERO),
+        deployed_capital: deployed,
         by_venue: allocation(venues),
         by_underlying: allocation(assets),
         pnl: PnlDto {
-            realized_funding: number(funding),
-            realized_trading: number(trading),
-            unrealized_leg: number(unrealized),
-            fees: number(fees),
-            net: number(net),
-            return_on_deployed_capital: number(if deployed.is_zero() {
+            realized_funding: funding,
+            realized_trading: trading,
+            unrealized_leg: unrealized,
+            fees,
+            net,
+            return_on_deployed_capital: if deployed.is_zero() {
                 Decimal::ZERO
             } else {
                 net / deployed
-            }),
+            },
         },
         as_of: now.to_rfc3339(),
     }
