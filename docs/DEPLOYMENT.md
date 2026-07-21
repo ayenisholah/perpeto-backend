@@ -26,7 +26,7 @@ The M1 authentication runtime additionally requires the following in `runtime.en
 - `PERPETO_MFA_KEY` — base64 of a 32-byte AES-256-GCM key that encrypts stored TOTP secrets.
 - `PERPETO_OPEN_REGISTRATION` — optional (default `false`). Set `true` only on the legacy shared v1 dev/TestFlight backend so each new social sign-in is admitted immediately to full access without pending approval or MFA (DEC-0009). Leave unset/`false` for production and all M4 environments.
 
-`PERPETO_OPEN_REGISTRATION` and its universal privilege waiver are transitional only. DEC-0012 forbids that authorization model for M4 live use.
+`PERPETO_OPEN_REGISTRATION` and its universal privilege waiver are transitional only. DEC-0012 forbids that authorization model for the M4 pilot.
 
 ## M4 shared-VPS target
 
@@ -36,7 +36,7 @@ Vault bootstrap is an operator procedure: initialize once with a 2-of-3 Shamir q
 
 API receives encrypt-only Transit policy. Engine and reconciler receive purpose-limited decrypt policies and short renewable leases. Exchange credentials are enrolled by traders through the passkey-authorized API; they are not environment variables or routine CLI input after M4.
 
-Initial M4 production accepts one VPS and therefore one host compromise/availability domain. A restart leaves Vault sealed and new live risk blocked until two custodians unseal it. M6 owns Vault HA or managed auto-unseal, stronger workload isolation, tested DR and static exchange egress where IP allowlisting is supported.
+The initial M4 pilot accepts one VPS and therefore one host compromise/availability domain. A restart leaves Vault sealed and new live risk blocked until two custodians unseal it. M6 owns Vault HA or managed auto-unseal, stronger workload isolation, tested DR and static exchange egress where IP allowlisting is supported; M7 owns `CERTIFIED_LIVE` rollout.
 
 Production readiness must prove: tenant RLS is forced; missing tenant context fails closed; backups contain ciphertext but no shares; Vault policy tests pass; live mode cannot arm without account preflight and passkey proof; and the sealed-state alert/runbook works.
 

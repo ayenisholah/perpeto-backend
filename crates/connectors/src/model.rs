@@ -128,7 +128,7 @@ pub struct MarketSubscription {
     pub depth: u32,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PriceLevel {
     pub price: Decimal,
     pub quantity: Decimal,

@@ -6,9 +6,13 @@ All notable repository changes are recorded here using Keep a Changelog categori
 
 ### Added
 
+- Accepted DEC-0013 to make the rollout boundary unambiguous: M3 remains non-writing, M4 may grant only a controlled `PILOT`, M6 supplies hardening evidence, and `CERTIFIED_LIVE` begins with the broader M7 rollout.
+
+- Reconciled milestone, progress and traceability records with the current repository and GitHub evidence. M2 feature implementation remains present but its exit gates are reopened for exact-decimal wire/persistence and verification; M3 connector code remains uncertified.
+
 - Accepted and documented the M4 shared-VPS multi-user live architecture: one personal tenant per trader, authenticated tenant context with forced PostgreSQL RLS, passkey-authorized sensitive actions, per-tenant HashiCorp Vault Transit credentials with 2-of-3 manual unseal, per-account preflight/live arming, and tenant/global risk isolation. Added canonical `ARCHITECTURE.md` and `KEY_MANAGEMENT.md`; this is target design, not an implemented live capability.
 
-- Re-sequenced the roadmap so M3 certifies CEX connector code without production writes, M4 delivers limited multi-user CEX live, DEX moves to M5, hardening to M6, and broader rollout to M7. Documented that DEC-0012 supersedes DEC-0009's universal privilege and DEC-0011's CLI-only credential path for the M4 target.
+- Re-sequenced the roadmap so M3 certifies CEX connector code without production writes, M4 delivers a limited multi-user CEX `PILOT`, DEX moves to M5, hardening to M6, and `CERTIFIED_LIVE` rollout to M7. DEC-0013 explicitly supersedes DEC-0011's older M6-only pilot timing.
 
 - M3 Slice 20 — added migration `0014_connector_certification_evidence.sql`, a credential-safe `funding-arb-connector-evidence` CLI for hashed fixtures, public no-key probes, and sanitized credentialed read/reconciliation probes, plus the M3 certification runbook. The probe performs no exchange writes; timed sandbox/shadow certification remains an explicit operational gate.
 
@@ -66,6 +70,10 @@ All notable repository changes are recorded here using Keep a Changelog categori
 - Provider identity is keyed by immutable subject rather than email; access is pending by default, refresh credentials are device-bound/rotating, and retained deletion evidence uses an audit pseudonym.
 
 ### Fixed
+
+- Repaired the known connector build errors by retaining borrowed Bybit/OKX JSON values and giving exact-decimal `PriceLevel` values equality semantics required by `BookView`.
+
+- Expanded shared-document drift coverage to the new architecture/key-management sources and made documentation validation ignore nested dependency/cache directories.
 
 - Applied canonical Rust formatting and completed the M0 OpenAPI metadata, response, and explicit public-health security declarations required by contract linting.
 

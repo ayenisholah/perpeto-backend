@@ -6,7 +6,8 @@ until its credentialed sandbox and production-shadow evidence meets Product Spec
 section 17.6 and is accepted as platform connector evidence. `LIVE` remains
 unavailable. M3 certification does not make any trader account live-eligible;
 M4 separately requires tenant isolation, Vault enrollment, account preflight and
-passkey-authorized arming.
+passkey-authorized arming before a controlled `PILOT`; broader `CERTIFIED_LIVE`
+rollout remains M7 work after M6 hardening.
 
 ## Credential requirements
 
@@ -103,5 +104,5 @@ those exact bounds. Each trader account must still pass least-privilege permissi
 inspection, account/margin-mode validation, private-stream health, balance/order/
 position reconciliation and read-only shadow checks. M4 records that account
 preflight separately and requires a fresh passkey assertion plus typed confirmation
-before live arming. A platform connector regression, venue API change or global
+before M4 pilot arming. A platform connector regression, venue API change or global
 breaker may invalidate every dependent account's eligibility.

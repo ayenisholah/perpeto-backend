@@ -456,7 +456,6 @@ impl VenueConnector for BybitConnector {
             .await?;
         let item = array(&response["result"], "list")?
             .first()
-            .copied()
             .ok_or_else(|| invalid("FUNDING_EMPTY"))?;
         let interval = self
             .instruments

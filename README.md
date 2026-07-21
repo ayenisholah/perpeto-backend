@@ -6,7 +6,7 @@ The backend is the only component allowed to evaluate opportunities, hold venue 
 
 ## Current status
 
-M2 paper trading is complete and M3 CEX integration is in progress. The backend includes deterministic paper automation plus Binance, Bybit, and OKX exact-decimal connectors, encrypted server-side credentials, sandbox-only submit-once coordination, read-only shadow scanning, reconciliation, accounting monitoring, and certification evidence tooling. `LIVE` remains fail-closed; primary WebSocket streams and credentialed timed venue certification are still required. See [PROGRESS.md](docs/PROGRESS.md) and [the M3 certification runbook](docs/M3_CONNECTOR_CERTIFICATION.md).
+M2 paper features are implemented but their exit gates are open because wire/persistence DTOs still use `f64` and current backend CI is not verified. M3 CEX integration code includes Binance, Bybit and OKX REST adapters, encrypted transitional credentials, sandbox-only submit-once coordination, read-only shadow scanning, reconciliation, accounting monitoring and certification evidence tooling. The latest remote backend CI is red; the known connector ownership/equality errors are patched only on local `main`. `LIVE` remains fail-closed, and primary WebSocket streams plus credentialed timed certification are still required. See [PROGRESS.md](docs/PROGRESS.md) and [the M3 certification runbook](docs/M3_CONNECTOR_CERTIFICATION.md).
 
 ## Authoritative documents
 

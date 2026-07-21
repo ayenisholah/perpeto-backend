@@ -246,7 +246,6 @@ impl OkxConnector {
             .await?;
         let item = data(&response)?
             .first()
-            .copied()
             .ok_or_else(|| invalid("BOOK_EMPTY"))?;
         let received_at = Utc::now();
         let venue_time = millis(i64_text(item, "ts")?)?;
@@ -340,7 +339,6 @@ impl VenueConnector for OkxConnector {
         let response = self.public_get("/api/v5/public/time", &[]).await?;
         let item = data(&response)?
             .first()
-            .copied()
             .ok_or_else(|| invalid("SERVER_TIME_EMPTY"))?;
         Ok(VenueTimestamp {
             venue_time: millis(i64_text(item, "ts")?)?,
@@ -414,7 +412,6 @@ impl VenueConnector for OkxConnector {
                 .await?;
             let item = data(&response)?
                 .first()
-                .copied()
                 .ok_or_else(|| invalid("FEE_EMPTY"))?;
             fees.push(FeeSchedule {
                 product,
@@ -444,11 +441,9 @@ impl VenueConnector for OkxConnector {
             .await?;
         let funding = data(&funding)?
             .first()
-            .copied()
             .ok_or_else(|| invalid("FUNDING_EMPTY"))?;
         let ticker = data(&ticker)?
             .first()
-            .copied()
             .ok_or_else(|| invalid("TICKER_EMPTY"))?;
         let price = decimal(ticker, "last")?;
         Ok(FundingQuote {
@@ -694,7 +689,6 @@ impl VenueConnector for OkxConnector {
             .await?;
         let item = data(&response)?
             .first()
-            .copied()
             .ok_or_else(|| invalid("ORDER_ACK_EMPTY"))?;
         let code = item.get("sCode").and_then(Value::as_str).unwrap_or("-1");
         if code != "0" {
