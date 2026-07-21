@@ -5,6 +5,7 @@ use funding_arb_connectors::{
     OrderStatus, PreparedOrder, VenueConnector, VenueEnvironment, VenueOrder,
 };
 use funding_arb_domain::TradingMode;
+use funding_arb_tenant_context::{TenantContext, TenantTransaction};
 use sqlx::PgPool;
 use std::{error::Error, fmt};
 use uuid::Uuid;
@@ -87,6 +88,7 @@ impl ConnectorExecutionCoordinator {
     /// Persist before submit and never submit a duplicate client order id.
     pub async fn submit_sandbox(
         &self,
+        context: TenantContext,
         mode: TradingMode,
         environment: VenueEnvironment,
         connector: &dyn VenueConnector,
@@ -99,9 +101,11 @@ impl ConnectorExecutionCoordinator {
             return Err(CoordinatorError::ProductionWriteForbidden);
         }
         let prepared = self.preview(connector, order).await?;
-        let inserted = self.insert_prepared(environment, &prepared).await?;
+        let inserted = self
+            .insert_prepared(context, environment, &prepared)
+            .await?;
         let Some(intent_id) = inserted else {
-            let intent_id = self.existing_id(&prepared).await?;
+            let intent_id = self.existing_id(context, &prepared).await?;
             return Ok(SubmissionResult {
                 intent_id,
                 state: SubmissionState::Duplicate,
@@ -110,7 +114,8 @@ impl ConnectorExecutionCoordinator {
         };
         match connector.submit_order(&prepared).await {
             Ok(acknowledgement) => {
-                self.record_ack(intent_id, &acknowledgement).await?;
+                self.record_ack(context, intent_id, &acknowledgement)
+                    .await?;
                 Ok(SubmissionResult {
                     intent_id,
                     state: SubmissionState::Acknowledged,
@@ -118,7 +123,7 @@ impl ConnectorExecutionCoordinator {
                 })
             }
             Err(error) if error.kind == ConnectorErrorKind::UnknownOutcome => {
-                self.mark_error(intent_id, "UNKNOWN_OUTCOME", &error.code)
+                self.mark_error(context, intent_id, "UNKNOWN_OUTCOME", &error.code)
                     .await?;
                 Ok(SubmissionResult {
                     intent_id,
@@ -127,7 +132,8 @@ impl ConnectorExecutionCoordinator {
                 })
             }
             Err(error) => {
-                self.mark_error(intent_id, "FAILED", &error.code).await?;
+                self.mark_error(context, intent_id, "FAILED", &error.code)
+                    .await?;
                 Err(CoordinatorError::Connector(error))
             }
         }
@@ -136,6 +142,7 @@ impl ConnectorExecutionCoordinator {
     /// Query-before-retry recovery for an ambiguous submission.
     pub async fn reconcile_unknown(
         &self,
+        context: TenantContext,
         connector: &dyn VenueConnector,
         account: &AccountId,
         client_order_id: &str,
@@ -148,7 +155,7 @@ impl ConnectorExecutionCoordinator {
             .await
             .map_err(CoordinatorError::Connector)?;
         if let Some(venue_order) = &order {
-            self.record_reconciled(account, client_order_id, venue_order)
+            self.record_reconciled(context, account, client_order_id, venue_order)
                 .await?;
         }
         Ok(order)
@@ -156,22 +163,27 @@ impl ConnectorExecutionCoordinator {
 
     async fn insert_prepared(
         &self,
+        context: TenantContext,
         environment: VenueEnvironment,
         prepared: &PreparedOrder,
     ) -> Result<Option<Uuid>, CoordinatorError> {
         let id = Uuid::new_v4();
-        sqlx::query_scalar::<_, Uuid>(
+        let mut transaction = TenantTransaction::begin(&self.pool, context)
+            .await
+            .map_err(|_| CoordinatorError::Persistence)?;
+        let result = sqlx::query_scalar::<_, Uuid>(
             "INSERT INTO connector_order_intents
-             (id, venue, venue_account_id, client_order_id, symbol, product, side,
+             (tenant_id, id, venue, venue_account_id, client_order_id, symbol, product, side,
               base_quantity, limit_price, native_quantity, native_price,
               equivalent_base_quantity, projected_delta_usd, reduce_only, environment,
               state, prepared_payload, payload_hash)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8::numeric, $9::numeric,
-                     $10::numeric, $11::numeric, $12::numeric, $13::numeric, $14, $15,
-                     'SUBMITTING', $16, $17)
-             ON CONFLICT (venue, venue_account_id, client_order_id) DO NOTHING
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::numeric, $10::numeric,
+                     $11::numeric, $12::numeric, $13::numeric, $14::numeric, $15, $16,
+                     'SUBMITTING', $17, $18)
+             ON CONFLICT (tenant_id, venue, venue_account_id, client_order_id) DO NOTHING
              RETURNING id",
         )
+        .bind(context.tenant_id().as_uuid())
         .bind(id)
         .bind(prepared.intent.instrument.venue.as_str())
         .bind(&prepared.intent.account_id.0)
@@ -189,50 +201,69 @@ impl ConnectorExecutionCoordinator {
         .bind(environment.as_str())
         .bind(prepared.payload.to_string())
         .bind(&prepared.payload_hash)
-        .fetch_optional(&self.pool)
+        .fetch_optional(transaction.connection())
         .await
-        .map_err(|_| CoordinatorError::Persistence)
+        .map_err(|_| CoordinatorError::Persistence)?;
+        transaction
+            .commit()
+            .await
+            .map_err(|_| CoordinatorError::Persistence)?;
+        Ok(result)
     }
 
-    async fn existing_id(&self, prepared: &PreparedOrder) -> Result<Uuid, CoordinatorError> {
-        sqlx::query_scalar(
+    async fn existing_id(
+        &self,
+        context: TenantContext,
+        prepared: &PreparedOrder,
+    ) -> Result<Uuid, CoordinatorError> {
+        let mut transaction = TenantTransaction::begin(&self.pool, context)
+            .await
+            .map_err(|_| CoordinatorError::Persistence)?;
+        let result = sqlx::query_scalar(
             "SELECT id FROM connector_order_intents
-             WHERE venue = $1 AND venue_account_id = $2 AND client_order_id = $3",
+             WHERE tenant_id = $1 AND venue = $2 AND venue_account_id = $3 AND client_order_id = $4",
         )
+        .bind(context.tenant_id().as_uuid())
         .bind(prepared.intent.instrument.venue.as_str())
         .bind(&prepared.intent.account_id.0)
         .bind(&prepared.intent.client_order_id)
-        .fetch_one(&self.pool)
+        .fetch_one(transaction.connection())
         .await
-        .map_err(|_| CoordinatorError::Persistence)
+        .map_err(|_| CoordinatorError::Persistence)?;
+        transaction
+            .commit()
+            .await
+            .map_err(|_| CoordinatorError::Persistence)?;
+        Ok(result)
     }
 
     async fn record_ack(
         &self,
+        context: TenantContext,
         intent_id: Uuid,
         acknowledgement: &OrderAck,
     ) -> Result<(), CoordinatorError> {
-        let mut transaction = self
-            .pool
-            .begin()
+        let mut transaction = TenantTransaction::begin(&self.pool, context)
             .await
             .map_err(|_| CoordinatorError::Persistence)?;
         sqlx::query(
             "UPDATE connector_order_intents
              SET venue_order_id = $2, state = $3, updated_at = now(), error_code = NULL
-             WHERE id = $1",
+             WHERE tenant_id = $4 AND id = $1",
         )
         .bind(intent_id)
         .bind(&acknowledgement.venue_order_id)
         .bind(status_wire(acknowledgement.status))
-        .execute(&mut *transaction)
+        .bind(context.tenant_id().as_uuid())
+        .execute(transaction.connection())
         .await
         .map_err(|_| CoordinatorError::Persistence)?;
         sqlx::query(
             "INSERT INTO connector_order_events
-             (id, intent_id, status, venue_order_id, received_at, payload)
-             VALUES ($1, $2, $3, $4, $5, $6)",
+             (tenant_id, id, intent_id, status, venue_order_id, received_at, payload)
+             VALUES ($1, $2, $3, $4, $5, $6, $7)",
         )
+        .bind(context.tenant_id().as_uuid())
         .bind(Uuid::new_v4())
         .bind(intent_id)
         .bind(status_wire(acknowledgement.status))
@@ -243,7 +274,7 @@ impl ConnectorExecutionCoordinator {
             serde_json::to_string(&acknowledgement.client_order_id)
                 .map_err(|_| CoordinatorError::Persistence)?
         ))
-        .execute(&mut *transaction)
+        .execute(transaction.connection())
         .await
         .map_err(|_| CoordinatorError::Persistence)?;
         transaction
@@ -254,53 +285,68 @@ impl ConnectorExecutionCoordinator {
 
     async fn mark_error(
         &self,
+        context: TenantContext,
         intent_id: Uuid,
         state: &str,
         error_code: &str,
     ) -> Result<(), CoordinatorError> {
+        let mut transaction = TenantTransaction::begin(&self.pool, context)
+            .await
+            .map_err(|_| CoordinatorError::Persistence)?;
         sqlx::query(
             "UPDATE connector_order_intents
-             SET state = $2, error_code = $3, updated_at = now() WHERE id = $1",
+             SET state = $2, error_code = $3, updated_at = now()
+             WHERE tenant_id = $4 AND id = $1",
         )
         .bind(intent_id)
         .bind(state)
         .bind(error_code)
-        .execute(&self.pool)
+        .bind(context.tenant_id().as_uuid())
+        .execute(transaction.connection())
         .await
-        .map(|_| ())
-        .map_err(|_| CoordinatorError::Persistence)
+        .map_err(|_| CoordinatorError::Persistence)?;
+        transaction
+            .commit()
+            .await
+            .map_err(|_| CoordinatorError::Persistence)
     }
 
     async fn record_reconciled(
         &self,
+        context: TenantContext,
         account: &AccountId,
         client_order_id: &str,
         order: &VenueOrder,
     ) -> Result<(), CoordinatorError> {
         let status = status_wire(order.status);
+        let mut transaction = TenantTransaction::begin(&self.pool, context)
+            .await
+            .map_err(|_| CoordinatorError::Persistence)?;
         let row = sqlx::query_scalar::<_, Uuid>(
             "UPDATE connector_order_intents
-             SET venue_order_id = $4, state = $5, error_code = NULL, updated_at = now()
-             WHERE venue = $1 AND venue_account_id = $2 AND client_order_id = $3
+             SET venue_order_id = $5, state = $6, error_code = NULL, updated_at = now()
+             WHERE tenant_id = $1 AND venue = $2 AND venue_account_id = $3 AND client_order_id = $4
                AND state = 'UNKNOWN_OUTCOME'
              RETURNING id",
         )
+        .bind(context.tenant_id().as_uuid())
         .bind(order.instrument.venue.as_str())
         .bind(&account.0)
         .bind(client_order_id)
         .bind(&order.venue_order_id)
         .bind(status)
-        .fetch_optional(&self.pool)
+        .fetch_optional(transaction.connection())
         .await
         .map_err(|_| CoordinatorError::Persistence)?;
         if let Some(intent_id) = row {
             sqlx::query(
                 "INSERT INTO connector_order_events
-                 (id, intent_id, status, venue_order_id, venue_sequence, venue_updated_at,
+                 (tenant_id, id, intent_id, status, venue_order_id, venue_sequence, venue_updated_at,
                   received_at, payload)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, '{}')
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, '{}')
                  ON CONFLICT DO NOTHING",
             )
+            .bind(context.tenant_id().as_uuid())
             .bind(Uuid::new_v4())
             .bind(intent_id)
             .bind(status)
@@ -308,11 +354,14 @@ impl ConnectorExecutionCoordinator {
             .bind(order.sequence.and_then(|value| i64::try_from(value).ok()))
             .bind(order.venue_updated_at)
             .bind(order.received_at)
-            .execute(&self.pool)
+            .execute(transaction.connection())
             .await
             .map_err(|_| CoordinatorError::Persistence)?;
         }
-        Ok(())
+        transaction
+            .commit()
+            .await
+            .map_err(|_| CoordinatorError::Persistence)
     }
 }
 

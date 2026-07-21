@@ -4,7 +4,7 @@
 
 The implemented API is rooted at `/api/v1`. `/livez`, `/readyz`, and `/entryz` are public infrastructure probes outside the versioned resource namespace. Production exchange writes remain unavailable.
 
-M4 will evolve this into a tenant-safe multi-user API. The endpoint families below describe the accepted target where marked; they are not present in the current OpenAPI contract until implemented and versioned.
+M4 has begun with session-derived personal-tenant identity, a public tenant summary, and a local forced-RLS/private-runtime isolation slice. That slice is not accepted until migration and adversarial tests run under distinct non-bypass roles; caches, tenant WebSocket delivery and exports also remain open. The endpoint families below describe the accepted target where marked and are not present in the current OpenAPI contract until implemented and versioned.
 
 ## Tenant and authorization conventions
 

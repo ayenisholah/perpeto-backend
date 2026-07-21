@@ -7,6 +7,7 @@ use funding_arb_connectors::{
     BinanceConnector, BybitConnector, OkxConnector, ProductType, VenueConnector, VenueEnvironment,
 };
 use funding_arb_domain::TradingMode;
+use funding_arb_tenant_context::TenantContext;
 use sqlx::PgPool;
 use uuid::Uuid;
 use zeroize::Zeroizing;
@@ -17,6 +18,7 @@ use crate::{
 
 #[derive(Clone)]
 pub struct ConfiguredConnector {
+    pub tenant: TenantContext,
     pub account: VenueAccountDto,
     pub product: ProductType,
     pub environment: VenueEnvironment,
@@ -60,7 +62,11 @@ impl ConnectorRegistry {
         }
     }
 
-    pub async fn load(&self, mode: TradingMode) -> Result<Vec<ConfiguredConnector>, RegistryError> {
+    pub async fn load(
+        &self,
+        context: TenantContext,
+        mode: TradingMode,
+    ) -> Result<Vec<ConfiguredConnector>, RegistryError> {
         if mode.is_paper() {
             return Ok(Vec::new());
         }
@@ -69,7 +75,7 @@ impl ConnectorRegistry {
         }
         let accounts = self
             .accounts
-            .list()
+            .list(context)
             .await
             .map_err(|_| RegistryError::Persistence)?;
         let mut connectors = Vec::new();
@@ -99,6 +105,7 @@ impl ConnectorRegistry {
                         Uuid::parse_str(value).map_err(|_| RegistryError::InvalidConfiguration)
                     })?;
                 let context = SecretContext {
+                    tenant: context,
                     venue_account_id: account_id,
                     venue: account.venue.clone(),
                     product: connection.product.clone(),
@@ -124,6 +131,7 @@ impl ConnectorRegistry {
                     _ => return Err(RegistryError::InvalidConfiguration),
                 };
                 connectors.push(ConfiguredConnector {
+                    tenant: context,
                     account: account.clone(),
                     product,
                     environment,

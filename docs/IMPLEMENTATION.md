@@ -2,25 +2,25 @@
 
 ## Current objective
 
-Restore a verified backend build, close the reopened M2 exact-decimal exit gate, and then finish M3 connector certification without enabling production writes. M4 follows as small, independently verifiable security and pilot slices. The current AES master-key/CLI credential path is transitional and cannot be reused as the M4 production design.
+Restore a verified backend build, obtain the Rust/PostgreSQL evidence needed to close the reopened M2 exact-decimal exit gate, and then finish M3 connector certification without enabling production writes. Continue M4 only as small, independently verifiable security and pilot slices; the personal-tenant session foundation is implemented locally, but isolation is not complete. The current AES master-key/CLI credential path is transitional and cannot be reused as the M4 production design.
 
 ## Baseline recovery
 
 1. Verify the local connector borrow/equality repair with locked Rust CI; do not treat the code as build-verified until compile, Clippy, migrations and tests pass together.
-2. Replace every monetary, rate, price, quantity and PnL `f64` wire/persistence field with a lossless decimal representation, version the contract and update the vendored mobile client in lockstep.
+2. **Implemented locally; evidence open:** replace every monetary, rate, price, quantity and PnL `f64` wire/persistence field with a lossless decimal representation, version the contract and update the vendored mobile client in lockstep.
 3. Re-run the M1/M2 integration and evidence matrix before closing either milestone.
 
 ## M3 completion
 
-1. Complete primary public/private WebSocket streams and connector-specific sequence recovery for Bybit, Binance and OKX.
-2. Run credentialed sandbox/demo probes, reconciliation and timed soak evidence with least-privilege operator test accounts.
+1. **Implemented locally; build/live evidence open:** primary public/private WebSocket streams, bounded reconnect handling and connector-specific sequence recovery for Bybit, Binance and OKX.
+2. Compile and run the transport/parser suites, then run credentialed sandbox/demo probes, reconciliation and timed soak evidence with least-privilege operator test accounts.
 3. Run production read-only shadow evidence and record platform connector/route certification. Do not submit a production order.
 
 ## M4 ordered slices
 
-1. **Tenant foundation:** add personal tenants and tenant membership; derive tenant context from authenticated sessions; tenant-scope IDs, commands, audit and idempotency.
-2. **Database isolation:** add `tenant_id` to all private aggregates, tenant-aware foreign/unique constraints, forced RLS policies, non-bypass roles and tenant-bound repository transactions. Backfill existing paper data into an explicit migration tenant.
-3. **Tenant-aware runtime:** scope engine jobs, reconciliation, worker queues/outbox, Redis keys/locks, WebSocket channels, breakers, alerts, exports and observability. Separate global platform state from tenant state.
+1. **Tenant foundation — partially implemented locally:** personal tenants, one-owner membership, session-derived tenant context and public tenant summary are present. Tenant-scoped private IDs, commands, audit and idempotency remain part of the next isolation slices.
+2. **Database isolation — implemented locally; evidence open:** migration `0016` adds tenant ownership, tenant-aware foreign/unique constraints and forced RLS, quarantines legacy rows in a suspended tenant, and repositories establish transaction-local tenant context. Runtime binaries reject owner or `BYPASSRLS` roles. Execute migration and adversarial tests under distinct roles before accepting this slice.
+3. **Tenant-aware runtime — partially implemented locally:** API repositories, engine work, reconciliation, worker queues/outbox, breakers, alerts, connector accounting and encrypted credentials are tenant-scoped. Redis keys/locks, tenant WebSocket delivery, exports and full observability separation remain.
 4. **Passkeys:** add WebAuthn registration/assertion, RP/origin validation, replay protection, device/recovery lifecycle and one-use proofs bound to exact credential/live actions.
 5. **Vault foundation:** deploy Vault Transit, create opaque per-tenant keys, workload auth/policies, 2-of-3 Shamir initialization, sealed readiness and audited operator runbooks.
 6. **Credential lifecycle:** replace routine CLI enrollment with one-use API enrollment, encrypt-only API access, purpose-limited runtime decrypt, preflight validation, rotation, revocation, deletion, redaction and memory-lifetime controls.

@@ -21,11 +21,13 @@ use funding_arb_execution_service::{
 use funding_arb_scanner_service::fixtures::{self, InstrumentKind, MarketLeg, MarketStatus};
 use funding_arb_scanner_service::{Scanner, ScannerRepo};
 use funding_arb_strategy_service::{PositionSummary, StrategiesRepo, StrategyService};
+use funding_arb_tenant_context::{TenantContext, TenantId, assert_safe_runtime_role};
 use funding_arb_venue_service::{
     ConfiguredConnector, ConnectorRegistry, InstrumentDto, VenueAccountsRepo, decode_master_key,
 };
 use futures_util::StreamExt;
 use rust_decimal::Decimal;
+use sqlx::Row;
 use sqlx::postgres::PgPoolOptions;
 
 const DEFAULT_INTERVAL_SECS: u64 = 30;
@@ -76,6 +78,10 @@ async fn run(mode: TradingMode) -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
+    if let Err(error) = assert_safe_runtime_role(&pool).await {
+        eprintln!("unsafe runtime database role: {error}");
+        return ExitCode::FAILURE;
+    }
 
     let interval_secs = env::var("PERPETO_SCAN_INTERVAL_SECS")
         .ok()
@@ -119,17 +125,29 @@ async fn run(mode: TradingMode) -> ExitCode {
                 return ExitCode::FAILURE;
             }
         };
-        match ConnectorRegistry::new(pool, master_key).load(mode).await {
-            Ok(value) if !value.is_empty() => value,
-            Ok(_) => {
-                eprintln!("no enabled connector accounts match {mode} mode");
+        let registry = ConnectorRegistry::new(pool.clone(), master_key);
+        let mut value = Vec::new();
+        let tenants = match active_tenant_contexts(&pool).await {
+            Ok(tenants) => tenants,
+            Err(error) => {
+                eprintln!("failed to load active tenants: {error}");
                 return ExitCode::FAILURE;
             }
-            Err(error) => {
-                eprintln!("failed to load connector registry: {error}");
-                return ExitCode::FAILURE;
+        };
+        for tenant in tenants {
+            match registry.load(tenant, mode).await {
+                Ok(mut configured) => value.append(&mut configured),
+                Err(error) => {
+                    eprintln!("failed to load connector registry: {error}");
+                    return ExitCode::FAILURE;
+                }
             }
         }
+        if value.is_empty() {
+            eprintln!("no enabled connector accounts match {mode} mode");
+            return ExitCode::FAILURE;
+        }
+        value
     };
     let execution = ExecutionService {
         scanner,
@@ -150,9 +168,21 @@ async fn run(mode: TradingMode) -> ExitCode {
         } else {
             Utc::now()
         };
+        let tenant_contexts = match active_tenant_contexts(&pool).await {
+            Ok(value) => value,
+            Err(error) => {
+                eprintln!("failed to dispatch tenant work: {error}");
+                return ExitCode::FAILURE;
+            }
+        };
         if mode.is_paper() {
-            activate_automatic_breakers(&positions, &breakers, &outbox, &execution, now).await;
-            supervise_open_positions(&positions, &breakers, &execution, now).await;
+            for tenant in &tenant_contexts {
+                activate_automatic_breakers(
+                    *tenant, &positions, &breakers, &outbox, &execution, now,
+                )
+                .await;
+                supervise_open_positions(*tenant, &positions, &breakers, &execution, now).await;
+            }
         }
         let scan = if mode.is_paper() {
             scanner.scan(now).map_err(|error| error.to_string())
@@ -167,15 +197,18 @@ async fn run(mode: TradingMode) -> ExitCode {
                 } else {
                     println!("scan complete at {now}: {count} eligible opportunities");
                     if mode.is_paper() {
-                        auto_enter(
-                            &result.opportunities,
-                            &strategies,
-                            &positions,
-                            &breakers,
-                            &execution,
-                            now,
-                        )
-                        .await;
+                        for tenant in &tenant_contexts {
+                            auto_enter(
+                                *tenant,
+                                &result.opportunities,
+                                &strategies,
+                                &positions,
+                                &breakers,
+                                &execution,
+                                now,
+                            )
+                            .await;
+                        }
                     }
                 }
             }
@@ -206,7 +239,7 @@ async fn live_scan(
             .await
             .map_err(|error| format!("{} health: {error}", configured.account.venue))?;
         venues
-            .record_health(Some(&configured.account.id), &health)
+            .record_health(configured.tenant, &configured.account.id, &health)
             .await
             .map_err(|_| "failed to persist connector health".to_owned())?;
         let status = match health.status {
@@ -355,6 +388,7 @@ fn instrument_dto(instrument: &funding_arb_connectors::Instrument) -> Instrument
 }
 
 async fn auto_enter(
+    tenant: TenantContext,
     opportunities: &[funding_arb_domain::opportunity::Opportunity],
     strategies: &StrategiesRepo,
     positions: &PositionsRepo,
@@ -362,7 +396,7 @@ async fn auto_enter(
     execution: &ExecutionService,
     now: DateTime<Utc>,
 ) {
-    let controls = match breakers.controls().await {
+    let controls = match breakers.controls(tenant).await {
         Ok(value) => value,
         Err(error) => {
             eprintln!("failed to read controls for auto-entry: {error}");
@@ -372,7 +406,7 @@ async fn auto_enter(
     if controls.effective_action.is_some() {
         return;
     }
-    let stored = match positions.list().await {
+    let stored = match positions.list(tenant).await {
         Ok(value) => value,
         Err(error) => {
             eprintln!("failed to read positions for auto-entry: {error}");
@@ -398,7 +432,7 @@ async fn auto_enter(
         .sum();
     let free_equity =
         (execution.scanner.risk_limits.reference_equity - allocated).max(Decimal::ZERO);
-    let configured = match strategies.list().await {
+    let configured = match strategies.list(tenant).await {
         Ok(value) => value,
         Err(error) => {
             eprintln!("failed to read strategies for auto-entry: {error}");
@@ -422,7 +456,7 @@ async fn auto_enter(
                 intent.strategy_id, strategy.current.version, intent.route_id
             );
             if positions
-                .get_by_idempotency_key(&key)
+                .get_by_idempotency_key(tenant, &key)
                 .await
                 .ok()
                 .flatten()
@@ -434,7 +468,7 @@ async fn auto_enter(
                 Ok(mut position) => {
                     position.strategy_id = Some(intent.strategy_id);
                     let dto = PositionDto::from_domain(&position);
-                    if let Err(error) = positions.create(&dto, &key).await {
+                    if let Err(error) = positions.create(tenant, &dto, &key).await {
                         eprintln!("failed to persist auto-entry: {error}");
                     }
                 }
@@ -445,19 +479,20 @@ async fn auto_enter(
 }
 
 async fn supervise_open_positions(
+    tenant: TenantContext,
     positions: &PositionsRepo,
     breakers: &BreakersRepo,
     execution: &ExecutionService,
     now: DateTime<Utc>,
 ) {
-    let stored = match positions.list().await {
+    let stored = match positions.list(tenant).await {
         Ok(value) => value,
         Err(error) => {
             eprintln!("failed to load positions for supervision: {error}");
             return;
         }
     };
-    let controls = match breakers.controls().await {
+    let controls = match breakers.controls(tenant).await {
         Ok(value) => value,
         Err(error) => {
             eprintln!("failed to load circuit breakers: {error}");
@@ -496,7 +531,10 @@ async fn supervise_open_positions(
         };
         match result {
             Ok(position) => {
-                if let Err(error) = positions.update(&PositionDto::from_domain(&position)).await {
+                if let Err(error) = positions
+                    .update(tenant, &PositionDto::from_domain(&position))
+                    .await
+                {
                     eprintln!("failed to persist supervised position {id}: {error}");
                 }
             }
@@ -506,6 +544,7 @@ async fn supervise_open_positions(
 }
 
 async fn activate_automatic_breakers(
+    tenant: TenantContext,
     positions: &PositionsRepo,
     breakers: &BreakersRepo,
     outbox: &OutboxRepo,
@@ -518,6 +557,7 @@ async fn activate_automatic_breakers(
             .filter(|leg| leg.status == MarketStatus::Degraded)
         {
             ensure_breaker(
+                tenant,
                 breakers,
                 outbox,
                 BreakerScope::Venue,
@@ -530,7 +570,7 @@ async fn activate_automatic_breakers(
             .await;
         }
     }
-    let stored = match positions.list().await {
+    let stored = match positions.list(tenant).await {
         Ok(value) => value,
         Err(error) => {
             eprintln!("failed to evaluate loss breakers: {error}");
@@ -555,6 +595,7 @@ async fn activate_automatic_breakers(
         .sum();
     if daily_pnl < -(reference * execution.scanner.risk_limits.max_daily_loss_fraction) {
         ensure_breaker(
+            tenant,
             breakers,
             outbox,
             BreakerScope::Global,
@@ -579,6 +620,7 @@ async fn activate_automatic_breakers(
     };
     if drawdown >= execution.scanner.risk_limits.max_drawdown_fraction {
         ensure_breaker(
+            tenant,
             breakers,
             outbox,
             BreakerScope::Global,
@@ -594,6 +636,7 @@ async fn activate_automatic_breakers(
 
 #[allow(clippy::too_many_arguments)]
 async fn ensure_breaker(
+    tenant: TenantContext,
     breakers: &BreakersRepo,
     outbox: &OutboxRepo,
     scope: BreakerScope,
@@ -603,7 +646,7 @@ async fn ensure_breaker(
     reason: &str,
     now: DateTime<Utc>,
 ) {
-    let existing = match breakers.controls().await {
+    let existing = match breakers.controls(tenant).await {
         Ok(value) => value.breakers.into_iter().any(|breaker| {
             breaker.scope == scope && breaker.scope_key == scope_key && breaker.action == action
         }),
@@ -617,6 +660,7 @@ async fn ensure_breaker(
     }
     match breakers
         .activate(
+            tenant,
             scope,
             scope_key,
             action,
@@ -630,7 +674,13 @@ async fn ensure_breaker(
         Ok(breaker) => {
             let payload = serde_json::to_value(&breaker).unwrap_or_default();
             if let Err(error) = outbox
-                .append("CIRCUIT_BREAKER_ACTIVATED", &breaker.id, payload, now)
+                .append(
+                    tenant,
+                    "CIRCUIT_BREAKER_ACTIVATED",
+                    &breaker.id,
+                    payload,
+                    now,
+                )
                 .await
             {
                 eprintln!("failed to append breaker event: {error}");
@@ -638,6 +688,18 @@ async fn ensure_breaker(
         }
         Err(error) => eprintln!("failed to activate automatic breaker: {error}"),
     }
+}
+
+async fn active_tenant_contexts(pool: &sqlx::PgPool) -> Result<Vec<TenantContext>, sqlx::Error> {
+    let rows = sqlx::query(
+        "SELECT id FROM tenants WHERE state NOT IN ('SUSPENDED', 'DELETED') ORDER BY id",
+    )
+    .fetch_all(pool)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(|row| TenantContext::new(TenantId::new(row.get("id"))))
+        .collect())
 }
 
 fn positive_seconds(name: &str, value: Option<&str>, default: u64) -> Result<u64, String> {

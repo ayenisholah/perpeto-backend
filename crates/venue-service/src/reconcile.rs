@@ -7,6 +7,7 @@ use funding_arb_connectors::{
     AccountId, Balance, Fill, FundingLedgerEntry, OrderLookup, TimeRange, VenueConnector,
     VenueOrder, VenuePosition,
 };
+use funding_arb_tenant_context::{TenantContext, TenantTransaction};
 use serde_json::json;
 use sqlx::PgPool;
 use uuid::Uuid;
@@ -56,13 +57,15 @@ impl ReconciliationService {
     /// Take a read-only external snapshot and compare unresolved local orders.
     pub async fn run(
         &self,
+        context: TenantContext,
         connector: &dyn VenueConnector,
         account: &AccountId,
     ) -> Result<ReconciliationReport, ReconciliationError> {
         let run_id = Uuid::new_v4();
         let started_at = Utc::now();
         let venue = connector.venue().as_str();
-        self.start_run(run_id, venue, account, started_at).await?;
+        self.start_run(context, run_id, venue, account, started_at)
+            .await?;
 
         let balances = connector
             .balances(account)
@@ -86,10 +89,10 @@ impl ReconciliationService {
             .await
             .map_err(|_| ReconciliationError::Connector)?;
         let discrepancies = self
-            .find_discrepancies(run_id, connector, account, &open_orders)
+            .find_discrepancies(context, run_id, connector, account, &open_orders)
             .await?;
         self.persist_snapshot(
-            run_id, venue, account, &balances, &positions, &fills, &funding,
+            context, run_id, venue, account, &balances, &positions, &fills, &funding,
         )
         .await?;
         let status = if discrepancies == 0 {
@@ -98,6 +101,7 @@ impl ReconciliationService {
             "REQUIRED"
         };
         self.complete_run(
+            context,
             run_id,
             status,
             balances.len(),
@@ -141,21 +145,30 @@ impl ReconciliationService {
 
     async fn find_discrepancies(
         &self,
+        context: TenantContext,
         run_id: Uuid,
         connector: &dyn VenueConnector,
         account: &AccountId,
         external_open: &[VenueOrder],
     ) -> Result<usize, ReconciliationError> {
+        let mut transaction = TenantTransaction::begin(&self.pool, context)
+            .await
+            .map_err(|_| ReconciliationError::Persistence)?;
         let local = sqlx::query_as::<_, (String,)>(
             "SELECT client_order_id FROM connector_order_intents
-             WHERE venue = $1 AND venue_account_id = $2
+             WHERE tenant_id = $1 AND venue = $2 AND venue_account_id = $3
                AND state IN ('SUBMITTING', 'UNKNOWN_OUTCOME', 'OPEN', 'PARTIALLY_FILLED')",
         )
+        .bind(context.tenant_id().as_uuid())
         .bind(connector.venue().as_str())
         .bind(&account.0)
-        .fetch_all(&self.pool)
+        .fetch_all(transaction.connection())
         .await
         .map_err(|_| ReconciliationError::Persistence)?;
+        transaction
+            .commit()
+            .await
+            .map_err(|_| ReconciliationError::Persistence)?;
         let local = local.into_iter().map(|row| row.0).collect::<HashSet<_>>();
         let external = external_open
             .iter()
@@ -163,8 +176,14 @@ impl ReconciliationService {
             .collect::<HashSet<_>>();
         let mut count = 0;
         for client_order_id in external.difference(&local) {
-            self.discrepancy(run_id, "EXTERNAL_ORDER", "CRITICAL", client_order_id)
-                .await?;
+            self.discrepancy(
+                context,
+                run_id,
+                "EXTERNAL_ORDER",
+                "CRITICAL",
+                client_order_id,
+            )
+            .await?;
             count += 1;
         }
         for client_order_id in local.difference(&external) {
@@ -176,8 +195,14 @@ impl ReconciliationService {
                 .await
                 .map_err(|_| ReconciliationError::Connector)?;
             if found.is_none() {
-                self.discrepancy(run_id, "LOCAL_ORDER_MISSING", "CRITICAL", client_order_id)
-                    .await?;
+                self.discrepancy(
+                    context,
+                    run_id,
+                    "LOCAL_ORDER_MISSING",
+                    "CRITICAL",
+                    client_order_id,
+                )
+                .await?;
                 count += 1;
             }
         }
@@ -186,28 +211,37 @@ impl ReconciliationService {
 
     async fn start_run(
         &self,
+        context: TenantContext,
         run_id: Uuid,
         venue: &str,
         account: &AccountId,
         started_at: chrono::DateTime<Utc>,
     ) -> Result<(), ReconciliationError> {
+        let mut transaction = TenantTransaction::begin(&self.pool, context)
+            .await
+            .map_err(|_| ReconciliationError::Persistence)?;
         sqlx::query(
             "INSERT INTO connector_reconciliation_runs
-             (id, venue, venue_account_id, status, started_at, payload)
-             VALUES ($1, $2, $3, 'RUNNING', $4, '{}')",
+             (tenant_id, id, venue, venue_account_id, status, started_at, payload)
+             VALUES ($1, $2, $3, $4, 'RUNNING', $5, '{}')",
         )
+        .bind(context.tenant_id().as_uuid())
         .bind(run_id)
         .bind(venue)
         .bind(&account.0)
         .bind(started_at)
-        .execute(&self.pool)
+        .execute(transaction.connection())
         .await
-        .map(|_| ())
-        .map_err(|_| ReconciliationError::Persistence)
+        .map_err(|_| ReconciliationError::Persistence)?;
+        transaction
+            .commit()
+            .await
+            .map_err(|_| ReconciliationError::Persistence)
     }
 
     async fn complete_run(
         &self,
+        context: TenantContext,
         run_id: Uuid,
         status: &str,
         balances: usize,
@@ -215,11 +249,14 @@ impl ReconciliationService {
         open_orders: usize,
         fills: usize,
     ) -> Result<(), ReconciliationError> {
+        let mut transaction = TenantTransaction::begin(&self.pool, context)
+            .await
+            .map_err(|_| ReconciliationError::Persistence)?;
         sqlx::query(
             "UPDATE connector_reconciliation_runs
              SET status = $2, completed_at = now(), balances_seen = $3,
                  positions_seen = $4, open_orders_seen = $5, fills_seen = $6,
-                 payload = $7 WHERE id = $1",
+                 payload = $7 WHERE tenant_id = $8 AND id = $1",
         )
         .bind(run_id)
         .bind(status)
@@ -228,38 +265,51 @@ impl ReconciliationService {
         .bind(count_i32(open_orders)?)
         .bind(count_i32(fills)?)
         .bind(json!({ "status": status }).to_string())
-        .execute(&self.pool)
+        .bind(context.tenant_id().as_uuid())
+        .execute(transaction.connection())
         .await
-        .map(|_| ())
-        .map_err(|_| ReconciliationError::Persistence)
+        .map_err(|_| ReconciliationError::Persistence)?;
+        transaction
+            .commit()
+            .await
+            .map_err(|_| ReconciliationError::Persistence)
     }
 
     async fn discrepancy(
         &self,
+        context: TenantContext,
         run_id: Uuid,
         kind: &str,
         severity: &str,
         external_key: &str,
     ) -> Result<(), ReconciliationError> {
+        let mut transaction = TenantTransaction::begin(&self.pool, context)
+            .await
+            .map_err(|_| ReconciliationError::Persistence)?;
         sqlx::query(
             "INSERT INTO connector_discrepancies
-             (id, run_id, kind, severity, external_key, status, detected_at, payload)
-             VALUES ($1, $2, $3, $4, $5, 'OPEN', now(), '{}')
+             (tenant_id, id, run_id, kind, severity, external_key, status, detected_at, payload)
+             VALUES ($1, $2, $3, $4, $5, $6, 'OPEN', now(), '{}')
              ON CONFLICT DO NOTHING",
         )
+        .bind(context.tenant_id().as_uuid())
         .bind(Uuid::new_v4())
         .bind(run_id)
         .bind(kind)
         .bind(severity)
         .bind(external_key)
-        .execute(&self.pool)
+        .execute(transaction.connection())
         .await
-        .map(|_| ())
-        .map_err(|_| ReconciliationError::Persistence)
+        .map_err(|_| ReconciliationError::Persistence)?;
+        transaction
+            .commit()
+            .await
+            .map_err(|_| ReconciliationError::Persistence)
     }
 
     async fn persist_snapshot(
         &self,
+        context: TenantContext,
         run_id: Uuid,
         venue: &str,
         account: &AccountId,
@@ -268,19 +318,18 @@ impl ReconciliationService {
         fills: &[Fill],
         funding: &[FundingLedgerEntry],
     ) -> Result<(), ReconciliationError> {
-        let mut transaction = self
-            .pool
-            .begin()
+        let mut transaction = TenantTransaction::begin(&self.pool, context)
             .await
             .map_err(|_| ReconciliationError::Persistence)?;
         for balance in balances {
             sqlx::query(
                 "INSERT INTO connector_balance_snapshots
-                 (id, run_id, venue, venue_account_id, asset, total, available, locked,
+                 (tenant_id, id, run_id, venue, venue_account_id, asset, total, available, locked,
                   venue_updated_at, received_at, payload)
-                 VALUES ($1, $2, $3, $4, $5, $6::numeric, $7::numeric, $8::numeric,
-                         $9, $10, $11)",
+                 VALUES ($1, $2, $3, $4, $5, $6, $7::numeric, $8::numeric, $9::numeric,
+                         $10, $11, $12)",
             )
+            .bind(context.tenant_id().as_uuid())
             .bind(Uuid::new_v4())
             .bind(run_id)
             .bind(venue)
@@ -292,18 +341,19 @@ impl ReconciliationService {
             .bind(balance.venue_updated_at)
             .bind(balance.received_at)
             .bind(json!({ "asset": balance.asset }).to_string())
-            .execute(&mut *transaction)
+            .execute(transaction.connection())
             .await
             .map_err(|_| ReconciliationError::Persistence)?;
         }
         for position in positions {
             sqlx::query(
                 "INSERT INTO connector_position_snapshots
-                 (id, run_id, venue, venue_account_id, symbol, product, quantity, entry_price,
+                 (tenant_id, id, run_id, venue, venue_account_id, symbol, product, quantity, entry_price,
                   mark_price, leverage, liquidation_price, venue_updated_at, received_at, payload)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7::numeric, $8::numeric, $9::numeric,
-                         $10::numeric, $11::numeric, $12, $13, $14)",
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8::numeric, $9::numeric, $10::numeric,
+                         $11::numeric, $12::numeric, $13, $14, $15)",
             )
+            .bind(context.tenant_id().as_uuid())
             .bind(Uuid::new_v4())
             .bind(run_id)
             .bind(venue)
@@ -318,19 +368,20 @@ impl ReconciliationService {
             .bind(position.venue_updated_at)
             .bind(position.received_at)
             .bind(json!({ "symbol": position.instrument.symbol }).to_string())
-            .execute(&mut *transaction)
+            .execute(transaction.connection())
             .await
             .map_err(|_| ReconciliationError::Persistence)?;
         }
         for fill in fills {
             sqlx::query(
                 "INSERT INTO connector_fills
-                 (id, venue, venue_account_id, venue_fill_id, venue_order_id, symbol, product,
+                 (tenant_id, id, venue, venue_account_id, venue_fill_id, venue_order_id, symbol, product,
                   quantity, price, fee, fee_asset, occurred_at, received_at, payload)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8::numeric, $9::numeric,
-                         $10::numeric, $11, $12, $13, $14)
-                 ON CONFLICT (venue, venue_account_id, venue_fill_id) DO NOTHING",
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::numeric, $10::numeric,
+                         $11::numeric, $12, $13, $14, $15)
+                 ON CONFLICT (tenant_id, venue, venue_account_id, venue_fill_id) DO NOTHING",
             )
+            .bind(context.tenant_id().as_uuid())
             .bind(Uuid::new_v4())
             .bind(venue)
             .bind(&account.0)
@@ -345,18 +396,19 @@ impl ReconciliationService {
             .bind(fill.occurred_at)
             .bind(fill.received_at)
             .bind(json!({ "venue_fill_id": fill.venue_fill_id }).to_string())
-            .execute(&mut *transaction)
+            .execute(transaction.connection())
             .await
             .map_err(|_| ReconciliationError::Persistence)?;
         }
         for entry in funding {
             sqlx::query(
                 "INSERT INTO connector_funding_ledger
-                 (id, venue, venue_account_id, venue_entry_id, symbol, product, amount,
+                 (tenant_id, id, venue, venue_account_id, venue_entry_id, symbol, product, amount,
                   asset, occurred_at, payload)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7::numeric, $8, $9, $10)
-                 ON CONFLICT (venue, venue_account_id, venue_entry_id) DO NOTHING",
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8::numeric, $9, $10, $11)
+                 ON CONFLICT (tenant_id, venue, venue_account_id, venue_entry_id) DO NOTHING",
             )
+            .bind(context.tenant_id().as_uuid())
             .bind(Uuid::new_v4())
             .bind(venue)
             .bind(&account.0)
@@ -367,7 +419,7 @@ impl ReconciliationService {
             .bind(&entry.asset)
             .bind(entry.occurred_at)
             .bind(json!({ "venue_entry_id": entry.venue_entry_id }).to_string())
-            .execute(&mut *transaction)
+            .execute(transaction.connection())
             .await
             .map_err(|_| ReconciliationError::Persistence)?;
         }

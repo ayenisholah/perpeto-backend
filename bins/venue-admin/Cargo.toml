@@ -7,6 +7,7 @@ rust-version.workspace = true
 
 [dependencies]
 funding-arb-venue-service = { path = "../../crates/venue-service" }
+funding-arb-tenant-context = { path = "../../crates/tenant-context" }
 base64.workspace = true
 chrono.workspace = true
 serde_json.workspace = true

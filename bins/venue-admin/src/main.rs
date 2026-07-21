@@ -2,6 +2,7 @@ use std::{env, error::Error, io::Read};
 
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use chrono::Utc;
+use funding_arb_tenant_context::{TenantContext, TenantId};
 use funding_arb_venue_service::{
     CertificationState, CredentialBundle, EncryptedPostgresSecretStore, ProductConnectionDto,
     ReconciliationState, SecretContext, SecretStore, VenueAccountDto, VenueAccountsRepo,
@@ -19,26 +20,28 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .connect(&database_url)
         .await?;
     let accounts = VenueAccountsRepo::new(pool.clone());
+    let tenant = quarantine_tenant()?;
 
     match arguments.first().map(String::as_str) {
         Some("import") => {
             let key = master_key()?;
             let store = EncryptedPostgresSecretStore::new(pool, key, 1);
-            import(&accounts, &store, &arguments[1..]).await?;
+            import(tenant, &accounts, &store, &arguments[1..]).await?;
         }
         Some("rotate") => {
             let key = master_key()?;
             let store = EncryptedPostgresSecretStore::new(pool, key, 1);
-            rotate(&store, &arguments[1..]).await?;
+            rotate(tenant, &store, &arguments[1..]).await?;
         }
-        Some("disable") => disable(&accounts, &arguments[1..]).await?,
-        Some("inspect") => inspect(&accounts).await?,
+        Some("disable") => disable(tenant, &accounts, &arguments[1..]).await?,
+        Some("inspect") => inspect(tenant, &accounts).await?,
         _ => return Err(usage().into()),
     }
     Ok(())
 }
 
 async fn import(
+    tenant: TenantContext,
     accounts: &VenueAccountsRepo,
     store: &impl SecretStore,
     arguments: &[String],
@@ -80,8 +83,9 @@ async fn import(
         created_at: Utc::now().to_rfc3339(),
         tombstoned_at: None,
     };
-    accounts.create(&account).await?;
+    accounts.create(tenant, &account).await?;
     let context = SecretContext {
+        tenant,
         venue_account_id: account_id,
         venue: venue.into(),
         product: product.into(),
@@ -89,9 +93,9 @@ async fn import(
     let metadata = store.put(&context, &credential).await?;
     account.connections[0].secret_ref = Some(metadata.secret_ref.to_string());
     accounts
-        .update_connection(&account.id, &account.connections[0])
+        .update_connection(tenant, &account.id, &account.connections[0])
         .await?;
-    accounts.update(&account).await?;
+    accounts.update(tenant, &account).await?;
     println!(
         "imported account {} ({venue}/{product}/{environment})",
         account.id
@@ -99,7 +103,11 @@ async fn import(
     Ok(())
 }
 
-async fn rotate(store: &impl SecretStore, arguments: &[String]) -> Result<(), Box<dyn Error>> {
+async fn rotate(
+    tenant: TenantContext,
+    store: &impl SecretStore,
+    arguments: &[String],
+) -> Result<(), Box<dyn Error>> {
     if arguments.len() != 4 {
         return Err(usage().into());
     }
@@ -109,6 +117,7 @@ async fn rotate(store: &impl SecretStore, arguments: &[String]) -> Result<(), Bo
     let product = canonical_product(&arguments[3])?;
     let credential = read_credential(venue)?;
     let context = SecretContext {
+        tenant,
         venue_account_id,
         venue: venue.into(),
         product: product.into(),
@@ -118,28 +127,46 @@ async fn rotate(store: &impl SecretStore, arguments: &[String]) -> Result<(), Bo
     Ok(())
 }
 
-async fn disable(accounts: &VenueAccountsRepo, arguments: &[String]) -> Result<(), Box<dyn Error>> {
+async fn disable(
+    tenant: TenantContext,
+    accounts: &VenueAccountsRepo,
+    arguments: &[String],
+) -> Result<(), Box<dyn Error>> {
     if arguments.len() != 1 {
         return Err(usage().into());
     }
     let mut account = accounts
-        .get(&arguments[0])
+        .get(tenant, &arguments[0])
         .await?
         .ok_or("venue account not found")?;
     account.enabled = false;
     account.certification_state = CertificationState::Disabled;
     for connection in &mut account.connections {
         connection.status = "DISABLED".into();
-        accounts.update_connection(&account.id, connection).await?;
+        accounts
+            .update_connection(tenant, &account.id, connection)
+            .await?;
     }
-    accounts.update(&account).await?;
+    accounts.update(tenant, &account).await?;
     println!("disabled account {}", account.id);
     Ok(())
 }
 
-async fn inspect(accounts: &VenueAccountsRepo) -> Result<(), Box<dyn Error>> {
-    println!("{}", serde_json::to_string_pretty(&accounts.list().await?)?);
+async fn inspect(
+    tenant: TenantContext,
+    accounts: &VenueAccountsRepo,
+) -> Result<(), Box<dyn Error>> {
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&accounts.list(tenant).await?)?
+    );
     Ok(())
+}
+
+fn quarantine_tenant() -> Result<TenantContext, uuid::Error> {
+    Uuid::parse_str("00000000-0000-0000-0000-000000000001")
+        .map(TenantId::new)
+        .map(TenantContext::new)
 }
 
 fn master_key() -> Result<[u8; 32], Box<dyn Error>> {

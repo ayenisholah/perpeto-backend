@@ -1,6 +1,7 @@
 //! Durable circuit breakers and outbox events for paper risk controls.
 
 use chrono::{DateTime, Utc};
+use funding_arb_tenant_context::{TenantContext, TenantTransaction};
 use serde::{Deserialize, Serialize};
 use sqlx::{PgPool, Row};
 use uuid::Uuid;
@@ -82,6 +83,7 @@ impl BreakersRepo {
     #[allow(clippy::too_many_arguments)]
     pub async fn activate(
         &self,
+        context: TenantContext,
         scope: BreakerScope,
         scope_key: Option<String>,
         action: BreakerAction,
@@ -104,13 +106,15 @@ impl BreakersRepo {
         };
         let payload = serde_json::to_string(&dto)
             .map_err(|error| sqlx::Error::Protocol(error.to_string()))?;
+        let mut transaction = TenantTransaction::begin(&self.pool, context).await?;
         let inserted = sqlx::query(
             "INSERT INTO circuit_breakers \
-             (id, scope, scope_key, action, source, active, created_at, payload) \
-             VALUES ($1, $2, $3, $4, $5, true, $6, $7) \
+             (tenant_id, id, scope, scope_key, action, source, active, created_at, payload) \
+             VALUES ($1, $2, $3, $4, $5, $6, true, $7, $8) \
              ON CONFLICT DO NOTHING \
              RETURNING payload",
         )
+        .bind(context.tenant_id().as_uuid())
         .bind(Uuid::parse_str(&dto.id).map_err(|error| sqlx::Error::Protocol(error.to_string()))?)
         .bind(scope_wire(&dto.scope))
         .bind(&dto.scope_key)
@@ -118,50 +122,63 @@ impl BreakersRepo {
         .bind(&dto.source)
         .bind(now)
         .bind(&payload)
-        .fetch_optional(&self.pool)
+        .fetch_optional(transaction.connection())
         .await?;
         let row = match inserted {
             Some(row) => row,
             None => {
                 sqlx::query(
                     "SELECT payload FROM circuit_breakers \
-                 WHERE active AND scope = $1 AND scope_key IS NOT DISTINCT FROM $2 AND action = $3 \
+                 WHERE tenant_id = $1 AND active AND scope = $2 AND scope_key IS NOT DISTINCT FROM $3 AND action = $4 \
                  LIMIT 1",
                 )
+                .bind(context.tenant_id().as_uuid())
                 .bind(scope_wire(&dto.scope))
                 .bind(&dto.scope_key)
                 .bind(action_wire(&dto.action))
-                .fetch_one(&self.pool)
+                .fetch_one(transaction.connection())
                 .await?
             }
         };
-        decode(&row.get::<String, _>("payload"))
+        let result = decode(&row.get::<String, _>("payload"));
+        transaction.commit().await?;
+        result
     }
 
     /// Return active breakers and their effective action.
-    pub async fn controls(&self) -> Result<ControlsDto, sqlx::Error> {
+    pub async fn controls(&self, context: TenantContext) -> Result<ControlsDto, sqlx::Error> {
+        let mut transaction = TenantTransaction::begin(&self.pool, context).await?;
         let rows = sqlx::query(
-            "SELECT payload FROM circuit_breakers WHERE active ORDER BY created_at DESC, id DESC",
+            "SELECT payload FROM circuit_breakers WHERE tenant_id = $1 AND active ORDER BY created_at DESC, id DESC",
         )
-        .fetch_all(&self.pool)
+        .bind(context.tenant_id().as_uuid())
+        .fetch_all(transaction.connection())
         .await?;
         let breakers = rows
             .iter()
             .map(|row| decode(&row.get::<String, _>("payload")))
             .collect::<Result<Vec<_>, _>>()?;
         let effective_action = effective_action(&breakers);
-        Ok(ControlsDto {
+        let result = ControlsDto {
             effective_action,
             breakers,
-        })
+        };
+        transaction.commit().await?;
+        Ok(result)
     }
 
     /// Resolve every operator-created breaker; automatic breakers remain.
-    pub async fn resolve_operator(&self, now: DateTime<Utc>) -> Result<u64, sqlx::Error> {
+    pub async fn resolve_operator(
+        &self,
+        context: TenantContext,
+        now: DateTime<Utc>,
+    ) -> Result<u64, sqlx::Error> {
+        let mut transaction = TenantTransaction::begin(&self.pool, context).await?;
         let rows = sqlx::query(
-            "SELECT id, payload FROM circuit_breakers WHERE active AND source = 'OPERATOR' FOR UPDATE",
+            "SELECT id, payload FROM circuit_breakers WHERE tenant_id = $1 AND active AND source = 'OPERATOR' FOR UPDATE",
         )
-        .fetch_all(&self.pool)
+        .bind(context.tenant_id().as_uuid())
+        .fetch_all(transaction.connection())
         .await?;
         let mut resolved = 0;
         for row in rows {
@@ -172,15 +189,17 @@ impl BreakersRepo {
             let payload = serde_json::to_string(&dto)
                 .map_err(|error| sqlx::Error::Protocol(error.to_string()))?;
             resolved += sqlx::query(
-                "UPDATE circuit_breakers SET active = false, resolved_at = $2, payload = $3 WHERE id = $1",
+                "UPDATE circuit_breakers SET active = false, resolved_at = $3, payload = $4 WHERE tenant_id = $1 AND id = $2",
             )
+            .bind(context.tenant_id().as_uuid())
             .bind(id)
             .bind(now)
             .bind(payload)
-            .execute(&self.pool)
+            .execute(transaction.connection())
             .await?
             .rows_affected();
         }
+        transaction.commit().await?;
         Ok(resolved)
     }
 }
@@ -254,6 +273,7 @@ impl OutboxRepo {
     /// Append an event for later worker delivery.
     pub async fn append(
         &self,
+        context: TenantContext,
         event_type: &str,
         aggregate_id: &str,
         payload: serde_json::Value,
@@ -268,18 +288,21 @@ impl OutboxRepo {
         };
         let encoded = serde_json::to_string(&event)
             .map_err(|error| sqlx::Error::Protocol(error.to_string()))?;
+        let mut transaction = TenantTransaction::begin(&self.pool, context).await?;
         sqlx::query(
             "INSERT INTO outbox_events \
-             (id, event_type, aggregate_id, payload, available_at, created_at) \
-             VALUES ($1, $2, $3, $4, $5, $5)",
+             (tenant_id, id, event_type, aggregate_id, payload, available_at, created_at) \
+             VALUES ($1, $2, $3, $4, $5, $6, $6)",
         )
+        .bind(context.tenant_id().as_uuid())
         .bind(Uuid::parse_str(&event.id).map_err(|error| sqlx::Error::Protocol(error.to_string()))?)
         .bind(&event.event_type)
         .bind(&event.aggregate_id)
         .bind(encoded)
         .bind(now)
-        .execute(&self.pool)
+        .execute(transaction.connection())
         .await?;
+        transaction.commit().await?;
         Ok(event)
     }
 }

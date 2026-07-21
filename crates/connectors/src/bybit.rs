@@ -1,11 +1,11 @@
 //! Bybit V5 spot and USDT-linear adapter.
 
-use std::{collections::VecDeque, str::FromStr, sync::Arc, time::Duration};
+use std::{str::FromStr, sync::Arc, time::Duration};
 
 use async_trait::async_trait;
 use chrono::{DateTime, TimeZone, Utc};
 use funding_arb_domain::market::Venue;
-use futures_util::stream;
+use futures_util::{StreamExt, stream};
 use hmac::{Hmac, Mac};
 use reqwest::Method;
 use rust_decimal::Decimal;
@@ -13,6 +13,7 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use tokio::sync::RwLock;
 
+use crate::ws::{JsonWsConfig, connect_json};
 use crate::{
     AccountId, Balance, CancelAck, CancelRequest, CanonicalOrderIntent, ConnectorCredentials,
     ConnectorError, ConnectorErrorKind, ConnectorResult, FeeSchedule, Fill, FillPage,
@@ -368,55 +369,78 @@ impl VenueConnector for BybitConnector {
         if subscriptions.is_empty() {
             return Err(invalid("EMPTY_SUBSCRIPTION"));
         }
-        let connector = self.clone();
-        Ok(Box::pin(stream::unfold(
-            (connector, subscriptions, 0_usize),
-            |(connector, subscriptions, index)| async move {
-                if index > 0 {
-                    tokio::time::sleep(Duration::from_millis(250)).await;
+        let product = subscriptions[0].instrument.product;
+        if subscriptions
+            .iter()
+            .any(|subscription| subscription.instrument.product != product)
+        {
+            return Err(unsupported("MIXED_PRODUCT_STREAM"));
+        }
+        let args = subscriptions
+            .iter()
+            .map(|subscription| {
+                format!(
+                    "orderbook.{}.{}",
+                    subscription.depth, subscription.instrument.symbol
+                )
+            })
+            .collect::<Vec<_>>();
+        let stream_subscriptions = Arc::new(subscriptions);
+        let frames = connect_json(JsonWsConfig {
+            name: "BYBIT",
+            url: bybit_public_ws_url(self.environment, product).to_owned(),
+            initial_messages: vec![json!({"op": "subscribe", "args": args})],
+            heartbeat: Some(r#"{"op":"ping"}"#.into()),
+            inactivity_timeout: Duration::from_secs(20),
+        });
+        Ok(Box::pin(frames.filter_map(move |frame| {
+            let subscriptions = stream_subscriptions.clone();
+            async move {
+                match frame {
+                    Err(error) => Some(Err(error)),
+                    Ok(frame) => match parse_market_frame(&frame, &subscriptions) {
+                        Ok(Some(event)) => Some(Ok(event)),
+                        Ok(None) => None,
+                        Err(error) => Some(Err(error)),
+                    },
                 }
-                let selected = index % subscriptions.len();
-                let event = connector.book_snapshot(&subscriptions[selected]).await;
-                Some((event, (connector, subscriptions, index + 1)))
-            },
-        )))
+            }
+        })))
     }
 
     async fn private_stream(&self, account: &AccountId) -> ConnectorResult<PrivateEventStream> {
-        let connector = self.clone();
-        let account = account.clone();
-        Ok(Box::pin(stream::unfold(
-            (connector, account, VecDeque::new()),
-            |(connector, account, mut pending)| async move {
-                if let Some(event) = pending.pop_front() {
-                    return Some((Ok(event), (connector, account, pending)));
-                }
-                tokio::time::sleep(Duration::from_secs(5)).await;
-                match connector.open_orders(&account).await {
-                    Ok(orders) => pending.extend(orders.into_iter().map(PrivateEvent::Order)),
-                    Err(error) => return Some((Err(error), (connector, account, pending))),
-                }
-                match connector.fills(&account, None).await {
-                    Ok(page) => pending.extend(page.fills.into_iter().map(PrivateEvent::Fill)),
-                    Err(error) => return Some((Err(error), (connector, account, pending))),
-                }
-                match connector.balances(&account).await {
-                    Ok(balances) => pending.extend(balances.into_iter().map(PrivateEvent::Balance)),
-                    Err(error) => return Some((Err(error), (connector, account, pending))),
-                }
-                match connector.positions(&account).await {
-                    Ok(positions) => {
-                        pending.extend(positions.into_iter().map(PrivateEvent::Position))
-                    }
-                    Err(error) => return Some((Err(error), (connector, account, pending))),
-                }
-                if pending.is_empty() {
-                    pending.push_back(PrivateEvent::Heartbeat(Utc::now()));
-                }
-                let event = pending.pop_front().expect("private event queue populated");
-                Some((Ok(event), (connector, account, pending)))
-            },
-        )))
+        let _ = account;
+        let credentials = self.credentials.as_ref().ok_or_else(|| ConnectorError {
+            kind: ConnectorErrorKind::FatalConfiguration,
+            code: "BYBIT_CREDENTIALS_MISSING".into(),
+            message: "Bybit credentials are not configured".into(),
+            retry_after_ms: None,
+        })?;
+        let expires = Utc::now().timestamp_millis().saturating_add(10_000);
+        let signature = hmac_hex(
+            credentials.api_secret.as_bytes(),
+            format!("GET/realtime{expires}").as_bytes(),
+        )?;
+        let frames = connect_json(JsonWsConfig {
+            name: "BYBIT_PRIVATE",
+            url: bybit_private_ws_url(self.environment).to_owned(),
+            initial_messages: vec![
+                json!({"op": "auth", "args": [credentials.api_key.clone(), expires, signature]}),
+                json!({"op": "subscribe", "args": ["order", "execution", "wallet", "position"]}),
+            ],
+            heartbeat: Some(r#"{"op":"ping"}"#.into()),
+            inactivity_timeout: Duration::from_secs(20),
+        });
+        Ok(Box::pin(frames.flat_map(|frame| {
+            let events = match frame {
+                Err(error) => vec![Err(error)],
+                Ok(frame) => match parse_private_frame(&frame) {
+                    Ok(events) => events.into_iter().map(Ok).collect(),
+                    Err(error) => vec![Err(error)],
+                },
+            };
+            stream::iter(events)
+        })))
     }
 
     async fn fee_schedule(&self, _account: &AccountId) -> ConnectorResult<Vec<FeeSchedule>> {
@@ -735,6 +759,191 @@ impl VenueConnector for BybitConnector {
     }
 }
 
+fn bybit_public_ws_url(environment: VenueEnvironment, product: ProductType) -> &'static str {
+    match (environment, product) {
+        (VenueEnvironment::Testnet, ProductType::Spot) => {
+            "wss://stream-testnet.bybit.com/v5/public/spot"
+        }
+        (VenueEnvironment::Testnet, ProductType::LinearPerpetual) => {
+            "wss://stream-testnet.bybit.com/v5/public/linear"
+        }
+        (_, ProductType::Spot) => "wss://stream.bybit.com/v5/public/spot",
+        (_, ProductType::LinearPerpetual) => "wss://stream.bybit.com/v5/public/linear",
+    }
+}
+
+fn bybit_private_ws_url(environment: VenueEnvironment) -> &'static str {
+    match environment {
+        VenueEnvironment::Testnet => "wss://stream-testnet.bybit.com/v5/private",
+        VenueEnvironment::Demo => "wss://stream-demo.bybit.com/v5/private",
+        VenueEnvironment::Production => "wss://stream.bybit.com/v5/private",
+    }
+}
+
+fn parse_market_frame(
+    frame: &Value,
+    subscriptions: &[MarketSubscription],
+) -> ConnectorResult<Option<MarketEvent>> {
+    let Some(topic) = frame.get("topic").and_then(Value::as_str) else {
+        if frame.get("success").is_some()
+            || frame.get("op").is_some()
+            || frame.get("_perpeto_transport").is_some()
+        {
+            return Ok(None);
+        }
+        return Err(invalid("WS_TOPIC_MISSING"));
+    };
+    let symbol = topic
+        .rsplit('.')
+        .next()
+        .ok_or_else(|| invalid("WS_TOPIC_INVALID"))?;
+    let subscription = subscriptions
+        .iter()
+        .find(|subscription| subscription.instrument.symbol == symbol)
+        .ok_or_else(|| invalid("WS_UNSUBSCRIBED_SYMBOL"))?;
+    let data = frame
+        .get("data")
+        .ok_or_else(|| invalid("WS_DATA_MISSING"))?;
+    let sequence = u64_value(data, "u")?;
+    let timestamp = frame
+        .get("cts")
+        .or_else(|| frame.get("ts"))
+        .and_then(Value::as_i64)
+        .ok_or_else(|| invalid("WS_TIMESTAMP_MISSING"))?;
+    let common = (
+        subscription.instrument.clone(),
+        levels(data, "b")?,
+        levels(data, "a")?,
+        millis(timestamp)?,
+        Utc::now(),
+    );
+    match frame.get("type").and_then(Value::as_str) {
+        Some("snapshot") => Ok(Some(MarketEvent::BookSnapshot {
+            instrument: common.0,
+            sequence,
+            bids: common.1,
+            asks: common.2,
+            venue_time: common.3,
+            received_at: common.4,
+            checksum: None,
+        })),
+        Some("delta") if sequence == 1 => Ok(Some(MarketEvent::BookSnapshot {
+            instrument: common.0,
+            sequence,
+            bids: common.1,
+            asks: common.2,
+            venue_time: common.3,
+            received_at: common.4,
+            checksum: None,
+        })),
+        Some("delta") => Ok(Some(MarketEvent::BookDelta {
+            instrument: common.0,
+            first_sequence: sequence,
+            last_sequence: sequence,
+            bids: common.1,
+            asks: common.2,
+            venue_time: common.3,
+            received_at: common.4,
+            checksum: None,
+        })),
+        _ => Err(invalid("WS_TYPE_INVALID")),
+    }
+}
+
+fn parse_private_frame(frame: &Value) -> ConnectorResult<Vec<PrivateEvent>> {
+    if frame.get("_perpeto_transport").is_some() {
+        return Ok(vec![PrivateEvent::Heartbeat(Utc::now())]);
+    }
+    let Some(topic) = frame.get("topic").and_then(Value::as_str) else {
+        if frame.get("op").is_some() || frame.get("success").is_some() {
+            return Ok(Vec::new());
+        }
+        return Err(invalid("PRIVATE_TOPIC_MISSING"));
+    };
+    let items = array(frame, "data")?;
+    let mut events = Vec::new();
+    for item in items {
+        if topic.starts_with("order") {
+            events.push(PrivateEvent::Order(parse_order(
+                item,
+                product_from_category(item),
+            )?));
+        } else if topic.starts_with("execution") {
+            events.push(PrivateEvent::Fill(Fill {
+                venue_fill_id: text(item, "execId")?.into(),
+                venue_order_id: text(item, "orderId")?.into(),
+                instrument: InstrumentId {
+                    venue: Venue::Bybit,
+                    symbol: text(item, "symbol")?.into(),
+                    product: product_from_category(item),
+                },
+                quantity: decimal(item, "execQty")?,
+                price: decimal(item, "execPrice")?,
+                fee: decimal(item, "execFee")?,
+                fee_asset: item
+                    .get("feeCurrency")
+                    .and_then(Value::as_str)
+                    .unwrap_or("UNKNOWN")
+                    .into(),
+                occurred_at: millis(i64_text(item, "execTime")?)?,
+                received_at: Utc::now(),
+            }));
+        } else if topic.starts_with("position") {
+            let mut quantity = decimal(item, "size")?;
+            if item.get("side").and_then(Value::as_str) == Some("Sell") {
+                quantity = -quantity;
+            }
+            events.push(PrivateEvent::Position(VenuePosition {
+                instrument: InstrumentId {
+                    venue: Venue::Bybit,
+                    symbol: text(item, "symbol")?.into(),
+                    product: product_from_category(item),
+                },
+                quantity,
+                entry_price: optional_decimal(item, "entryPrice")?.unwrap_or(Decimal::ZERO),
+                mark_price: optional_decimal(item, "markPrice")?.unwrap_or(Decimal::ZERO),
+                leverage: optional_decimal(item, "leverage")?.unwrap_or(Decimal::ONE),
+                liquidation_price: optional_decimal(item, "liqPrice")?,
+                venue_updated_at: item
+                    .get("updatedTime")
+                    .and_then(Value::as_str)
+                    .and_then(|value| value.parse::<i64>().ok())
+                    .and_then(|value| millis(value).ok()),
+                received_at: Utc::now(),
+            }));
+        } else if topic.starts_with("wallet") {
+            for coin in item
+                .get("coin")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+            {
+                let total = decimal(coin, "walletBalance")?;
+                let available = optional_decimal(coin, "availableToWithdraw")?
+                    .or(optional_decimal(coin, "availableBalance")?)
+                    .unwrap_or(total);
+                events.push(PrivateEvent::Balance(Balance {
+                    asset: text(coin, "coin")?.into(),
+                    total,
+                    available,
+                    locked: (total - available).max(Decimal::ZERO),
+                    venue_updated_at: None,
+                    received_at: Utc::now(),
+                }));
+            }
+        }
+    }
+    Ok(events)
+}
+
+fn product_from_category(item: &Value) -> ProductType {
+    if item.get("category").and_then(Value::as_str) == Some("spot") {
+        ProductType::Spot
+    } else {
+        ProductType::LinearPerpetual
+    }
+}
+
 fn parse_order(item: &Value, product: ProductType) -> ConnectorResult<VenueOrder> {
     Ok(VenueOrder {
         instrument: InstrumentId {
@@ -913,5 +1122,37 @@ mod tests {
             }),
         );
         assert!(!connector.capabilities().order_submission);
+    }
+
+    #[test]
+    fn websocket_snapshot_and_restart_reset_are_normalized() {
+        let subscriptions = vec![MarketSubscription {
+            instrument: InstrumentId {
+                venue: Venue::Bybit,
+                symbol: "BTCUSDT".into(),
+                product: ProductType::LinearPerpetual,
+            },
+            depth: 50,
+        }];
+        let snapshot = json!({
+            "topic": "orderbook.50.BTCUSDT",
+            "type": "snapshot",
+            "cts": 1_720_000_000_000_i64,
+            "data": {"u": 100, "seq": 200, "b": [["60000", "1"]], "a": [["60001", "2"]]}
+        });
+        assert!(matches!(
+            parse_market_frame(&snapshot, &subscriptions).expect("parse"),
+            Some(MarketEvent::BookSnapshot { sequence: 100, .. })
+        ));
+        let restart = json!({
+            "topic": "orderbook.50.BTCUSDT",
+            "type": "delta",
+            "ts": 1_720_000_000_001_i64,
+            "data": {"u": 1, "seq": 201, "b": [], "a": []}
+        });
+        assert!(matches!(
+            parse_market_frame(&restart, &subscriptions).expect("parse"),
+            Some(MarketEvent::BookSnapshot { sequence: 1, .. })
+        ));
     }
 }

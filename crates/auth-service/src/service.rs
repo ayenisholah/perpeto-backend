@@ -5,6 +5,7 @@
 
 use std::sync::Arc;
 
+use funding_arb_tenant_context::{TenantContext, TenantId};
 use subtle::ConstantTimeEq;
 use uuid::Uuid;
 
@@ -40,6 +41,14 @@ pub struct CallerContext {
 }
 
 impl CallerContext {
+    /// Immutable tenant context derived from the verified session claim.
+    pub fn tenant_context(&self) -> AuthResult<TenantContext> {
+        self.tenant_id
+            .parse::<TenantId>()
+            .map(TenantContext::new)
+            .map_err(|_| AuthError::Unauthorized)
+    }
+
     /// Whether the caller holds an active owner role.
     #[must_use]
     pub fn is_owner(&self) -> bool {

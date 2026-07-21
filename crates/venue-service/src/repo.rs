@@ -9,6 +9,7 @@ use crate::{
     InstrumentDto, ProductConnectionDto, ReconciliationRunDto, VenueAccountDto,
 };
 use funding_arb_connectors::VenueHealth;
+use funding_arb_tenant_context::{TenantContext, TenantTransaction};
 
 #[derive(Clone)]
 pub struct VenueAccountsRepo {
@@ -26,31 +27,46 @@ impl ConnectorMonitoringRepo {
         Self { pool }
     }
 
-    pub async fn orders(&self) -> Result<Vec<ConnectorOrderDto>, sqlx::Error> {
+    pub async fn orders(
+        &self,
+        context: TenantContext,
+    ) -> Result<Vec<ConnectorOrderDto>, sqlx::Error> {
+        let mut transaction = TenantTransaction::begin(&self.pool, context).await?;
         let rows = sqlx::query(
             "SELECT id::text, venue, venue_account_id::text, client_order_id, venue_order_id,
                     symbol, product, side, base_quantity::text, limit_price::text,
                     native_quantity::text, native_price::text, equivalent_base_quantity::text,
                     projected_delta_usd::text, reduce_only, environment, state, payload_hash,
                     error_code, created_at, updated_at
-             FROM connector_order_intents ORDER BY created_at DESC LIMIT 100",
+             FROM connector_order_intents WHERE tenant_id = $1
+             ORDER BY created_at DESC LIMIT 100",
         )
-        .fetch_all(&self.pool)
+        .bind(context.tenant_id().as_uuid())
+        .fetch_all(transaction.connection())
         .await?;
+        transaction.commit().await?;
         Ok(rows.iter().map(order_dto).collect())
     }
 
-    pub async fn reconciliations(&self) -> Result<Vec<ReconciliationRunDto>, sqlx::Error> {
+    pub async fn reconciliations(
+        &self,
+        context: TenantContext,
+    ) -> Result<Vec<ReconciliationRunDto>, sqlx::Error> {
+        let mut transaction = TenantTransaction::begin(&self.pool, context).await?;
         let rows = sqlx::query(
             "SELECT run.id::text, run.venue, run.venue_account_id::text, run.status,
                     run.started_at, run.completed_at, run.balances_seen, run.positions_seen,
                     run.open_orders_seen, run.fills_seen, COUNT(discrepancy.id)::bigint AS discrepancies
              FROM connector_reconciliation_runs run
-             LEFT JOIN connector_discrepancies discrepancy ON discrepancy.run_id = run.id
+             LEFT JOIN connector_discrepancies discrepancy
+               ON discrepancy.run_id = run.id AND discrepancy.tenant_id = run.tenant_id
+             WHERE run.tenant_id = $1
              GROUP BY run.id ORDER BY run.started_at DESC LIMIT 50",
         )
-        .fetch_all(&self.pool)
+        .bind(context.tenant_id().as_uuid())
+        .fetch_all(transaction.connection())
         .await?;
+        transaction.commit().await?;
         Ok(rows
             .iter()
             .map(|row| ReconciliationRunDto {
@@ -73,17 +89,22 @@ impl ConnectorMonitoringRepo {
 
     pub async fn accounting(
         &self,
+        context: TenantContext,
         account_id: &str,
     ) -> Result<ConnectorAccountingDto, sqlx::Error> {
+        let mut transaction = TenantTransaction::begin(&self.pool, context).await?;
         let run_id = sqlx::query_scalar::<_, Uuid>(
             "SELECT id FROM connector_reconciliation_runs
-             WHERE venue_account_id = $1 AND status IN ('RECONCILED', 'REQUIRED')
+             WHERE tenant_id = $1 AND venue_account_id = $2
+               AND status IN ('RECONCILED', 'REQUIRED')
              ORDER BY started_at DESC LIMIT 1",
         )
+        .bind(context.tenant_id().as_uuid())
         .bind(parse_uuid(account_id)?)
-        .fetch_optional(&self.pool)
+        .fetch_optional(transaction.connection())
         .await?;
         let Some(run_id) = run_id else {
+            transaction.commit().await?;
             return Ok(ConnectorAccountingDto {
                 venue_account_id: account_id.into(),
                 run_id: None,
@@ -93,10 +114,12 @@ impl ConnectorMonitoringRepo {
         };
         let balances = sqlx::query(
             "SELECT asset, total::text, available::text, locked::text, received_at
-             FROM connector_balance_snapshots WHERE run_id = $1 ORDER BY asset",
+             FROM connector_balance_snapshots
+             WHERE tenant_id = $1 AND run_id = $2 ORDER BY asset",
         )
+        .bind(context.tenant_id().as_uuid())
         .bind(run_id)
-        .fetch_all(&self.pool)
+        .fetch_all(transaction.connection())
         .await?
         .iter()
         .map(|row| ExactBalanceDto {
@@ -110,10 +133,12 @@ impl ConnectorMonitoringRepo {
         let positions = sqlx::query(
             "SELECT symbol, product, quantity::text, entry_price::text, mark_price::text,
                     leverage::text, liquidation_price::text, received_at
-             FROM connector_position_snapshots WHERE run_id = $1 ORDER BY symbol, product",
+             FROM connector_position_snapshots
+             WHERE tenant_id = $1 AND run_id = $2 ORDER BY symbol, product",
         )
+        .bind(context.tenant_id().as_uuid())
         .bind(run_id)
-        .fetch_all(&self.pool)
+        .fetch_all(transaction.connection())
         .await?
         .iter()
         .map(|row| ExactVenuePositionDto {
@@ -127,12 +152,14 @@ impl ConnectorMonitoringRepo {
             received_at: row.get::<DateTime<Utc>, _>("received_at").to_rfc3339(),
         })
         .collect();
-        Ok(ConnectorAccountingDto {
+        let result = ConnectorAccountingDto {
             venue_account_id: account_id.into(),
             run_id: Some(run_id.to_string()),
             balances,
             positions,
-        })
+        };
+        transaction.commit().await?;
+        Ok(result)
     }
 }
 
@@ -142,17 +169,22 @@ impl VenueAccountsRepo {
         Self { pool }
     }
 
-    pub async fn create(&self, account: &VenueAccountDto) -> Result<(), sqlx::Error> {
+    pub async fn create(
+        &self,
+        context: TenantContext,
+        account: &VenueAccountDto,
+    ) -> Result<(), sqlx::Error> {
         let id = parse_uuid(&account.id)?;
         let created_at = parse_time(&account.created_at)?;
         let payload = encode(account)?;
-        let mut transaction = self.pool.begin().await?;
+        let mut transaction = TenantTransaction::begin(&self.pool, context).await?;
         sqlx::query(
             "INSERT INTO venue_accounts \
-             (id, venue, alias, enabled, certification_state, reconciliation_state, \
+             (tenant_id, id, venue, alias, enabled, certification_state, reconciliation_state, \
               masked_identity, created_at, payload) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
         )
+        .bind(context.tenant_id().as_uuid())
         .bind(id)
         .bind(&account.venue)
         .bind(&account.alias)
@@ -162,52 +194,74 @@ impl VenueAccountsRepo {
         .bind(&account.masked_identity)
         .bind(created_at)
         .bind(payload)
-        .execute(&mut *transaction)
+        .execute(transaction.connection())
         .await?;
         for connection in &account.connections {
             sqlx::query(
                 "INSERT INTO venue_product_connections \
-                 (id, venue_account_id, product, environment, secret_ref, enabled, payload) \
-                 VALUES ($1, $2, $3, $4, $5, true, $6)",
+                 (tenant_id, id, venue_account_id, product, environment, secret_ref, enabled, payload) \
+                 VALUES ($1, $2, $3, $4, $5, $6, true, $7)",
             )
+            .bind(context.tenant_id().as_uuid())
             .bind(parse_uuid(&connection.id)?)
             .bind(id)
             .bind(&connection.product)
             .bind(&connection.environment)
             .bind(&connection.secret_ref)
             .bind(serde_json::to_string(connection).map_err(protocol)?)
-            .execute(&mut *transaction)
+            .execute(transaction.connection())
             .await?;
         }
         transaction.commit().await
     }
 
-    pub async fn list(&self) -> Result<Vec<VenueAccountDto>, sqlx::Error> {
+    pub async fn list(&self, context: TenantContext) -> Result<Vec<VenueAccountDto>, sqlx::Error> {
+        let mut transaction = TenantTransaction::begin(&self.pool, context).await?;
         let rows = sqlx::query(
-            "SELECT payload FROM venue_accounts WHERE tombstoned_at IS NULL \
+            "SELECT payload FROM venue_accounts
+             WHERE tenant_id = $1 AND tombstoned_at IS NULL \
              ORDER BY created_at, id",
         )
-        .fetch_all(&self.pool)
+        .bind(context.tenant_id().as_uuid())
+        .fetch_all(transaction.connection())
         .await?;
-        rows.iter()
+        let result = rows
+            .iter()
             .map(|row| decode(&row.get::<String, _>("payload")))
-            .collect()
+            .collect();
+        transaction.commit().await?;
+        result
     }
 
-    pub async fn get(&self, id: &str) -> Result<Option<VenueAccountDto>, sqlx::Error> {
-        let row = sqlx::query("SELECT payload FROM venue_accounts WHERE id = $1")
-            .bind(parse_uuid(id)?)
-            .fetch_optional(&self.pool)
-            .await?;
-        row.map(|value| decode(&value.get::<String, _>("payload")))
-            .transpose()
+    pub async fn get(
+        &self,
+        context: TenantContext,
+        id: &str,
+    ) -> Result<Option<VenueAccountDto>, sqlx::Error> {
+        let mut transaction = TenantTransaction::begin(&self.pool, context).await?;
+        let row =
+            sqlx::query("SELECT payload FROM venue_accounts WHERE tenant_id = $1 AND id = $2")
+                .bind(context.tenant_id().as_uuid())
+                .bind(parse_uuid(id)?)
+                .fetch_optional(transaction.connection())
+                .await?;
+        let result = row
+            .map(|value| decode(&value.get::<String, _>("payload")))
+            .transpose();
+        transaction.commit().await?;
+        result
     }
 
-    pub async fn update(&self, account: &VenueAccountDto) -> Result<(), sqlx::Error> {
+    pub async fn update(
+        &self,
+        context: TenantContext,
+        account: &VenueAccountDto,
+    ) -> Result<(), sqlx::Error> {
+        let mut transaction = TenantTransaction::begin(&self.pool, context).await?;
         sqlx::query(
             "UPDATE venue_accounts SET enabled = $2, certification_state = $3, \
              reconciliation_state = $4, last_reconciled_at = $5, tombstoned_at = $6, \
-             payload = $7 WHERE id = $1",
+             payload = $7 WHERE tenant_id = $8 AND id = $1",
         )
         .bind(parse_uuid(&account.id)?)
         .bind(account.enabled)
@@ -216,29 +270,33 @@ impl VenueAccountsRepo {
         .bind(parse_optional_time(account.last_reconciled_at.as_deref())?)
         .bind(parse_optional_time(account.tombstoned_at.as_deref())?)
         .bind(encode(account)?)
-        .execute(&self.pool)
-        .await
-        .map(|_| ())
+        .bind(context.tenant_id().as_uuid())
+        .execute(transaction.connection())
+        .await?;
+        transaction.commit().await
     }
 
     pub async fn update_connection(
         &self,
+        context: TenantContext,
         account_id: &str,
         connection: &ProductConnectionDto,
     ) -> Result<(), sqlx::Error> {
+        let mut transaction = TenantTransaction::begin(&self.pool, context).await?;
         sqlx::query(
             "UPDATE venue_product_connections
              SET secret_ref = $3, enabled = $4, payload = $5
-             WHERE id = $1 AND venue_account_id = $2",
+             WHERE tenant_id = $6 AND id = $1 AND venue_account_id = $2",
         )
         .bind(parse_uuid(&connection.id)?)
         .bind(parse_uuid(account_id)?)
         .bind(&connection.secret_ref)
         .bind(connection.status != "DISABLED")
         .bind(serde_json::to_string(connection).map_err(protocol)?)
-        .execute(&self.pool)
-        .await
-        .map(|_| ())
+        .bind(context.tenant_id().as_uuid())
+        .execute(transaction.connection())
+        .await?;
+        transaction.commit().await
     }
 
     pub async fn upsert_instrument(&self, instrument: &InstrumentDto) -> Result<(), sqlx::Error> {
@@ -291,17 +349,20 @@ impl VenueAccountsRepo {
 
     pub async fn record_health(
         &self,
-        account_id: Option<&str>,
+        context: TenantContext,
+        account_id: &str,
         health: &VenueHealth,
     ) -> Result<(), sqlx::Error> {
+        let mut transaction = TenantTransaction::begin(&self.pool, context).await?;
         sqlx::query(
             "INSERT INTO venue_health_samples
-             (id, venue_account_id, venue, environment, status, clock_drift_ms,
+             (tenant_id, id, venue_account_id, venue, environment, status, clock_drift_ms,
               rate_limit_remaining, observed_at, payload)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
         )
+        .bind(context.tenant_id().as_uuid())
         .bind(Uuid::new_v4())
-        .bind(account_id.map(parse_uuid).transpose()?)
+        .bind(parse_uuid(account_id)?)
         .bind(health.venue.as_str())
         .bind(health.environment.as_str())
         .bind(format!("{:?}", health.status).to_ascii_uppercase())
@@ -321,9 +382,9 @@ impl VenueAccountsRepo {
             })
             .to_string(),
         )
-        .execute(&self.pool)
-        .await
-        .map(|_| ())
+        .execute(transaction.connection())
+        .await?;
+        transaction.commit().await
     }
 }
 

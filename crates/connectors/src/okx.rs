@@ -1,12 +1,12 @@
 //! OKX V5 spot and USDT perpetual adapter with demo-trading isolation.
 
-use std::{collections::VecDeque, str::FromStr, sync::Arc, time::Duration};
+use std::{str::FromStr, sync::Arc, time::Duration};
 
 use async_trait::async_trait;
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use chrono::{DateTime, SecondsFormat, TimeZone, Utc};
 use funding_arb_domain::market::Venue;
-use futures_util::stream;
+use futures_util::{StreamExt, stream};
 use hmac::{Hmac, Mac};
 use reqwest::Method;
 use rust_decimal::Decimal;
@@ -14,6 +14,7 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use tokio::sync::RwLock;
 
+use crate::ws::{JsonWsConfig, connect_json};
 use crate::{
     AccountId, Balance, CancelAck, CancelRequest, CanonicalOrderIntent, ConnectorCredentials,
     ConnectorError, ConnectorErrorKind, ConnectorResult, FeeSchedule, Fill, FillPage,
@@ -360,45 +361,77 @@ impl VenueConnector for OkxConnector {
         if subscriptions.is_empty() {
             return Err(invalid("EMPTY_SUBSCRIPTION"));
         }
-        let connector = self.clone();
-        Ok(Box::pin(stream::unfold(
-            (connector, subscriptions, 0_usize),
-            |(connector, subscriptions, index)| async move {
-                if index > 0 {
-                    tokio::time::sleep(Duration::from_millis(250)).await;
+        let args = subscriptions
+            .iter()
+            .map(|subscription| {
+                json!({"channel": "books", "instId": subscription.instrument.symbol})
+            })
+            .collect::<Vec<_>>();
+        let stream_subscriptions = Arc::new(subscriptions);
+        let frames = connect_json(JsonWsConfig {
+            name: "OKX",
+            url: "wss://ws.okx.com:8443/ws/v5/public".into(),
+            initial_messages: vec![json!({"op": "subscribe", "args": args})],
+            heartbeat: Some("ping".into()),
+            inactivity_timeout: Duration::from_secs(20),
+        });
+        Ok(Box::pin(frames.filter_map(move |frame| {
+            let subscriptions = stream_subscriptions.clone();
+            async move {
+                match frame {
+                    Err(error) => Some(Err(error)),
+                    Ok(frame) => match parse_market_frame(&frame, &subscriptions) {
+                        Ok(Some(event)) => Some(Ok(event)),
+                        Ok(None) => None,
+                        Err(error) => Some(Err(error)),
+                    },
                 }
-                let selected = index % subscriptions.len();
-                let event = connector.book_snapshot(&subscriptions[selected]).await;
-                Some((event, (connector, subscriptions, index + 1)))
-            },
-        )))
+            }
+        })))
     }
 
     async fn private_stream(&self, account: &AccountId) -> ConnectorResult<PrivateEventStream> {
-        let connector = self.clone();
-        let account = account.clone();
-        Ok(Box::pin(stream::unfold(
-            (connector, account, VecDeque::new()),
-            |(connector, account, mut pending)| async move {
-                if let Some(event) = pending.pop_front() {
-                    return Some((Ok(event), (connector, account, pending)));
-                }
-                tokio::time::sleep(Duration::from_secs(5)).await;
-                match connector.open_orders(&account).await {
-                    Ok(orders) => pending.extend(orders.into_iter().map(PrivateEvent::Order)),
-                    Err(error) => return Some((Err(error), (connector, account, pending))),
-                }
-                match connector.fills(&account, None).await {
-                    Ok(page) => pending.extend(page.fills.into_iter().map(PrivateEvent::Fill)),
-                    Err(error) => return Some((Err(error), (connector, account, pending))),
-                }
-                if pending.is_empty() {
-                    pending.push_back(PrivateEvent::Heartbeat(Utc::now()));
-                }
-                let event = pending.pop_front().expect("private event queue populated");
-                Some((Ok(event), (connector, account, pending)))
-            },
-        )))
+        let _ = account;
+        let credentials = self.credentials.as_ref().ok_or_else(|| ConnectorError {
+            kind: ConnectorErrorKind::FatalConfiguration,
+            code: "OKX_CREDENTIALS_MISSING".into(),
+            message: "OKX credentials are not configured".into(),
+            retry_after_ms: None,
+        })?;
+        let passphrase = credentials
+            .passphrase
+            .as_deref()
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| invalid("PASSPHRASE_MISSING"))?;
+        let timestamp = Utc::now().timestamp().to_string();
+        let signature = hmac_base64(
+            credentials.api_secret.as_bytes(),
+            format!("{timestamp}GET/users/self/verify").as_bytes(),
+        )?;
+        let frames = connect_json(JsonWsConfig {
+            name: "OKX_PRIVATE",
+            url: okx_private_ws_url(self.environment).to_owned(),
+            initial_messages: vec![
+                json!({"op": "login", "args": [{"apiKey": credentials.api_key.clone(), "passphrase": passphrase, "timestamp": timestamp, "sign": signature}]}),
+                json!({"op": "subscribe", "args": [
+                    {"channel": "orders", "instType": "ANY"},
+                    {"channel": "account"},
+                    {"channel": "positions", "instType": "ANY"}
+                ]}),
+            ],
+            heartbeat: Some("ping".into()),
+            inactivity_timeout: Duration::from_secs(20),
+        });
+        Ok(Box::pin(frames.flat_map(|frame| {
+            let events = match frame {
+                Err(error) => vec![Err(error)],
+                Ok(frame) => match parse_private_frame(&frame) {
+                    Ok(events) => events.into_iter().map(Ok).collect(),
+                    Err(error) => vec![Err(error)],
+                },
+            };
+            stream::iter(events)
+        })))
     }
 
     async fn fee_schedule(&self, _account: &AccountId) -> ConnectorResult<Vec<FeeSchedule>> {
@@ -757,6 +790,178 @@ impl VenueConnector for OkxConnector {
     }
 }
 
+fn parse_market_frame(
+    frame: &Value,
+    subscriptions: &[MarketSubscription],
+) -> ConnectorResult<Option<MarketEvent>> {
+    if frame.get("event").is_some() || frame.get("_perpeto_transport").is_some() {
+        return Ok(None);
+    }
+    let argument = frame
+        .get("arg")
+        .ok_or_else(|| invalid("WS_ARGUMENT_MISSING"))?;
+    if argument.get("channel").and_then(Value::as_str) != Some("books") {
+        return Ok(None);
+    }
+    let symbol = text(argument, "instId")?;
+    let subscription = subscriptions
+        .iter()
+        .find(|subscription| subscription.instrument.symbol == symbol)
+        .ok_or_else(|| invalid("WS_UNSUBSCRIBED_SYMBOL"))?;
+    let item = data(frame)?
+        .first()
+        .ok_or_else(|| invalid("WS_DATA_EMPTY"))?;
+    let sequence = i64_text(item, "seqId")?;
+    if sequence < 0 {
+        return Err(reconciliation("SEQUENCE_RESET"));
+    }
+    let sequence = u64::try_from(sequence).map_err(|_| invalid("WS_SEQUENCE_INVALID"))?;
+    let venue_time = millis(i64_text(item, "ts")?)?;
+    let checksum = item.get("checksum").map(value_to_string).transpose()?;
+    match frame.get("action").and_then(Value::as_str) {
+        Some("snapshot") => Ok(Some(MarketEvent::BookSnapshot {
+            instrument: subscription.instrument.clone(),
+            sequence,
+            bids: levels(item, "bids")?,
+            asks: levels(item, "asks")?,
+            venue_time,
+            received_at: Utc::now(),
+            checksum,
+        })),
+        Some("update") => {
+            let previous = i64_text(item, "prevSeqId")?;
+            if previous < 0 {
+                return Err(reconciliation("PREVIOUS_SEQUENCE_RESET"));
+            }
+            let previous =
+                u64::try_from(previous).map_err(|_| invalid("WS_PREVIOUS_SEQUENCE_INVALID"))?;
+            Ok(Some(MarketEvent::BookDelta {
+                instrument: subscription.instrument.clone(),
+                first_sequence: previous.saturating_add(1),
+                last_sequence: sequence,
+                bids: levels(item, "bids")?,
+                asks: levels(item, "asks")?,
+                venue_time,
+                received_at: Utc::now(),
+                checksum,
+            }))
+        }
+        _ => Err(invalid("WS_ACTION_INVALID")),
+    }
+}
+
+fn okx_private_ws_url(environment: VenueEnvironment) -> &'static str {
+    if environment == VenueEnvironment::Demo {
+        "wss://wspap.okx.com:8443/ws/v5/private"
+    } else {
+        "wss://ws.okx.com:8443/ws/v5/private"
+    }
+}
+
+fn parse_private_frame(frame: &Value) -> ConnectorResult<Vec<PrivateEvent>> {
+    if frame.get("_perpeto_transport").is_some() {
+        return Ok(vec![PrivateEvent::Heartbeat(Utc::now())]);
+    }
+    if frame.get("event").is_some() {
+        if frame.get("event").and_then(Value::as_str) == Some("error") {
+            return Err(reconciliation("PRIVATE_SUBSCRIPTION_FAILED"));
+        }
+        return Ok(Vec::new());
+    }
+    let argument = frame
+        .get("arg")
+        .ok_or_else(|| invalid("PRIVATE_ARGUMENT_MISSING"))?;
+    let channel = text(argument, "channel")?;
+    let mut events = Vec::new();
+    for item in data(frame)? {
+        if channel == "orders" {
+            let order = parse_order(item)?;
+            let trade_id = item
+                .get("tradeId")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            let fill_quantity = optional_decimal(item, "fillSz")?.unwrap_or(Decimal::ZERO);
+            events.push(PrivateEvent::Order(order.clone()));
+            if !trade_id.is_empty() && fill_quantity > Decimal::ZERO {
+                events.push(PrivateEvent::Fill(Fill {
+                    venue_fill_id: trade_id.into(),
+                    venue_order_id: order.venue_order_id,
+                    instrument: order.instrument,
+                    quantity: fill_quantity,
+                    price: optional_decimal(item, "fillPx")?.unwrap_or(Decimal::ZERO),
+                    fee: optional_decimal(item, "fee")?
+                        .unwrap_or(Decimal::ZERO)
+                        .abs(),
+                    fee_asset: item
+                        .get("feeCcy")
+                        .and_then(Value::as_str)
+                        .unwrap_or("UNKNOWN")
+                        .into(),
+                    occurred_at: item
+                        .get("fillTime")
+                        .and_then(Value::as_str)
+                        .and_then(|value| value.parse::<i64>().ok())
+                        .and_then(|value| millis(value).ok())
+                        .unwrap_or_else(Utc::now),
+                    received_at: Utc::now(),
+                }));
+            }
+        } else if channel == "account" {
+            for detail in item
+                .get("details")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+            {
+                let total = optional_decimal(detail, "eq")?.unwrap_or(Decimal::ZERO);
+                let available = optional_decimal(detail, "availEq")?
+                    .or(optional_decimal(detail, "availBal")?)
+                    .unwrap_or(total);
+                events.push(PrivateEvent::Balance(Balance {
+                    asset: text(detail, "ccy")?.into(),
+                    total,
+                    available,
+                    locked: (total - available).max(Decimal::ZERO),
+                    venue_updated_at: item
+                        .get("uTime")
+                        .and_then(Value::as_str)
+                        .and_then(|value| value.parse::<i64>().ok())
+                        .and_then(|value| millis(value).ok()),
+                    received_at: Utc::now(),
+                }));
+            }
+        } else if channel == "positions" {
+            events.push(PrivateEvent::Position(VenuePosition {
+                instrument: instrument_id(
+                    text(item, "instId")?,
+                    product_from_symbol(text(item, "instId")?),
+                ),
+                quantity: decimal(item, "pos")?,
+                entry_price: optional_decimal(item, "avgPx")?.unwrap_or(Decimal::ZERO),
+                mark_price: optional_decimal(item, "markPx")?.unwrap_or(Decimal::ZERO),
+                leverage: optional_decimal(item, "lever")?.unwrap_or(Decimal::ONE),
+                liquidation_price: optional_decimal(item, "liqPx")?,
+                venue_updated_at: item
+                    .get("uTime")
+                    .and_then(Value::as_str)
+                    .and_then(|value| value.parse::<i64>().ok())
+                    .and_then(|value| millis(value).ok()),
+                received_at: Utc::now(),
+            }));
+        }
+    }
+    Ok(events)
+}
+
+fn reconciliation(code: &str) -> ConnectorError {
+    ConnectorError {
+        kind: ConnectorErrorKind::ReconciliationRequired,
+        code: format!("OKX_{code}"),
+        message: "OKX market sequence is uncertain; a fresh snapshot is required".into(),
+        retry_after_ms: None,
+    }
+}
+
 fn parse_order(item: &Value) -> ConnectorResult<VenueOrder> {
     let symbol = text(item, "instId")?;
     let product = product_from_symbol(symbol);
@@ -965,5 +1170,32 @@ mod tests {
             ProductType::LinearPerpetual
         );
         assert_eq!(product_from_symbol("BTC-USDT"), ProductType::Spot);
+    }
+
+    #[test]
+    fn websocket_delta_preserves_previous_sequence_and_checksum() {
+        let subscriptions = vec![MarketSubscription {
+            instrument: instrument_id("BTC-USDT-SWAP", ProductType::LinearPerpetual),
+            depth: 50,
+        }];
+        let frame = json!({
+            "arg": {"channel": "books", "instId": "BTC-USDT-SWAP"},
+            "action": "update",
+            "data": [{
+                "ts": "1720000000000", "prevSeqId": "100", "seqId": "102",
+                "checksum": -12345,
+                "bids": [["60000", "1", "0", "1"]],
+                "asks": [["60001", "2", "0", "1"]]
+            }]
+        });
+        assert!(matches!(
+            parse_market_frame(&frame, &subscriptions).expect("parse"),
+            Some(MarketEvent::BookDelta {
+                first_sequence: 101,
+                last_sequence: 102,
+                checksum: Some(_),
+                ..
+            })
+        ));
     }
 }

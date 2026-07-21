@@ -2,6 +2,7 @@
 
 use crate::{BreakersRepo, PositionDto, PositionsRepo};
 use chrono::{DateTime, Utc};
+use funding_arb_tenant_context::{TenantContext, TenantTransaction};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use sqlx::{PgPool, Row};
@@ -92,11 +93,19 @@ impl MonitoringRepo {
             pool,
         }
     }
-    pub async fn portfolio(&self, now: DateTime<Utc>) -> Result<PortfolioDto, sqlx::Error> {
-        Ok(aggregate(&self.positions.list().await?, now))
+    pub async fn portfolio(
+        &self,
+        context: TenantContext,
+        now: DateTime<Utc>,
+    ) -> Result<PortfolioDto, sqlx::Error> {
+        Ok(aggregate(&self.positions.list(context).await?, now))
     }
-    pub async fn health(&self, now: DateTime<Utc>) -> Result<HealthDto, sqlx::Error> {
-        let controls = self.breakers.controls().await?;
+    pub async fn health(
+        &self,
+        context: TenantContext,
+        now: DateTime<Utc>,
+    ) -> Result<HealthDto, sqlx::Error> {
+        let controls = self.breakers.controls(context).await?;
         let rows = sqlx::query("SELECT DISTINCT ON (service) service, status, observed_at FROM service_heartbeats ORDER BY service, observed_at DESC").fetch_all(&self.pool).await?;
         let services = rows
             .iter()
@@ -132,27 +141,37 @@ impl MonitoringRepo {
             as_of: now.to_rfc3339(),
         })
     }
-    pub async fn alerts(&self) -> Result<Vec<AlertDto>, sqlx::Error> {
-        sqlx::query("SELECT payload FROM alerts ORDER BY created_at DESC, id DESC")
-            .fetch_all(&self.pool)
-            .await?
+    pub async fn alerts(&self, context: TenantContext) -> Result<Vec<AlertDto>, sqlx::Error> {
+        let mut transaction = TenantTransaction::begin(&self.pool, context).await?;
+        let rows = sqlx::query(
+            "SELECT payload FROM alerts WHERE tenant_id = $1 ORDER BY created_at DESC, id DESC",
+        )
+        .bind(context.tenant_id().as_uuid())
+        .fetch_all(transaction.connection())
+        .await?;
+        let result = rows
             .iter()
             .map(|row| {
                 serde_json::from_str(&row.get::<String, _>("payload"))
                     .map_err(|error| sqlx::Error::Protocol(error.to_string()))
             })
-            .collect()
+            .collect();
+        transaction.commit().await?;
+        result
     }
     pub async fn acknowledge(
         &self,
+        context: TenantContext,
         id: &str,
         user: &str,
         now: DateTime<Utc>,
     ) -> Result<Option<AlertDto>, sqlx::Error> {
         let id = Uuid::parse_str(id).map_err(|error| sqlx::Error::Protocol(error.to_string()))?;
-        let Some(row) = sqlx::query("SELECT payload FROM alerts WHERE id = $1")
+        let mut transaction = TenantTransaction::begin(&self.pool, context).await?;
+        let Some(row) = sqlx::query("SELECT payload FROM alerts WHERE tenant_id = $1 AND id = $2")
+            .bind(context.tenant_id().as_uuid())
             .bind(id)
-            .fetch_optional(&self.pool)
+            .fetch_optional(transaction.connection())
             .await?
         else {
             return Ok(None);
@@ -167,7 +186,8 @@ impl MonitoringRepo {
             .map_err(|error| sqlx::Error::Protocol(error.to_string()))?;
         let user_id =
             Uuid::parse_str(user).map_err(|error| sqlx::Error::Protocol(error.to_string()))?;
-        sqlx::query("UPDATE alerts SET acknowledged_at = $2, acknowledged_by = $3, payload = $4 WHERE id = $1").bind(id).bind(now).bind(user_id).bind(payload).execute(&self.pool).await?;
+        sqlx::query("UPDATE alerts SET acknowledged_at = $3, acknowledged_by = $4, payload = $5 WHERE tenant_id = $1 AND id = $2").bind(context.tenant_id().as_uuid()).bind(id).bind(now).bind(user_id).bind(payload).execute(transaction.connection()).await?;
+        transaction.commit().await?;
         Ok(Some(alert))
     }
 }

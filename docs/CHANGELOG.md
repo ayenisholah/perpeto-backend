@@ -6,6 +6,12 @@ All notable repository changes are recorded here using Keep a Changelog categori
 
 ### Added
 
+- M3 Slice 21 — replaced connector polling streams with bounded reconnecting WebSocket transports for Bybit, Binance and OKX public/private data, added venue sequence/reset recovery and disconnect reconciliation signaling, and extended credentialed evidence to require a fresh private-stream event. Parser/transport tests are written; linked Rust execution and live credentialed evidence remain pending the unavailable Windows build toolchain.
+
+- M4 isolation Slices 2–3 (local, unverified) — added migration `0016_tenant_isolation.sql`, quarantined legacy rows in a suspended tenant, enabled forced RLS across private trading aggregates, introduced transaction-local tenant context and unsafe-role startup rejection, and scoped API repositories, connector secrets/accounting/execution/reconciliation, engine work, reconciler work and worker outbox processing. Added cross-tenant persistence tests. No client-selected tenant context or credential endpoint was introduced.
+
+- Documentation audit — synchronized README, implementation, milestone, progress, API and traceability claims with the lossless-decimal `0.15.0` client and the implemented personal-tenant session slice. Rust/PostgreSQL verification, forced RLS, passkeys, Vault and every production-write gate remain explicitly open.
+
 - M4 tenant foundation — added personal tenants and immutable one-owner memberships, deterministic legacy-user backfill, tenant-bound sessions, a fail-closed transaction tenant helper, session-derived JWT tenant claims, live membership verification in auth middleware, and tenant status in OpenAPI/client **0.15.0**. Forced RLS and tenant-scoped trading repositories remain the next isolation slice.
 
 - M2 exact-decimal gate remediation — replaced scanner, strategy, execution and monitoring financial `f64` DTO fields with lossless decimal values serialized as strings; versioned OpenAPI/client to **0.14.0**, added a precision round-trip regression, preserved fixture lexemes without floating-point conversion, and updated the vendored mobile integration. Client/mobile verification passes locally; Rust/PostgreSQL evidence remains pending a usable MSVC build environment.

@@ -13,6 +13,7 @@ funding-arb-scanner-service = { path = "../../crates/scanner-service" }
 funding-arb-execution-service = { path = "../../crates/execution-service" }
 funding-arb-strategy-service = { path = "../../crates/strategy-service" }
 funding-arb-venue-service = { path = "../../crates/venue-service" }
+funding-arb-tenant-context = { path = "../../crates/tenant-context" }
 axum.workspace = true
 chrono.workspace = true
 rust_decimal.workspace = true

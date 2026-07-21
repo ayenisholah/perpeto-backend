@@ -3,9 +3,11 @@ use std::{env, error::Error, sync::Arc, time::Duration};
 use chrono::{DateTime, Utc};
 use funding_arb_connectors::{
     AccountId, BinanceConnector, BybitConnector, MarketEvent, MarketSubscription, OkxConnector,
-    ProductType, TimeRange, VenueConnector, VenueEnvironment, fixtures::ContractSuite,
+    PrivateEvent, ProductType, TimeRange, VenueConnector, VenueEnvironment,
+    fixtures::ContractSuite,
 };
 use funding_arb_domain::{TradingMode, market::Venue};
+use funding_arb_tenant_context::{TenantContext, TenantId};
 use funding_arb_venue_service::{
     ConfiguredConnector, ConnectorRegistry, ReconciliationService, decode_master_key,
 };
@@ -69,7 +71,8 @@ async fn credentialed_evidence() -> Result<(), Box<dyn Error>> {
         .connect(&database_url)
         .await?;
     let registry = ConnectorRegistry::new(pool.clone(), master_key);
-    let configured = registry.load(mode).await?;
+    let tenant = quarantine_tenant()?;
+    let configured = registry.load(tenant, mode).await?;
     if configured.is_empty() {
         return Err("no enabled connector accounts match the selected mode".into());
     }
@@ -149,6 +152,21 @@ async fn run_credentialed_probe(
                 },
             )
             .await?;
+        let mut private_stream = configured.connector.private_stream(&account_id).await?;
+        let private_event = tokio::time::timeout(Duration::from_secs(20), private_stream.next())
+            .await
+            .map_err(|_| funding_arb_connectors::ConnectorError {
+                kind: funding_arb_connectors::ConnectorErrorKind::Transient,
+                code: "PRIVATE_STREAM_TIMEOUT".into(),
+                message: "private stream did not produce a fresh event".into(),
+                retry_after_ms: None,
+            })?
+            .ok_or_else(|| funding_arb_connectors::ConnectorError {
+                kind: funding_arb_connectors::ConnectorErrorKind::Transient,
+                code: "PRIVATE_STREAM_ENDED".into(),
+                message: "private stream ended before producing an event".into(),
+                retry_after_ms: None,
+            })??;
         Ok::<Value, funding_arb_connectors::ConnectorError>(json!({
             "balance_count": balances.len(),
             "position_count": positions.len(),
@@ -157,11 +175,16 @@ async fn run_credentialed_probe(
             "fill_has_more": fills.next_cursor.is_some(),
             "fee_schedule_count": fees.len(),
             "funding_ledger_count": funding.len(),
+            "private_stream_event": private_event_kind(&private_event),
         }))
     }
     .await;
     let reconciliation = ReconciliationService::new(pool.clone())
-        .run(configured.connector.as_ref(), &account_id)
+        .run(
+            configured.tenant,
+            configured.connector.as_ref(),
+            &account_id,
+        )
         .await;
     let (status, payload) = match (public, private, reconciliation) {
         (Ok(public), Ok(private), Ok(reconciliation)) => (
@@ -196,6 +219,12 @@ async fn run_credentialed_probe(
         .into());
     }
     Ok(())
+}
+
+fn quarantine_tenant() -> Result<TenantContext, uuid::Error> {
+    Uuid::parse_str("00000000-0000-0000-0000-000000000001")
+        .map(TenantId::new)
+        .map(TenantContext::new)
 }
 
 async fn persist_evidence(
@@ -241,6 +270,17 @@ const fn market_event_kind(event: &MarketEvent) -> &'static str {
         MarketEvent::Funding(_) => "FUNDING",
         MarketEvent::InstrumentChanged(_) => "INSTRUMENT_CHANGED",
         MarketEvent::Heartbeat(_) => "HEARTBEAT",
+    }
+}
+
+const fn private_event_kind(event: &PrivateEvent) -> &'static str {
+    match event {
+        PrivateEvent::Order(_) => "ORDER",
+        PrivateEvent::Fill(_) => "FILL",
+        PrivateEvent::Balance(_) => "BALANCE",
+        PrivateEvent::Position(_) => "POSITION",
+        PrivateEvent::Funding(_) => "FUNDING",
+        PrivateEvent::Heartbeat(_) => "HEARTBEAT",
     }
 }
 

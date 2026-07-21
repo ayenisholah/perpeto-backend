@@ -9,9 +9,11 @@ rust-version.workspace = true
 funding-arb-domain = { path = "../../crates/funding-arb-domain" }
 funding-arb-connectors = { path = "../../crates/connectors" }
 funding-arb-venue-service = { path = "../../crates/venue-service" }
+funding-arb-tenant-context = { path = "../../crates/tenant-context" }
 chrono.workspace = true
 sqlx.workspace = true
 tokio = { workspace = true, features = ["time"] }
+uuid.workspace = true
 
 [lints]
 workspace = true

@@ -6,6 +6,7 @@
 //! resolves to the existing row rather than a duplicate position.
 
 use chrono::{DateTime, Utc};
+use funding_arb_tenant_context::{TenantContext, TenantTransaction};
 use sqlx::{PgPool, Row};
 use uuid::Uuid;
 
@@ -49,38 +50,49 @@ impl PositionsRepo {
     /// unique-violation on a duplicate `idempotency_key`).
     pub async fn create(
         &self,
+        context: TenantContext,
         dto: &PositionDto,
         idempotency_key: &str,
     ) -> Result<(), sqlx::Error> {
         let payload = encode(dto)?;
+        let mut transaction = TenantTransaction::begin(&self.pool, context).await?;
         sqlx::query(
-            "INSERT INTO positions (id, route_id, state, opened_at, idempotency_key, payload) \
-             VALUES ($1, $2, $3, $4, $5, $6)",
+            "INSERT INTO positions (tenant_id, id, route_id, state, opened_at, idempotency_key, payload) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7)",
         )
+        .bind(context.tenant_id().as_uuid())
         .bind(parse_uuid(&dto.id)?)
         .bind(&dto.route_id)
         .bind(&dto.state)
         .bind(parse_time(&dto.opened_at)?)
         .bind(idempotency_key)
         .bind(&payload)
-        .execute(&self.pool)
-        .await
-        .map(|_| ())
+        .execute(transaction.connection())
+        .await?;
+        transaction.commit().await
     }
 
     /// Update an existing position's state and payload (e.g. on close).
     ///
     /// # Errors
     /// Returns the underlying [`sqlx::Error`] if the update fails.
-    pub async fn update(&self, dto: &PositionDto) -> Result<(), sqlx::Error> {
+    pub async fn update(
+        &self,
+        context: TenantContext,
+        dto: &PositionDto,
+    ) -> Result<(), sqlx::Error> {
         let payload = encode(dto)?;
-        sqlx::query("UPDATE positions SET state = $2, payload = $3 WHERE id = $1")
-            .bind(parse_uuid(&dto.id)?)
-            .bind(&dto.state)
-            .bind(&payload)
-            .execute(&self.pool)
-            .await
-            .map(|_| ())
+        let mut transaction = TenantTransaction::begin(&self.pool, context).await?;
+        sqlx::query(
+            "UPDATE positions SET state = $3, payload = $4 WHERE tenant_id = $1 AND id = $2",
+        )
+        .bind(context.tenant_id().as_uuid())
+        .bind(parse_uuid(&dto.id)?)
+        .bind(&dto.state)
+        .bind(&payload)
+        .execute(transaction.connection())
+        .await?;
+        transaction.commit().await
     }
 
     /// Read a position by the idempotency key it was opened under.
@@ -89,30 +101,42 @@ impl PositionsRepo {
     /// Returns the underlying [`sqlx::Error`] if the query fails.
     pub async fn get_by_idempotency_key(
         &self,
+        context: TenantContext,
         idempotency_key: &str,
     ) -> Result<Option<PositionDto>, sqlx::Error> {
-        let row = sqlx::query("SELECT payload FROM positions WHERE idempotency_key = $1 LIMIT 1")
-            .bind(idempotency_key)
-            .fetch_optional(&self.pool)
-            .await?;
-        match row {
+        let mut transaction = TenantTransaction::begin(&self.pool, context).await?;
+        let row = sqlx::query(
+            "SELECT payload FROM positions WHERE tenant_id = $1 AND idempotency_key = $2 LIMIT 1",
+        )
+        .bind(context.tenant_id().as_uuid())
+        .bind(idempotency_key)
+        .fetch_optional(transaction.connection())
+        .await?;
+        let result = match row {
             Some(row) => Ok(Some(decode(&row.get::<String, _>("payload"))?)),
             None => Ok(None),
-        }
+        };
+        transaction.commit().await?;
+        result
     }
 
     /// List all positions, newest first.
     ///
     /// # Errors
     /// Returns the underlying [`sqlx::Error`] if the query fails.
-    pub async fn list(&self) -> Result<Vec<PositionDto>, sqlx::Error> {
-        let rows = sqlx::query("SELECT payload FROM positions ORDER BY opened_at DESC, id DESC")
-            .fetch_all(&self.pool)
-            .await?;
+    pub async fn list(&self, context: TenantContext) -> Result<Vec<PositionDto>, sqlx::Error> {
+        let mut transaction = TenantTransaction::begin(&self.pool, context).await?;
+        let rows = sqlx::query(
+            "SELECT payload FROM positions WHERE tenant_id = $1 ORDER BY opened_at DESC, id DESC",
+        )
+        .bind(context.tenant_id().as_uuid())
+        .fetch_all(transaction.connection())
+        .await?;
         let mut positions = Vec::with_capacity(rows.len());
         for row in &rows {
             positions.push(decode(&row.get::<String, _>("payload"))?);
         }
+        transaction.commit().await?;
         Ok(positions)
     }
 
@@ -120,16 +144,25 @@ impl PositionsRepo {
     ///
     /// # Errors
     /// Returns the underlying [`sqlx::Error`] if the query fails.
-    pub async fn get(&self, id: &str) -> Result<Option<PositionDto>, sqlx::Error> {
+    pub async fn get(
+        &self,
+        context: TenantContext,
+        id: &str,
+    ) -> Result<Option<PositionDto>, sqlx::Error> {
         let uuid = parse_uuid(id)?;
-        let row = sqlx::query("SELECT payload FROM positions WHERE id = $1 LIMIT 1")
-            .bind(uuid)
-            .fetch_optional(&self.pool)
-            .await?;
-        match row {
+        let mut transaction = TenantTransaction::begin(&self.pool, context).await?;
+        let row =
+            sqlx::query("SELECT payload FROM positions WHERE tenant_id = $1 AND id = $2 LIMIT 1")
+                .bind(context.tenant_id().as_uuid())
+                .bind(uuid)
+                .fetch_optional(transaction.connection())
+                .await?;
+        let result = match row {
             Some(row) => Ok(Some(decode(&row.get::<String, _>("payload"))?)),
             None => Ok(None),
-        }
+        };
+        transaction.commit().await?;
+        result
     }
 
     /// Verify database connectivity.

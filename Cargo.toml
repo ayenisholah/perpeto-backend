@@ -8,6 +8,7 @@ members = [
   "crates/strategy-service",
   "crates/connectors",
   "crates/venue-service",
+  "crates/tenant-context",
   "bins/venue-admin",
   "bins/connector-evidence",
   "bins/api",
@@ -40,6 +41,7 @@ sha2 = "0.10"
 sqlx = { version = "0.8", default-features = false, features = ["postgres", "runtime-tokio", "tls-rustls", "uuid", "chrono", "migrate", "macros", "derive"] }
 subtle = "2"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "signal"] }
+tokio-tungstenite = { version = "0.28", default-features = false, features = ["connect", "handshake", "rustls-tls-webpki-roots"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 uuid = { version = "1", features = ["v4", "serde"] }

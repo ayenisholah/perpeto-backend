@@ -18,6 +18,7 @@ use funding_arb_execution_service::{
 };
 use funding_arb_scanner_service::ScannerRepo;
 use funding_arb_strategy_service::StrategiesRepo;
+use funding_arb_tenant_context::assert_safe_runtime_role;
 use funding_arb_venue_service::{
     ConnectorExecutionCoordinator, ConnectorMonitoringRepo, ConnectorRegistry, VenueAccountsRepo,
     decode_master_key,
@@ -82,6 +83,10 @@ async fn run() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
+    if let Err(error) = assert_safe_runtime_role(&pool).await {
+        eprintln!("unsafe API database role: {error}");
+        return ExitCode::FAILURE;
+    }
     let scanner = ScannerRepo::new(pool.clone());
     let positions = PositionsRepo::new(pool.clone());
     let breakers = BreakersRepo::new(pool.clone());

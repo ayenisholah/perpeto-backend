@@ -8,6 +8,7 @@ pub mod fixtures;
 mod model;
 mod okx;
 mod traits;
+mod ws;
 
 pub use binance::BinanceConnector;
 pub use book::{BookApply, BookState, BookStatus, BookView};

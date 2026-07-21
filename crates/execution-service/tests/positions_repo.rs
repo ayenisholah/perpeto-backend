@@ -6,6 +6,7 @@
 
 use chrono::{TimeZone, Utc};
 use funding_arb_execution_service::{ExecutionService, PositionDto, PositionsRepo};
+use funding_arb_tenant_context::{TenantContext, TenantId, TenantTransaction};
 use sqlx::PgPool;
 use sqlx::postgres::PgPoolOptions;
 use tokio::sync::Mutex;
@@ -22,11 +23,33 @@ async fn pool() -> Option<PgPool> {
         .ok()
 }
 
-async fn reset(pool: &PgPool) {
-    sqlx::query("DELETE FROM positions")
-        .execute(pool)
-        .await
-        .expect("clear positions");
+fn tenant(raw: &str) -> TenantContext {
+    TenantContext::new(TenantId::new(
+        uuid::Uuid::parse_str(raw).expect("tenant uuid"),
+    ))
+}
+
+async fn prepare_tenants(pool: &PgPool) -> (TenantContext, TenantContext) {
+    let first = tenant("10000000-0000-0000-0000-000000000001");
+    let second = tenant("20000000-0000-0000-0000-000000000002");
+    for (context, name) in [(first, "Test tenant A"), (second, "Test tenant B")] {
+        sqlx::query("INSERT INTO tenants (id, display_name, state) VALUES ($1, $2, 'ACTIVE') ON CONFLICT (id) DO NOTHING")
+            .bind(context.tenant_id().as_uuid())
+            .bind(name)
+            .execute(pool)
+            .await
+            .expect("prepare tenant");
+        let mut transaction = TenantTransaction::begin(pool, context)
+            .await
+            .expect("tenant transaction");
+        sqlx::query("DELETE FROM positions WHERE tenant_id = $1")
+            .bind(context.tenant_id().as_uuid())
+            .execute(transaction.connection())
+            .await
+            .expect("clear positions");
+        transaction.commit().await.expect("commit reset");
+    }
+    (first, second)
 }
 
 fn first_route_id(service: &ExecutionService, now: chrono::DateTime<Utc>) -> String {
@@ -46,7 +69,7 @@ fn first_route_id(service: &ExecutionService, now: chrono::DateTime<Utc>) -> Str
 async fn create_then_read_round_trips() {
     let Some(pool) = pool().await else { return };
     let _guard = TEST_LOCK.lock().await;
-    reset(&pool).await;
+    let (tenant, _) = prepare_tenants(&pool).await;
 
     let service = ExecutionService::default();
     let repo = PositionsRepo::new(pool.clone());
@@ -57,19 +80,21 @@ async fn create_then_read_round_trips() {
         .open(&route_id, None, "idem-key-1".into(), now)
         .expect("open");
     let dto = PositionDto::from_domain(&position);
-    repo.create(&dto, "idem-key-1").await.expect("create");
+    repo.create(tenant, &dto, "idem-key-1")
+        .await
+        .expect("create");
 
     let by_key = repo
-        .get_by_idempotency_key("idem-key-1")
+        .get_by_idempotency_key(tenant, "idem-key-1")
         .await
         .expect("query");
     assert_eq!(by_key.expect("present").id, dto.id);
 
-    let listed = repo.list().await.expect("list");
+    let listed = repo.list(tenant).await.expect("list");
     assert_eq!(listed.len(), 1);
     assert_eq!(listed[0].route_id, route_id);
 
-    let fetched = repo.get(&dto.id).await.expect("get");
+    let fetched = repo.get(tenant, &dto.id).await.expect("get");
     assert_eq!(fetched.expect("present").state, "OPEN");
 }
 
@@ -77,7 +102,7 @@ async fn create_then_read_round_trips() {
 async fn duplicate_idempotency_key_is_rejected() {
     let Some(pool) = pool().await else { return };
     let _guard = TEST_LOCK.lock().await;
-    reset(&pool).await;
+    let (tenant, _) = prepare_tenants(&pool).await;
 
     let service = ExecutionService::default();
     let repo = PositionsRepo::new(pool.clone());
@@ -94,10 +119,12 @@ async fn duplicate_idempotency_key_is_rejected() {
             .open(&route_id, None, "dup".into(), now)
             .expect("open"),
     );
-    repo.create(&first, "dup").await.expect("first insert");
+    repo.create(tenant, &first, "dup")
+        .await
+        .expect("first insert");
 
     let error = repo
-        .create(&second, "dup")
+        .create(tenant, &second, "dup")
         .await
         .expect_err("duplicate key rejected");
     assert!(
@@ -108,10 +135,56 @@ async fn duplicate_idempotency_key_is_rejected() {
 }
 
 #[tokio::test]
+async fn tenant_rows_are_isolated_and_idempotency_is_tenant_scoped() {
+    let Some(pool) = pool().await else { return };
+    let _guard = TEST_LOCK.lock().await;
+    let (first_tenant, second_tenant) = prepare_tenants(&pool).await;
+    let service = ExecutionService::default();
+    let repo = PositionsRepo::new(pool);
+    let now = Utc.with_ymd_and_hms(2026, 7, 19, 0, 0, 0).unwrap();
+    let route_id = first_route_id(&service, now);
+    let first = PositionDto::from_domain(
+        &service
+            .open(&route_id, None, "shared-key".into(), now)
+            .expect("first open"),
+    );
+    let second = PositionDto::from_domain(
+        &service
+            .open(&route_id, None, "shared-key".into(), now)
+            .expect("second open"),
+    );
+
+    repo.create(first_tenant, &first, "shared-key")
+        .await
+        .expect("first tenant insert");
+    repo.create(second_tenant, &second, "shared-key")
+        .await
+        .expect("same key is valid in another tenant");
+
+    assert_eq!(repo.list(first_tenant).await.expect("first list").len(), 1);
+    assert_eq!(
+        repo.list(second_tenant).await.expect("second list").len(),
+        1
+    );
+    assert!(
+        repo.get(first_tenant, &second.id)
+            .await
+            .expect("cross tenant lookup")
+            .is_none()
+    );
+    assert!(
+        repo.get(second_tenant, &first.id)
+            .await
+            .expect("cross tenant lookup")
+            .is_none()
+    );
+}
+
+#[tokio::test]
 async fn close_update_round_trips() {
     let Some(pool) = pool().await else { return };
     let _guard = TEST_LOCK.lock().await;
-    reset(&pool).await;
+    let (tenant, _) = prepare_tenants(&pool).await;
 
     let service = ExecutionService::default();
     let repo = PositionsRepo::new(pool.clone());
@@ -121,16 +194,20 @@ async fn close_update_round_trips() {
     let position = service
         .open(&route_id, None, "idem-close".into(), opened)
         .expect("open");
-    repo.create(&PositionDto::from_domain(&position), "idem-close")
+    repo.create(tenant, &PositionDto::from_domain(&position), "idem-close")
         .await
         .expect("create");
 
     let closed = service.close(position, opened + chrono::Duration::hours(24));
-    repo.update(&PositionDto::from_domain(&closed))
+    repo.update(tenant, &PositionDto::from_domain(&closed))
         .await
         .expect("update");
 
-    let fetched = repo.get(&closed.id).await.expect("get").expect("present");
+    let fetched = repo
+        .get(tenant, &closed.id)
+        .await
+        .expect("get")
+        .expect("present");
     assert_eq!(fetched.state, "CLOSED");
     assert!(fetched.funding_captured > 0.0);
     assert!(fetched.realized_pnl <= fetched.funding_captured);
@@ -140,7 +217,7 @@ async fn close_update_round_trips() {
 async fn supervision_updates_round_trip_across_the_scenario() {
     let Some(pool) = pool().await else { return };
     let _guard = TEST_LOCK.lock().await;
-    reset(&pool).await;
+    let (tenant, _) = prepare_tenants(&pool).await;
 
     let service = ExecutionService::default();
     let repo = PositionsRepo::new(pool.clone());
@@ -156,25 +233,33 @@ async fn supervision_updates_round_trip_across_the_scenario() {
             t0,
         )
         .expect("open");
-    repo.create(&PositionDto::from_domain(&position), "idem-supervise")
-        .await
-        .expect("create");
+    repo.create(
+        tenant,
+        &PositionDto::from_domain(&position),
+        "idem-supervise",
+    )
+    .await
+    .expect("create");
 
     let mut current = position;
     for now in [t1, t2, t3] {
         current = service.supervise(current, now).expect("supervise");
-        repo.update(&PositionDto::from_domain(&current))
+        repo.update(tenant, &PositionDto::from_domain(&current))
             .await
             .expect("update");
         current = repo
-            .get(&current.id)
+            .get(tenant, &current.id)
             .await
             .expect("get")
             .expect("present")
             .to_domain();
     }
 
-    let fetched = repo.get(&current.id).await.expect("get").expect("present");
+    let fetched = repo
+        .get(tenant, &current.id)
+        .await
+        .expect("get")
+        .expect("present");
     assert_eq!(fetched.state, "CLOSED");
     assert_eq!(fetched.exit_reason.as_deref(), Some("FUNDING_FLIP"));
     assert!(

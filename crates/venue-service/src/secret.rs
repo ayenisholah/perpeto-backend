@@ -6,6 +6,7 @@ use aes_gcm::{
 };
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
+use funding_arb_tenant_context::{TenantContext, TenantTransaction};
 use rand::{RngCore, rngs::OsRng};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -43,6 +44,7 @@ impl CredentialBundle {
 /// Immutable binding used as authenticated encryption context.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SecretContext {
+    pub tenant: TenantContext,
     pub venue_account_id: Uuid,
     pub venue: String,
     pub product: String,
@@ -105,7 +107,8 @@ pub trait SecretStore: Send + Sync {
         credential: &CredentialBundle,
     ) -> Result<SecretMetadata, SecretStoreError>;
 
-    async fn revoke(&self, secret_ref: Uuid) -> Result<(), SecretStoreError>;
+    async fn revoke(&self, tenant: TenantContext, secret_ref: Uuid)
+    -> Result<(), SecretStoreError>;
 }
 
 /// AES-256-GCM encrypted Postgres secret store.
@@ -127,8 +130,11 @@ impl EncryptedPostgresSecretStore {
 
     fn aad(context: &SecretContext, key_version: i32) -> Vec<u8> {
         format!(
-            "perpeto-cex:{}:{}:{}:{key_version}",
-            context.venue_account_id, context.venue, context.product
+            "perpeto-cex:{}:{}:{}:{}:{key_version}",
+            context.tenant.tenant_id(),
+            context.venue_account_id,
+            context.venue,
+            context.product
         )
         .into_bytes()
     }
@@ -203,12 +209,16 @@ impl SecretStore for EncryptedPostgresSecretStore {
     ) -> Result<SecretMetadata, SecretStoreError> {
         let secret_ref = Uuid::new_v4();
         let (nonce, ciphertext, digest) = self.seal(context, credential, self.key_version)?;
+        let mut transaction = TenantTransaction::begin(&self.pool, context.tenant)
+            .await
+            .map_err(|_| SecretStoreError::PersistenceFailed)?;
         let row = sqlx::query_as::<_, (DateTime<Utc>,)>(
             "INSERT INTO encrypted_credentials
-             (secret_ref, venue_account_id, venue, product, key_version, nonce, ciphertext, plaintext_digest)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+             (tenant_id, secret_ref, venue_account_id, venue, product, key_version, nonce, ciphertext, plaintext_digest)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
              RETURNING created_at",
         )
+        .bind(context.tenant.tenant_id().as_uuid())
         .bind(secret_ref)
         .bind(context.venue_account_id)
         .bind(&context.venue)
@@ -217,9 +227,13 @@ impl SecretStore for EncryptedPostgresSecretStore {
         .bind(nonce.as_slice())
         .bind(ciphertext)
         .bind(digest.as_slice())
-        .fetch_one(&self.pool)
+        .fetch_one(transaction.connection())
         .await
         .map_err(|_| SecretStoreError::PersistenceFailed)?;
+        transaction
+            .commit()
+            .await
+            .map_err(|_| SecretStoreError::PersistenceFailed)?;
         Ok(SecretMetadata {
             secret_ref,
             key_version: self.key_version,
@@ -233,20 +247,29 @@ impl SecretStore for EncryptedPostgresSecretStore {
         secret_ref: Uuid,
         context: &SecretContext,
     ) -> Result<CredentialBundle, SecretStoreError> {
+        let mut transaction = TenantTransaction::begin(&self.pool, context.tenant)
+            .await
+            .map_err(|_| SecretStoreError::PersistenceFailed)?;
         let row = sqlx::query_as::<_, (String, String, i32, Vec<u8>, Vec<u8>)>(
             "SELECT venue, product, key_version, nonce, ciphertext
              FROM encrypted_credentials
-             WHERE secret_ref = $1 AND revoked_at IS NULL",
+             WHERE tenant_id = $1 AND secret_ref = $2 AND revoked_at IS NULL",
         )
+        .bind(context.tenant.tenant_id().as_uuid())
         .bind(secret_ref)
-        .fetch_optional(&self.pool)
+        .fetch_optional(transaction.connection())
         .await
         .map_err(|_| SecretStoreError::PersistenceFailed)?
         .ok_or(SecretStoreError::NotFound)?;
         if row.0 != context.venue || row.1 != context.product {
             return Err(SecretStoreError::ContextMismatch);
         }
-        self.open(context, row.2, &row.3, &row.4)
+        let result = self.open(context, row.2, &row.3, &row.4);
+        transaction
+            .commit()
+            .await
+            .map_err(|_| SecretStoreError::PersistenceFailed)?;
+        result
     }
 
     async fn rotate(
@@ -256,11 +279,14 @@ impl SecretStore for EncryptedPostgresSecretStore {
         credential: &CredentialBundle,
     ) -> Result<SecretMetadata, SecretStoreError> {
         let (nonce, ciphertext, digest) = self.seal(context, credential, self.key_version)?;
+        let mut transaction = TenantTransaction::begin(&self.pool, context.tenant)
+            .await
+            .map_err(|_| SecretStoreError::PersistenceFailed)?;
         let row = sqlx::query_as::<_, (DateTime<Utc>, DateTime<Utc>)>(
             "UPDATE encrypted_credentials
              SET key_version = $2, nonce = $3, ciphertext = $4, plaintext_digest = $5,
                  rotated_at = now()
-             WHERE secret_ref = $1 AND venue_account_id = $6 AND venue = $7 AND product = $8
+             WHERE tenant_id = $9 AND secret_ref = $1 AND venue_account_id = $6 AND venue = $7 AND product = $8
                AND revoked_at IS NULL
              RETURNING created_at, rotated_at",
         )
@@ -272,10 +298,15 @@ impl SecretStore for EncryptedPostgresSecretStore {
         .bind(context.venue_account_id)
         .bind(&context.venue)
         .bind(&context.product)
-        .fetch_optional(&self.pool)
+        .bind(context.tenant.tenant_id().as_uuid())
+        .fetch_optional(transaction.connection())
         .await
         .map_err(|_| SecretStoreError::PersistenceFailed)?
         .ok_or(SecretStoreError::NotFound)?;
+        transaction
+            .commit()
+            .await
+            .map_err(|_| SecretStoreError::PersistenceFailed)?;
         Ok(SecretMetadata {
             secret_ref,
             key_version: self.key_version,
@@ -284,19 +315,30 @@ impl SecretStore for EncryptedPostgresSecretStore {
         })
     }
 
-    async fn revoke(&self, secret_ref: Uuid) -> Result<(), SecretStoreError> {
+    async fn revoke(
+        &self,
+        tenant: TenantContext,
+        secret_ref: Uuid,
+    ) -> Result<(), SecretStoreError> {
+        let mut transaction = TenantTransaction::begin(&self.pool, tenant)
+            .await
+            .map_err(|_| SecretStoreError::PersistenceFailed)?;
         let result = sqlx::query(
             "UPDATE encrypted_credentials SET revoked_at = now()
-             WHERE secret_ref = $1 AND revoked_at IS NULL",
+             WHERE tenant_id = $1 AND secret_ref = $2 AND revoked_at IS NULL",
         )
+        .bind(tenant.tenant_id().as_uuid())
         .bind(secret_ref)
-        .execute(&self.pool)
+        .execute(transaction.connection())
         .await
         .map_err(|_| SecretStoreError::PersistenceFailed)?;
         if result.rows_affected() == 0 {
             return Err(SecretStoreError::NotFound);
         }
-        Ok(())
+        transaction
+            .commit()
+            .await
+            .map_err(|_| SecretStoreError::PersistenceFailed)
     }
 }
 
@@ -309,6 +351,7 @@ impl Drop for EncryptedPostgresSecretStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use funding_arb_tenant_context::TenantId;
     use sqlx::postgres::PgPoolOptions;
 
     #[test]
@@ -330,6 +373,7 @@ mod tests {
             .expect("lazy pool");
         let store = EncryptedPostgresSecretStore::new(pool, [9_u8; 32], 1);
         let first = SecretContext {
+            tenant: TenantContext::new(TenantId::new(Uuid::new_v4())),
             venue_account_id: Uuid::new_v4(),
             venue: "BYBIT".into(),
             product: "LINEAR_PERPETUAL".into(),

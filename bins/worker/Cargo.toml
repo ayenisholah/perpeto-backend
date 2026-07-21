@@ -7,6 +7,7 @@ rust-version.workspace = true
 
 [dependencies]
 funding-arb-execution-service = { path = "../../crates/execution-service" }
+funding-arb-tenant-context = { path = "../../crates/tenant-context" }
 chrono.workspace = true
 serde_json.workspace = true
 sqlx.workspace = true

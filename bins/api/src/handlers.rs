@@ -395,7 +395,7 @@ pub async fn create_position(
     if let Some(key) = supplied_key.as_deref()
         && let Some(existing) = state
             .positions
-            .get_by_idempotency_key(key)
+            .get_by_idempotency_key(caller.tenant_context()?, key)
             .await
             .map_err(internal)?
     {
@@ -418,7 +418,11 @@ pub async fn create_position(
         },
         None => Default::default(),
     };
-    let controls = state.breakers.controls().await.map_err(internal)?;
+    let controls = state
+        .breakers
+        .controls(caller.tenant_context()?)
+        .await
+        .map_err(internal)?;
     let blocked = controls.breakers.iter().any(|breaker| {
         matches!(
             breaker.action,
@@ -454,7 +458,11 @@ pub async fn create_position(
     };
 
     let dto = PositionDto::from_domain(&position);
-    match state.positions.create(&dto, &key).await {
+    match state
+        .positions
+        .create(caller.tenant_context()?, &dto, &key)
+        .await
+    {
         Ok(()) => Ok((StatusCode::CREATED, Json(dto)).into_response()),
         // Lost an idempotency race: return the position the other request stored.
         Err(error)
@@ -464,7 +472,7 @@ pub async fn create_position(
         {
             match state
                 .positions
-                .get_by_idempotency_key(&key)
+                .get_by_idempotency_key(caller.tenant_context()?, &key)
                 .await
                 .map_err(internal)?
             {
@@ -482,7 +490,11 @@ pub async fn list_positions(
     Extension(caller): Extension<CallerContext>,
 ) -> Result<impl IntoResponse, ApiError> {
     caller.require_active()?;
-    let positions = state.positions.list().await.map_err(internal)?;
+    let positions = state
+        .positions
+        .list(caller.tenant_context()?)
+        .await
+        .map_err(internal)?;
     Ok(Json(PositionListDto { positions }))
 }
 
@@ -493,7 +505,12 @@ pub async fn get_position(
     Path(id): Path<String>,
 ) -> Result<Response, ApiError> {
     caller.require_active()?;
-    match state.positions.get(&id).await.map_err(internal)? {
+    match state
+        .positions
+        .get(caller.tenant_context()?, &id)
+        .await
+        .map_err(internal)?
+    {
         Some(position) => Ok(Json(position).into_response()),
         None => Ok(not_found("Position not found", "POSITION_NOT_FOUND")),
     }
@@ -512,7 +529,12 @@ pub async fn close_position(
     if !caller.can_trade() {
         return Err(AuthError::Forbidden.into());
     }
-    let Some(dto) = state.positions.get(&id).await.map_err(internal)? else {
+    let Some(dto) = state
+        .positions
+        .get(caller.tenant_context()?, &id)
+        .await
+        .map_err(internal)?
+    else {
         return Ok(not_found("Position not found", "POSITION_NOT_FOUND"));
     };
     match dto.state.as_str() {
@@ -531,7 +553,7 @@ pub async fn close_position(
     let closed_dto = PositionDto::from_domain(&closed);
     state
         .positions
-        .update(&closed_dto)
+        .update(caller.tenant_context()?, &closed_dto)
         .await
         .map_err(internal)?;
     Ok((StatusCode::OK, Json(closed_dto)).into_response())
@@ -565,7 +587,13 @@ pub async fn get_controls(
     Extension(caller): Extension<CallerContext>,
 ) -> Result<impl IntoResponse, ApiError> {
     caller.require_active()?;
-    Ok(Json(state.breakers.controls().await.map_err(internal)?))
+    Ok(Json(
+        state
+            .breakers
+            .controls(caller.tenant_context()?)
+            .await
+            .map_err(internal)?,
+    ))
 }
 
 /// `POST /api/v1/controls/halt` — halt new risk or enter read-only mode.
@@ -660,6 +688,7 @@ async fn activate_operator_breaker(
     let breaker = state
         .breakers
         .activate(
+            caller.tenant_context()?,
             scope,
             scope_key,
             action,
@@ -673,6 +702,7 @@ async fn activate_operator_breaker(
     state
         .outbox
         .append(
+            caller.tenant_context()?,
             "CIRCUIT_BREAKER_ACTIVATED",
             &breaker.id,
             serde_json::to_value(&breaker)
@@ -695,7 +725,7 @@ pub async fn resume(
     }
     let resolved = state
         .breakers
-        .resolve_operator(Utc::now())
+        .resolve_operator(caller.tenant_context()?, Utc::now())
         .await
         .map_err(internal)?;
     Ok((
@@ -711,7 +741,13 @@ pub async fn list_strategies(
     Extension(caller): Extension<CallerContext>,
 ) -> Result<impl IntoResponse, ApiError> {
     caller.require_active()?;
-    Ok(Json(state.strategies.list().await.map_err(internal)?))
+    Ok(Json(
+        state
+            .strategies
+            .list(caller.tenant_context()?)
+            .await
+            .map_err(internal)?,
+    ))
 }
 
 /// `GET /api/v1/strategies/{id}`.
@@ -721,7 +757,12 @@ pub async fn get_strategy(
     Path(id): Path<String>,
 ) -> Result<Response, ApiError> {
     caller.require_active()?;
-    match state.strategies.get(&id).await.map_err(internal)? {
+    match state
+        .strategies
+        .get(caller.tenant_context()?, &id)
+        .await
+        .map_err(internal)?
+    {
         Some(strategy) => Ok(Json(strategy).into_response()),
         None => Ok(not_found("Strategy not found", "STRATEGY_NOT_FOUND")),
     }
@@ -740,7 +781,11 @@ pub async fn create_strategy(
     strategy.current.created_at = Utc::now().to_rfc3339();
     strategy.current.mode = "PAPER".to_owned();
     validate_strategy(&strategy)?;
-    state.strategies.create(&strategy).await.map_err(internal)?;
+    state
+        .strategies
+        .create(caller.tenant_context()?, &strategy)
+        .await
+        .map_err(internal)?;
     Ok((StatusCode::CREATED, Json(strategy)).into_response())
 }
 
@@ -752,7 +797,12 @@ pub async fn update_strategy(
     Json(mut strategy): Json<StrategyDto>,
 ) -> Result<Response, ApiError> {
     require_strategy_write(&caller)?;
-    let Some(existing) = state.strategies.get(&id).await.map_err(internal)? else {
+    let Some(existing) = state
+        .strategies
+        .get(caller.tenant_context()?, &id)
+        .await
+        .map_err(internal)?
+    else {
         return Ok(not_found("Strategy not found", "STRATEGY_NOT_FOUND"));
     };
     strategy.id = id;
@@ -762,7 +812,11 @@ pub async fn update_strategy(
     strategy.current.created_at = Utc::now().to_rfc3339();
     strategy.current.mode = "PAPER".to_owned();
     validate_strategy(&strategy)?;
-    state.strategies.update(&strategy).await.map_err(internal)?;
+    state
+        .strategies
+        .update(caller.tenant_context()?, &strategy)
+        .await
+        .map_err(internal)?;
     Ok(Json(strategy).into_response())
 }
 
@@ -772,7 +826,13 @@ pub async fn delete_strategy(
     Path(id): Path<String>,
 ) -> Result<Response, ApiError> {
     require_strategy_write(&caller)?;
-    if state.strategies.delete(&id).await.map_err(internal)? == 0 {
+    if state
+        .strategies
+        .delete(caller.tenant_context()?, &id)
+        .await
+        .map_err(internal)?
+        == 0
+    {
         return Ok(not_found("Strategy not found", "STRATEGY_NOT_FOUND"));
     }
     Ok(StatusCode::NO_CONTENT.into_response())
@@ -780,14 +840,19 @@ pub async fn delete_strategy(
 
 async fn set_strategy_enabled(
     state: &AppState,
+    context: funding_arb_tenant_context::TenantContext,
     id: &str,
     enabled: bool,
 ) -> Result<Response, ApiError> {
-    let Some(mut strategy) = state.strategies.get(id).await.map_err(internal)? else {
+    let Some(mut strategy) = state.strategies.get(context, id).await.map_err(internal)? else {
         return Ok(not_found("Strategy not found", "STRATEGY_NOT_FOUND"));
     };
     strategy.enabled = enabled;
-    state.strategies.update(&strategy).await.map_err(internal)?;
+    state
+        .strategies
+        .update(context, &strategy)
+        .await
+        .map_err(internal)?;
     Ok(Json(strategy).into_response())
 }
 
@@ -797,7 +862,7 @@ pub async fn enable_strategy(
     Path(id): Path<String>,
 ) -> Result<Response, ApiError> {
     require_strategy_write(&caller)?;
-    set_strategy_enabled(&state, &id, true).await
+    set_strategy_enabled(&state, caller.tenant_context()?, &id, true).await
 }
 
 pub async fn disable_strategy(
@@ -806,7 +871,7 @@ pub async fn disable_strategy(
     Path(id): Path<String>,
 ) -> Result<Response, ApiError> {
     require_strategy_write(&caller)?;
-    set_strategy_enabled(&state, &id, false).await
+    set_strategy_enabled(&state, caller.tenant_context()?, &id, false).await
 }
 
 pub async fn apply_strategy_to_open(
@@ -815,20 +880,31 @@ pub async fn apply_strategy_to_open(
     Path(id): Path<String>,
 ) -> Result<Response, ApiError> {
     require_strategy_write(&caller)?;
-    if state.strategies.get(&id).await.map_err(internal)?.is_none() {
+    let tenant = caller.tenant_context()?;
+    if state
+        .strategies
+        .get(tenant, &id)
+        .await
+        .map_err(internal)?
+        .is_none()
+    {
         return Ok(not_found("Strategy not found", "STRATEGY_NOT_FOUND"));
     }
     let mut applied = 0_u64;
     for mut position in state
         .positions
-        .list()
+        .list(tenant)
         .await
         .map_err(internal)?
         .into_iter()
         .filter(|position| position.state == "OPEN")
     {
         position.strategy_id = Some(id.clone());
-        state.positions.update(&position).await.map_err(internal)?;
+        state
+            .positions
+            .update(tenant, &position)
+            .await
+            .map_err(internal)?;
         applied += 1;
     }
     Ok(Json(serde_json::json!({"applied": applied})).into_response())
@@ -860,7 +936,7 @@ pub async fn get_portfolio(
     Ok(Json(
         state
             .monitoring
-            .portfolio(Utc::now())
+            .portfolio(caller.tenant_context()?, Utc::now())
             .await
             .map_err(internal)?,
     ))
@@ -874,7 +950,7 @@ pub async fn get_health(
     Ok(Json(
         state
             .monitoring
-            .health(Utc::now())
+            .health(caller.tenant_context()?, Utc::now())
             .await
             .map_err(internal)?,
     ))
@@ -885,7 +961,13 @@ pub async fn list_alerts(
     Extension(caller): Extension<CallerContext>,
 ) -> Result<impl IntoResponse, ApiError> {
     caller.require_active()?;
-    Ok(Json(state.monitoring.alerts().await.map_err(internal)?))
+    Ok(Json(
+        state
+            .monitoring
+            .alerts(caller.tenant_context()?)
+            .await
+            .map_err(internal)?,
+    ))
 }
 
 pub async fn ack_alert(
@@ -896,7 +978,7 @@ pub async fn ack_alert(
     caller.require_active()?;
     match state
         .monitoring
-        .acknowledge(&id, &caller.user_id, Utc::now())
+        .acknowledge(caller.tenant_context()?, &id, &caller.user_id, Utc::now())
         .await
         .map_err(internal)?
     {
@@ -911,7 +993,11 @@ pub async fn list_venues(
     Extension(caller): Extension<CallerContext>,
 ) -> Result<impl IntoResponse, ApiError> {
     caller.require_active()?;
-    let accounts = state.venues.list().await.map_err(internal)?;
+    let accounts = state
+        .venues
+        .list(caller.tenant_context()?)
+        .await
+        .map_err(internal)?;
     let summary = [
         ("BYBIT", "Bybit", "TESTNET"),
         ("BINANCE", "Binance", "TESTNET"),
@@ -940,7 +1026,13 @@ pub async fn list_venue_accounts(
     Extension(caller): Extension<CallerContext>,
 ) -> Result<impl IntoResponse, ApiError> {
     caller.require_active()?;
-    Ok(Json(state.venues.list().await.map_err(internal)?))
+    Ok(Json(
+        state
+            .venues
+            .list(caller.tenant_context()?)
+            .await
+            .map_err(internal)?,
+    ))
 }
 
 /// `GET /api/v1/connector-orders` — recent exact connector order intents.
@@ -952,7 +1044,7 @@ pub async fn list_connector_orders(
     Ok(Json(
         state
             .connector_monitoring
-            .orders()
+            .orders(caller.tenant_context()?)
             .await
             .map_err(internal)?,
     ))
@@ -967,7 +1059,7 @@ pub async fn list_reconciliations(
     Ok(Json(
         state
             .connector_monitoring
-            .reconciliations()
+            .reconciliations(caller.tenant_context()?)
             .await
             .map_err(internal)?,
     ))
@@ -980,7 +1072,14 @@ pub async fn get_connector_accounting(
     Path(id): Path<String>,
 ) -> Result<Response, ApiError> {
     caller.require_active()?;
-    if state.venues.get(&id).await.map_err(internal)?.is_none() {
+    let tenant = caller.tenant_context()?;
+    if state
+        .venues
+        .get(tenant, &id)
+        .await
+        .map_err(internal)?
+        .is_none()
+    {
         return Ok(not_found(
             "Venue account not found",
             "VENUE_ACCOUNT_NOT_FOUND",
@@ -989,7 +1088,7 @@ pub async fn get_connector_accounting(
     Ok(Json(
         state
             .connector_monitoring
-            .accounting(&id)
+            .accounting(tenant, &id)
             .await
             .map_err(internal)?,
     )
@@ -1003,7 +1102,12 @@ pub async fn get_venue_account(
     Path(id): Path<String>,
 ) -> Result<Response, ApiError> {
     caller.require_active()?;
-    match state.venues.get(&id).await.map_err(internal)? {
+    match state
+        .venues
+        .get(caller.tenant_context()?, &id)
+        .await
+        .map_err(internal)?
+    {
         Some(account) => Ok(Json(account).into_response()),
         None => Ok(not_found(
             "Venue account not found",
@@ -1022,7 +1126,8 @@ pub async fn test_venue_account(
     if !caller.can_trade() {
         return Err(AuthError::Forbidden.into());
     }
-    let Some(mut account) = state.venues.get(&id).await.map_err(internal)? else {
+    let tenant = caller.tenant_context()?;
+    let Some(mut account) = state.venues.get(tenant, &id).await.map_err(internal)? else {
         return Ok(not_found(
             "Venue account not found",
             "VENUE_ACCOUNT_NOT_FOUND",
@@ -1067,11 +1172,15 @@ pub async fn test_venue_account(
         };
         state
             .venues
-            .update_connection(&account.id, connection)
+            .update_connection(tenant, &account.id, connection)
             .await
             .map_err(internal)?;
     }
-    state.venues.update(&account).await.map_err(internal)?;
+    state
+        .venues
+        .update(tenant, &account)
+        .await
+        .map_err(internal)?;
     Ok(Json(ConnectionTestDto {
         account_id: account.id,
         status: if valid { "PASS" } else { "FAIL" }.into(),
@@ -1091,7 +1200,8 @@ pub async fn disable_venue_account(
     if !caller.is_owner() {
         return Err(AuthError::Forbidden.into());
     }
-    let Some(mut account) = state.venues.get(&id).await.map_err(internal)? else {
+    let tenant = caller.tenant_context()?;
+    let Some(mut account) = state.venues.get(tenant, &id).await.map_err(internal)? else {
         return Ok(not_found(
             "Venue account not found",
             "VENUE_ACCOUNT_NOT_FOUND",
@@ -1103,11 +1213,15 @@ pub async fn disable_venue_account(
         connection.status = "DISABLED".into();
         state
             .venues
-            .update_connection(&account.id, connection)
+            .update_connection(tenant, &account.id, connection)
             .await
             .map_err(internal)?;
     }
-    state.venues.update(&account).await.map_err(internal)?;
+    state
+        .venues
+        .update(tenant, &account)
+        .await
+        .map_err(internal)?;
     Ok(Json(account).into_response())
 }
 
@@ -1134,7 +1248,8 @@ pub async fn preview_connector_order(
     if !caller.can_trade() {
         return Err(AuthError::Forbidden.into());
     }
-    let (configured, intent) = connector_intent(&state, &id, &request).await?;
+    let (configured, intent) =
+        connector_intent(&state, caller.tenant_context()?, &id, &request).await?;
     let prepared = state
         .connector_execution
         .preview(configured.connector.as_ref(), &intent)
@@ -1171,7 +1286,7 @@ pub async fn submit_connector_order(
     }
     if state
         .breakers
-        .controls()
+        .controls(caller.tenant_context()?)
         .await
         .map_err(internal)?
         .effective_action
@@ -1179,10 +1294,12 @@ pub async fn submit_connector_order(
     {
         return Err(AuthError::Conflict("circuit breaker blocks connector submission").into());
     }
-    let (configured, intent) = connector_intent(&state, &id, &request).await?;
+    let tenant = caller.tenant_context()?;
+    let (configured, intent) = connector_intent(&state, tenant, &id, &request).await?;
     let result = state
         .connector_execution
         .submit_sandbox(
+            tenant,
             state.mode,
             configured.environment,
             configured.connector.as_ref(),
@@ -1215,6 +1332,7 @@ pub async fn submit_connector_order(
 
 async fn connector_intent(
     state: &AppState,
+    tenant: funding_arb_tenant_context::TenantContext,
     account_id: &str,
     request: &ConnectorOrderRequest,
 ) -> Result<(ConfiguredConnector, CanonicalOrderIntent), ApiError> {
@@ -1243,7 +1361,7 @@ async fn connector_intent(
         .as_ref()
         .ok_or(AuthError::Conflict("connector registry is unavailable"))?;
     let configured = registry
-        .load(state.mode)
+        .load(tenant, state.mode)
         .await
         .map_err(|error| ApiError(AuthError::Internal(error.to_string())))?
         .into_iter()
