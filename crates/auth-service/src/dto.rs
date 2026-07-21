@@ -43,10 +43,20 @@ pub enum Role {
     Approver,
 }
 
+/// Public, non-secret summary of the caller's personal tenant.
+#[derive(Clone, Debug, Serialize)]
+pub struct TenantSummary {
+    pub id: String,
+    pub display_name: String,
+    pub base_currency: String,
+    pub state: String,
+}
+
 /// Public projection of the authenticated user.
 #[derive(Clone, Debug, Serialize)]
 pub struct CurrentUser {
     pub id: String,
+    pub tenant: TenantSummary,
     pub status: UserStatus,
     pub display_name: Option<String>,
     pub email: Option<String>,

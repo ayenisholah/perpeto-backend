@@ -58,7 +58,7 @@ fn test_config(database_url: String, bootstrap_token: &str, open_registration: b
 
 async fn reset(pool: &PgPool) {
     sqlx::query(
-        "TRUNCATE users, provider_identities, user_roles, social_challenges, devices, \
+        "TRUNCATE tenants, tenant_memberships, users, provider_identities, user_roles, social_challenges, devices, \
          sessions, refresh_token_history, mfa_methods, recovery_codes, \
          recovery_code_acknowledgements, bootstrap_state, step_up_proofs, \
          audit_actors, audit_events RESTART IDENTITY CASCADE",
@@ -314,6 +314,7 @@ async fn bootstrap_promotes_first_owner_to_mfa_enrollment() {
     let session = transition.session.expect("session");
     let caller = CallerContext {
         user_id: transition.user.id.clone(),
+        tenant_id: transition.user.tenant.id.clone(),
         session_id: session.session_id.clone(),
         device_id: session.device_id.clone(),
         status: "PENDING".to_owned(),

@@ -22,6 +22,8 @@ pub struct AccessClaims {
     pub sub: String,
     /// Session id.
     pub sid: String,
+    /// Personal tenant id bound to the session.
+    pub tid: String,
     /// Device id.
     pub did: String,
     /// Permission version at mint time.
@@ -132,6 +134,7 @@ impl TokenSigner {
     pub fn mint_access_token(
         &self,
         user_id: &str,
+        tenant_id: &str,
         session_id: &str,
         device_id: &str,
         permission_version: i64,
@@ -140,6 +143,7 @@ impl TokenSigner {
         let exp = iat + ACCESS_TTL_SECONDS;
         let claims = AccessClaims {
             sub: user_id.to_owned(),
+            tid: tenant_id.to_owned(),
             sid: session_id.to_owned(),
             did: device_id.to_owned(),
             pv: permission_version,
@@ -277,10 +281,11 @@ mod tests {
     fn access_tokens_round_trip() {
         let signer = signer();
         let (token, exp) = signer
-            .mint_access_token("user-1", "session-1", "device-1", 3)
+            .mint_access_token("user-1", "tenant-1", "session-1", "device-1", 3)
             .unwrap();
         let claims = signer.verify_access_token(&token).unwrap();
         assert_eq!(claims.sub, "user-1");
+        assert_eq!(claims.tid, "tenant-1");
         assert_eq!(claims.sid, "session-1");
         assert_eq!(claims.did, "device-1");
         assert_eq!(claims.pv, 3);
@@ -291,7 +296,7 @@ mod tests {
     fn tampered_tokens_are_rejected() {
         let signer = signer();
         let (token, _) = signer
-            .mint_access_token("user-1", "session-1", "device-1", 1)
+            .mint_access_token("user-1", "tenant-1", "session-1", "device-1", 1)
             .unwrap();
         let mut tampered = token.clone();
         tampered.pop();
@@ -305,7 +310,7 @@ mod tests {
     #[test]
     fn foreign_key_cannot_verify() {
         let (token, _) = signer()
-            .mint_access_token("user-1", "session-1", "device-1", 1)
+            .mint_access_token("user-1", "tenant-1", "session-1", "device-1", 1)
             .unwrap();
         let other = TokenSigner::new([9_u8; 32], String::from("https://perpeto.test"));
         assert_eq!(

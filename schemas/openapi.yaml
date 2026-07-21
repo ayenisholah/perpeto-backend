@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Perpeto Control API
-  version: 0.13.0
+  version: 0.15.0
   description: >-
     Social identity, MFA, and secure sessions plus the M2 deterministic paper
     scanner and coordinated simulated positions. Live execution remains unavailable.
@@ -1593,9 +1593,10 @@ components:
     CurrentUser:
       type: object
       additionalProperties: false
-      required: [id, status, roles, linked_providers, mfa_enrolled]
+      required: [id, tenant, status, roles, linked_providers, mfa_enrolled]
       properties:
         id: { type: string, format: uuid }
+        tenant: { $ref: "#/components/schemas/TenantSummary" }
         status: { $ref: "#/components/schemas/UserStatus" }
         display_name: { type: [string, "null"] }
         email: { type: [string, "null"], format: email }
@@ -1608,6 +1609,17 @@ components:
           uniqueItems: true
           items: { $ref: "#/components/schemas/SocialProvider" }
         mfa_enrolled: { type: boolean }
+    TenantSummary:
+      type: object
+      additionalProperties: false
+      required: [id, display_name, base_currency, state]
+      properties:
+        id: { type: string, format: uuid }
+        display_name: { type: string, minLength: 1, maxLength: 120 }
+        base_currency: { type: string, const: USD }
+        state:
+          type: string
+          enum: [PAPER_ONLY, PILOT_ELIGIBLE, PILOT_ARMED, SUSPENDED, DELETED]
     MfaEnrollment:
       type: object
       additionalProperties: false

@@ -96,6 +96,7 @@ describe("social authentication contract", () => {
           next: "PENDING_APPROVAL",
           user: {
             id: "user-id",
+            tenant: { id: "tenant-id", display_name: "Personal portfolio", base_currency: "USD", state: "PAPER_ONLY" },
             status: "PENDING",
             display_name: null,
             email: null,
@@ -134,6 +135,7 @@ describe("social authentication contract", () => {
         authorization = new Headers(init.headers).get("Authorization");
         return Response.json({
           id: "user-id",
+          tenant: { id: "tenant-id", display_name: "Personal portfolio", base_currency: "USD", state: "PAPER_ONLY" },
           status: "ACTIVE",
           display_name: null,
           email: null,

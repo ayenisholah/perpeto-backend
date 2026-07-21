@@ -14,6 +14,7 @@
 - Added M3 Slices 1–20: fail-closed `PAPER`/`SANDBOX`/`SHADOW` modes, normalized exact-decimal connector models and books, encrypted transitional credential administration, durable execution/reconciliation/accounting, Bybit/Binance/OKX REST adapters, masked account/order APIs, runtime wiring, observability and certification evidence tooling.
 - Advanced the local OpenAPI/client contract to `@ayenisholah/perpeto-api-client@0.14.0`; all financial wire values are decimal strings, local typecheck and 21 contract tests pass, and the mobile app consumes the matching vendored tarball.
 - Verified that documentation synchronization and mobile API-update automation are configured; `0.7.0` is the latest API-client version confirmed published to GitHub Packages.
+- Added the first M4 isolation slice: one personal tenant per user, tenant memberships, tenant-bound sessions/access claims, middleware membership matching, and a public tenant summary through local OpenAPI/client `0.15.0`. No caller-selectable tenant input was added.
 
 ## Exit gates and unverified work
 
@@ -23,7 +24,7 @@
 - Primary public/private WebSocket ingestion and connector-specific sequence recovery are not implemented; connector streams currently poll REST snapshots.
 - No venue has accepted certification evidence. Credentialed Bybit/Binance testnet, OKX demo, production read-only shadow, reconciliation and the required 72-hour/14-day windows remain outstanding.
 - M1A real-device, accessibility, security and full provider/replay integration evidence remains incomplete.
-- Personal tenants, forced PostgreSQL RLS, tenant-aware jobs/caches/events, Vault Transit, WebAuthn passkeys, consumer credential enrollment, per-account live preflight and production CEX writes are M4 work and are not implemented.
+- Personal-tenant identity and session binding are implemented locally. Forced PostgreSQL RLS across private aggregates, tenant-aware repositories/jobs/caches/events, Vault Transit, WebAuthn passkeys, consumer credential enrollment, per-account live preflight and production CEX writes remain M4 work.
 - Live trading remains unavailable by design.
 
 ## Current blockers
@@ -37,4 +38,4 @@
 1. Run the local connector repair through locked backend CI before treating M3 code as build-verified.
 2. Run the implemented lossless-decimal DTO/persistence and precision-regression tests in backend CI before closing M2.
 3. Implement primary connector WebSockets, then run the credentialed M3 sandbox/demo/shadow certification matrix without production writes.
-4. Begin M4 tenant context only after the earlier exit gates close; do not expose consumer credential mutation endpoints before forced RLS, passkey verification and encrypt-only Vault access land together.
+4. Extend the implemented M4 tenant context across private aggregates, repositories and background work, then enable forced RLS; do not expose consumer credential mutation endpoints before forced RLS, passkey verification and encrypt-only Vault access land together.

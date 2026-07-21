@@ -13,7 +13,7 @@ use crate::dto::{
     AccessRequest, AcknowledgeRecoveryRequest, AuthTransition, BootstrapRequest,
     CreateChallengeRequest, CurrentUser, ExchangeRequest, LinkedIdentity, MfaConfirmRequest,
     MfaConfirmResponse, MfaEnrollment, MfaVerifyRequest, NextState, Provider, RefreshRequest, Role,
-    SessionCredentials, SessionSummary, SocialChallenge, UserStatus,
+    SessionCredentials, SessionSummary, SocialChallenge, TenantSummary, UserStatus,
 };
 use crate::error::{AuthError, AuthResult};
 use crate::mfa;
@@ -32,6 +32,7 @@ const OTP_ISSUER: &str = "Perpeto";
 #[derive(Clone, Debug)]
 pub struct CallerContext {
     pub user_id: String,
+    pub tenant_id: String,
     pub session_id: String,
     pub device_id: String,
     pub status: String,
@@ -317,6 +318,12 @@ impl AuthService {
         }
 
         let user = self.repo.user_projection(&session.user_id).await?;
+        if user.tenant_id != session.tenant_id {
+            self.repo
+                .revoke_session_internal(&session.id, "TENANT_MEMBERSHIP_CHANGED")
+                .await?;
+            return Err(AuthError::SessionRevoked);
+        }
         match user.status.as_str() {
             "DELETED" => return Err(AuthError::AccountDeleted),
             "SUSPENDED" => return Err(AuthError::UserSuspended),
@@ -336,6 +343,7 @@ impl AuthService {
             .await?;
         let (access_token, expires_at) = self.signer.mint_access_token(
             &session.user_id,
+            &session.tenant_id,
             &session.id,
             &session.device_id,
             session.permission_version,
@@ -644,9 +652,14 @@ impl AuthService {
                 permission_version,
             )
             .await?;
-        let (access_token, expires_at) =
-            self.signer
-                .mint_access_token(user_id, &session_id, device_id, permission_version)?;
+        let user = self.repo.user_projection(user_id).await?;
+        let (access_token, expires_at) = self.signer.mint_access_token(
+            user_id,
+            &user.tenant_id,
+            &session_id,
+            device_id,
+            permission_version,
+        )?;
         Ok(SessionCredentials {
             access_token,
             access_token_expires_at: to_rfc3339(from_epoch(expires_at)),
@@ -731,6 +744,12 @@ fn hex_value(byte: u8) -> Option<u8> {
 fn to_current_user(projection: &UserProjection) -> CurrentUser {
     CurrentUser {
         id: projection.id.clone(),
+        tenant: TenantSummary {
+            id: projection.tenant_id.clone(),
+            display_name: projection.tenant_display_name.clone(),
+            base_currency: projection.tenant_base_currency.clone(),
+            state: projection.tenant_state.clone(),
+        },
         status: map_status(&projection.status),
         display_name: projection.display_name.clone(),
         email: projection.email.clone(),

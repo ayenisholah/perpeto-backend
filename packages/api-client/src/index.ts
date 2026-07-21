@@ -150,8 +150,16 @@ export interface ConnectorAccounting {
   readonly positions: readonly ExactVenuePosition[];
 }
 
+export interface TenantSummary {
+  readonly id: string;
+  readonly display_name: string;
+  readonly base_currency: "USD";
+  readonly state: "PAPER_ONLY" | "PILOT_ELIGIBLE" | "PILOT_ARMED" | "SUSPENDED" | "DELETED";
+}
+
 export interface CurrentUser {
   readonly id: string;
+  readonly tenant: TenantSummary;
   readonly status: UserStatus;
   readonly display_name: string | null;
   readonly email: string | null;

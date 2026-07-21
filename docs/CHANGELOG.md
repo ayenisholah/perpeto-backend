@@ -6,6 +6,8 @@ All notable repository changes are recorded here using Keep a Changelog categori
 
 ### Added
 
+- M4 tenant foundation — added personal tenants and immutable one-owner memberships, deterministic legacy-user backfill, tenant-bound sessions, a fail-closed transaction tenant helper, session-derived JWT tenant claims, live membership verification in auth middleware, and tenant status in OpenAPI/client **0.15.0**. Forced RLS and tenant-scoped trading repositories remain the next isolation slice.
+
 - M2 exact-decimal gate remediation — replaced scanner, strategy, execution and monitoring financial `f64` DTO fields with lossless decimal values serialized as strings; versioned OpenAPI/client to **0.14.0**, added a precision round-trip regression, preserved fixture lexemes without floating-point conversion, and updated the vendored mobile integration. Client/mobile verification passes locally; Rust/PostgreSQL evidence remains pending a usable MSVC build environment.
 
 - Accepted DEC-0013 to make the rollout boundary unambiguous: M3 remains non-writing, M4 may grant only a controlled `PILOT`, M6 supplies hardening evidence, and `CERTIFIED_LIVE` begins with the broader M7 rollout.

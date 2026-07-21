@@ -15,6 +15,10 @@ const SESSION_TTL_DAYS: i64 = 30;
 #[derive(Clone, Debug)]
 pub struct UserProjection {
     pub id: String,
+    pub tenant_id: String,
+    pub tenant_display_name: String,
+    pub tenant_base_currency: String,
+    pub tenant_state: String,
     pub status: String,
     pub email: Option<String>,
     pub display_name: Option<String>,
@@ -300,8 +304,8 @@ impl Repo {
     /// Propagates database failures.
     pub async fn session_by_refresh_hash(&self, hash: &[u8]) -> AuthResult<Option<SessionRow>> {
         let row = sqlx::query(
-            "SELECT id::text AS id, user_id::text AS user_id, device_id::text AS device_id, \
-             state::text AS state, generation, permission_version, expires_at \
+            "SELECT id::text AS id, user_id::text AS user_id, tenant_id::text AS tenant_id, \
+             device_id::text AS device_id, state::text AS state, generation, permission_version, expires_at \
              FROM sessions WHERE refresh_token_hash = $1",
         )
         .bind(hash)
@@ -310,6 +314,7 @@ impl Repo {
         Ok(row.map(|row| SessionRow {
             id: row.get("id"),
             user_id: row.get("user_id"),
+            tenant_id: row.get("tenant_id"),
             device_id: row.get("device_id"),
             state: row.get("state"),
             generation: row.get("generation"),
@@ -900,6 +905,7 @@ impl Repo {
 pub struct SessionRow {
     pub id: String,
     pub user_id: String,
+    pub tenant_id: String,
     pub device_id: String,
     pub state: String,
     pub generation: i64,
@@ -970,6 +976,7 @@ async fn insert_new_user(
     auto_approve: bool,
 ) -> AuthResult<Uuid> {
     let new_user = Uuid::new_v4();
+    let new_tenant = Uuid::new_v4();
     // Open registration (DEC-0009) admits new users to full access immediately;
     // otherwise they start PENDING an Owner's approval.
     let status = if auto_approve { "ACTIVE" } else { "PENDING" };
@@ -982,6 +989,24 @@ async fn insert_new_user(
     .bind(&identity.email)
     .bind(&identity.display_name)
     .bind(auto_approve)
+    .execute(&mut *conn)
+    .await?;
+    let tenant_name = identity
+        .display_name
+        .as_deref()
+        .filter(|name| !name.trim().is_empty())
+        .unwrap_or("Personal portfolio");
+    sqlx::query("INSERT INTO tenants (id, display_name) VALUES ($1, LEFT($2, 120))")
+        .bind(new_tenant)
+        .bind(tenant_name)
+        .execute(&mut *conn)
+        .await?;
+    sqlx::query(
+        "INSERT INTO tenant_memberships (tenant_id, user_id, role, active) \
+         VALUES ($1, $2, 'OWNER', true)",
+    )
+    .bind(new_tenant)
+    .bind(new_user)
     .execute(&mut *conn)
     .await?;
     if auto_approve {
@@ -1014,11 +1039,12 @@ where
     let user_uuid = parse_uuid(user_id)?;
     let device_uuid = parse_uuid(device_id)?;
     let expires_at = Utc::now() + Duration::days(SESSION_TTL_DAYS);
-    sqlx::query(
+    let result = sqlx::query(
         "INSERT INTO sessions \
-         (id, user_id, device_id, family_id, refresh_token_hash, generation, \
+         (id, user_id, tenant_id, device_id, family_id, refresh_token_hash, generation, \
           permission_version, expires_at) \
-         VALUES ($1, $2, $3, $4, $5, 0, $6, $7)",
+         SELECT $1, $2, tm.tenant_id, $3, $4, $5, 0, $6, $7 \
+         FROM tenant_memberships tm WHERE tm.user_id = $2 AND tm.active",
     )
     .bind(session_uuid)
     .bind(user_uuid)
@@ -1029,6 +1055,9 @@ where
     .bind(expires_at)
     .execute(executor)
     .await?;
+    if result.rows_affected() != 1 {
+        return Err(AuthError::Forbidden);
+    }
     Ok(())
 }
 
@@ -1038,8 +1067,13 @@ async fn load_user_projection(
 ) -> AuthResult<UserProjection> {
     let uuid = parse_uuid(user_id)?;
     let base = sqlx::query(
-        "SELECT status::text AS status, email, display_name, permission_version \
-         FROM users WHERE id = $1",
+        "SELECT u.status::text AS status, u.email, u.display_name, u.permission_version, \
+                t.id::text AS tenant_id, t.display_name AS tenant_display_name, \
+                t.base_currency, t.state::text AS tenant_state \
+         FROM users u \
+         JOIN tenant_memberships tm ON tm.user_id = u.id AND tm.active \
+         JOIN tenants t ON t.id = tm.tenant_id AND t.state <> 'DELETED' \
+         WHERE u.id = $1",
     )
     .bind(uuid)
     .fetch_optional(&mut *conn)
@@ -1071,6 +1105,10 @@ async fn load_user_projection(
 
     Ok(UserProjection {
         id: user_id.to_owned(),
+        tenant_id: base.get("tenant_id"),
+        tenant_display_name: base.get("tenant_display_name"),
+        tenant_base_currency: base.get("base_currency"),
+        tenant_state: base.get("tenant_state"),
         status: base.get("status"),
         email: base.get("email"),
         display_name: base.get("display_name"),

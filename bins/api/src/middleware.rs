@@ -32,6 +32,9 @@ pub async fn require_auth(
 
     let claims = state.service.verify_access_token(token)?;
     let user = state.service.user_projection(&claims.sub).await?;
+    if user.tenant_id != claims.tid {
+        return Err(AuthError::Unauthorized.into());
+    }
     match user.status.as_str() {
         "DELETED" => return Err(AuthError::AccountDeleted.into()),
         "SUSPENDED" => return Err(AuthError::UserSuspended.into()),
@@ -40,6 +43,7 @@ pub async fn require_auth(
 
     let context = CallerContext {
         user_id: claims.sub,
+        tenant_id: claims.tid,
         session_id: claims.sid,
         device_id: claims.did,
         status: user.status,
