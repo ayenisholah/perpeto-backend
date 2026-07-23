@@ -274,11 +274,185 @@ impl RefreshSession {
     }
 }
 
+/// A WebAuthn ceremony kind. Registration binds a new authenticator;
+/// authentication asserts possession of an already-registered one.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Ceremony {
+    Register,
+    Authenticate,
+}
+
+/// Opaque WebAuthn credential identifier, unique within the relying party.
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub struct CredentialId(Vec<u8>);
+
+impl CredentialId {
+    #[must_use]
+    pub fn new(bytes: Vec<u8>) -> Self {
+        Self(bytes)
+    }
+
+    #[must_use]
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.0
+    }
+}
+
+/// Monotonic authenticator signature counter. A presented value that does not
+/// exceed the stored one indicates a cloned authenticator and must be rejected;
+/// a value of zero from a counter-less authenticator stays at zero forever.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct SignCount(u32);
+
+impl SignCount {
+    #[must_use]
+    pub const fn new(value: u32) -> Self {
+        Self(value)
+    }
+
+    #[must_use]
+    pub const fn value(self) -> u32 {
+        self.0
+    }
+
+    /// Advance to a freshly asserted counter. Counter-less authenticators keep
+    /// both values at zero; any other non-increase is a clone signal.
+    pub fn advance(&mut self, presented: SignCount) -> Result<(), AuthInvariantError> {
+        if self.0 == 0 && presented.0 == 0 {
+            return Ok(());
+        }
+        if presented.0 <= self.0 {
+            return Err(AuthInvariantError::SignCountRegression);
+        }
+        self.0 = presented.0;
+        Ok(())
+    }
+}
+
+/// The exact action a passkey assertion authorizes. A proof minted for one
+/// descriptor can never satisfy another. Marked `#[non_exhaustive]`: later M4
+/// slices add credential-enrollment and pilot-arming variants without breaking
+/// existing matches.
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum ActionDescriptor {
+    RegisterPasskey,
+    RevokePasskey { credential_id: CredentialId },
+}
+
+impl ActionDescriptor {
+    /// Stable, injective encoding used as the binding key persisted alongside a
+    /// challenge and compared when a proof is consumed. Two descriptors are the
+    /// same action iff their canonical forms are equal.
+    #[must_use]
+    pub fn canonical(&self) -> String {
+        match self {
+            Self::RegisterPasskey => "register_passkey".to_owned(),
+            Self::RevokePasskey { credential_id } => {
+                let mut encoded = String::from("revoke_passkey:");
+                for byte in credential_id.as_bytes() {
+                    use std::fmt::Write as _;
+                    let _ = write!(encoded, "{byte:02x}");
+                }
+                encoded
+            }
+        }
+    }
+}
+
+/// A single-use authorization proof bound to one action. Verifying a passkey
+/// assertion for action A yields a proof that consumes exactly once and only
+/// authorizes A.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ActionProof {
+    action: ActionDescriptor,
+    expires_at_epoch_seconds: u64,
+    consumed: bool,
+}
+
+impl ActionProof {
+    #[must_use]
+    pub const fn new(action: ActionDescriptor, expires_at_epoch_seconds: u64) -> Self {
+        Self {
+            action,
+            expires_at_epoch_seconds,
+            consumed: false,
+        }
+    }
+
+    /// Consume the proof to authorize `requested`. Fails closed on mismatch,
+    /// reuse, or expiry.
+    pub fn authorize(
+        &mut self,
+        requested: &ActionDescriptor,
+        now_epoch_seconds: u64,
+    ) -> Result<(), AuthInvariantError> {
+        if self.consumed {
+            return Err(AuthInvariantError::ActionProofAlreadyConsumed);
+        }
+        if now_epoch_seconds >= self.expires_at_epoch_seconds {
+            return Err(AuthInvariantError::ActionProofExpired);
+        }
+        if self.action.canonical() != requested.canonical() {
+            return Err(AuthInvariantError::ActionProofMismatch);
+        }
+        self.consumed = true;
+        Ok(())
+    }
+}
+
+/// A registered passkey. Owns the anti-clone signature-count invariant and the
+/// revocation lifecycle; the actual assertion cryptography lives in the adapter.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PasskeyCredential {
+    pub credential_id: CredentialId,
+    sign_count: SignCount,
+    revoked: bool,
+}
+
+impl PasskeyCredential {
+    #[must_use]
+    pub const fn new(credential_id: CredentialId, sign_count: SignCount) -> Self {
+        Self {
+            credential_id,
+            sign_count,
+            revoked: false,
+        }
+    }
+
+    #[must_use]
+    pub const fn sign_count(&self) -> SignCount {
+        self.sign_count
+    }
+
+    #[must_use]
+    pub const fn is_revoked(&self) -> bool {
+        self.revoked
+    }
+
+    /// Record a verified assertion, advancing the signature counter. Rejects a
+    /// revoked credential or a non-increasing counter (clone signal).
+    pub fn record_assertion(&mut self, presented: SignCount) -> Result<(), AuthInvariantError> {
+        if self.revoked {
+            return Err(AuthInvariantError::CredentialRevoked);
+        }
+        self.sign_count.advance(presented)
+    }
+
+    pub fn revoke(&mut self) {
+        self.revoked = true;
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum AuthInvariantError {
+    ActionProofAlreadyConsumed,
+    ActionProofExpired,
+    ActionProofMismatch,
     BootstrapAlreadyConsumed,
     ChallengeAlreadyConsumed,
     ChallengeExpired,
+    CredentialRevoked,
     FinalIdentityCannotBeUnlinked,
     FinalOwnerCannotBeDeleted,
     FreshProviderAuthenticationRequired,
@@ -290,6 +464,7 @@ pub enum AuthInvariantError {
     RefreshTokenReuse,
     RoleIsNotPrivileged,
     SessionInactive,
+    SignCountRegression,
     TotpRequired,
     UserIsNotActive,
     UserIsNotPending,
@@ -425,5 +600,70 @@ mod tests {
             challenge.consume(99),
             Err(AuthInvariantError::ChallengeAlreadyConsumed)
         );
+    }
+
+    #[test]
+    fn sign_count_regression_signals_a_cloned_authenticator() {
+        let mut counter = SignCount::new(7);
+        counter.advance(SignCount::new(8)).unwrap();
+        assert_eq!(counter.value(), 8);
+        assert_eq!(
+            counter.advance(SignCount::new(8)),
+            Err(AuthInvariantError::SignCountRegression)
+        );
+        // Counter-less authenticators legitimately stay at zero.
+        let mut counterless = SignCount::new(0);
+        counterless.advance(SignCount::new(0)).unwrap();
+    }
+
+    #[test]
+    fn passkey_rejects_assertions_after_revocation() {
+        let mut credential =
+            PasskeyCredential::new(CredentialId::new(vec![1, 2, 3]), SignCount::new(1));
+        credential.record_assertion(SignCount::new(2)).unwrap();
+        credential.revoke();
+        assert_eq!(
+            credential.record_assertion(SignCount::new(3)),
+            Err(AuthInvariantError::CredentialRevoked)
+        );
+    }
+
+    #[test]
+    fn action_proof_authorizes_exactly_its_bound_action_once() {
+        let bound = ActionDescriptor::RevokePasskey {
+            credential_id: CredentialId::new(vec![9, 9]),
+        };
+        let mut proof = ActionProof::new(bound.clone(), 100);
+        // A proof for one action never satisfies another.
+        assert_eq!(
+            proof.authorize(&ActionDescriptor::RegisterPasskey, 50),
+            Err(AuthInvariantError::ActionProofMismatch)
+        );
+        proof.authorize(&bound, 50).unwrap();
+        assert_eq!(
+            proof.authorize(&bound, 50),
+            Err(AuthInvariantError::ActionProofAlreadyConsumed)
+        );
+    }
+
+    #[test]
+    fn action_proof_expires() {
+        let mut proof = ActionProof::new(ActionDescriptor::RegisterPasskey, 100);
+        assert_eq!(
+            proof.authorize(&ActionDescriptor::RegisterPasskey, 100),
+            Err(AuthInvariantError::ActionProofExpired)
+        );
+    }
+
+    #[test]
+    fn action_descriptor_canonical_form_is_injective() {
+        let a = ActionDescriptor::RevokePasskey {
+            credential_id: CredentialId::new(vec![0x0a, 0xff]),
+        };
+        let b = ActionDescriptor::RevokePasskey {
+            credential_id: CredentialId::new(vec![0xff, 0x0a]),
+        };
+        assert_ne!(a.canonical(), b.canonical());
+        assert_ne!(a.canonical(), ActionDescriptor::RegisterPasskey.canonical());
     }
 }

@@ -99,7 +99,8 @@ pub async fn assert_safe_runtime_role(pool: &PgPool) -> Result<(), sqlx::Error> 
                       AND table_class.relowner = role.oid
                       AND table_class.relname IN (
                         'positions', 'strategies', 'venue_accounts',
-                        'connector_order_intents', 'alerts', 'outbox_events'
+                        'connector_order_intents', 'alerts', 'outbox_events',
+                        'passkey_credentials'
                       )
                 ) AS owns_tenant_table
          FROM pg_roles role WHERE role.rolname = current_user",

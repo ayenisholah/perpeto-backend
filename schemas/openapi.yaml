@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Perpeto Control API
-  version: 0.15.0
+  version: 0.16.0
   description: >-
     Social identity, MFA, and secure sessions plus the M2 deterministic paper
     scanner and coordinated simulated positions. Live execution remains unavailable.
@@ -394,6 +394,121 @@ paths:
       responses:
         "204": { description: Account deleted and audit actor pseudonymized. }
         "409": { $ref: "#/components/responses/ProblemResponse" }
+  /api/v1/passkeys:
+    get:
+      tags: [Passkeys]
+      summary: List the caller's registered passkeys
+      operationId: listPasskeys
+      responses:
+        "200":
+          description: Registered passkeys.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Passkey" }
+        "401": { $ref: "#/components/responses/ProblemResponse" }
+        "503": { $ref: "#/components/responses/ProblemResponse" }
+  /api/v1/passkeys/register/start:
+    post:
+      tags: [Passkeys]
+      summary: Begin registering a new passkey authenticator
+      operationId: startPasskeyRegistration
+      responses:
+        "200":
+          description: WebAuthn credential-creation options.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PasskeyCeremonyChallenge" }
+        "401": { $ref: "#/components/responses/ProblemResponse" }
+        "503": { $ref: "#/components/responses/ProblemResponse" }
+  /api/v1/passkeys/register/finish:
+    post:
+      tags: [Passkeys]
+      summary: Complete passkey registration and store the authenticator
+      operationId: finishPasskeyRegistration
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [challenge_id, label, credential]
+              properties:
+                challenge_id: { type: string, format: uuid }
+                label: { type: string, minLength: 1, maxLength: 120 }
+                credential:
+                  type: object
+                  description: Opaque WebAuthn RegisterPublicKeyCredential from the authenticator.
+                  additionalProperties: true
+      responses:
+        "201":
+          description: Passkey registered.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Passkey" }
+        "400": { $ref: "#/components/responses/ProblemResponse" }
+        "401": { $ref: "#/components/responses/ProblemResponse" }
+        "409": { $ref: "#/components/responses/ProblemResponse" }
+        "503": { $ref: "#/components/responses/ProblemResponse" }
+  /api/v1/passkeys/authenticate/start:
+    post:
+      tags: [Passkeys]
+      summary: Begin a passkey assertion for the caller
+      operationId: startPasskeyAuthentication
+      responses:
+        "200":
+          description: WebAuthn credential-request options.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PasskeyCeremonyChallenge" }
+        "401": { $ref: "#/components/responses/ProblemResponse" }
+        "404": { $ref: "#/components/responses/ProblemResponse" }
+        "503": { $ref: "#/components/responses/ProblemResponse" }
+  /api/v1/passkeys/authenticate/finish:
+    post:
+      tags: [Passkeys]
+      summary: Complete a passkey assertion
+      operationId: finishPasskeyAuthentication
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [challenge_id, credential]
+              properties:
+                challenge_id: { type: string, format: uuid }
+                credential:
+                  type: object
+                  description: Opaque WebAuthn PublicKeyCredential from the authenticator.
+                  additionalProperties: true
+      responses:
+        "200":
+          description: Assertion verified.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PasskeyAssertionOutcome" }
+        "400": { $ref: "#/components/responses/ProblemResponse" }
+        "401": { $ref: "#/components/responses/ProblemResponse" }
+        "503": { $ref: "#/components/responses/ProblemResponse" }
+  /api/v1/passkeys/{passkey_id}/revoke:
+    post:
+      tags: [Passkeys]
+      summary: Revoke a registered passkey
+      operationId: revokePasskey
+      parameters:
+        - in: path
+          name: passkey_id
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "204": { description: Passkey revoked. }
+        "401": { $ref: "#/components/responses/ProblemResponse" }
+        "404": { $ref: "#/components/responses/ProblemResponse" }
+        "503": { $ref: "#/components/responses/ProblemResponse" }
   /api/v1/opportunities:
     get:
       tags: [Opportunities]
@@ -1684,6 +1799,32 @@ components:
         display_name: { type: [string, "null"] }
         email: { type: [string, "null"], format: email }
         requested_at: { type: string, format: date-time }
+    Passkey:
+      type: object
+      additionalProperties: false
+      required: [id, label, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        label: { type: string, minLength: 1, maxLength: 120 }
+        created_at: { type: string, format: date-time }
+        last_used_at: { type: [string, "null"], format: date-time }
+    PasskeyCeremonyChallenge:
+      type: object
+      additionalProperties: false
+      required: [challenge_id, options]
+      properties:
+        challenge_id: { type: string, format: uuid }
+        options:
+          type: object
+          description: Opaque WebAuthn PublicKeyCredentialCreationOptions or RequestOptions.
+          additionalProperties: true
+    PasskeyAssertionOutcome:
+      type: object
+      additionalProperties: false
+      required: [verified, credential_id]
+      properties:
+        verified: { type: boolean }
+        credential_id: { type: string, description: Hex-encoded credential id. }
     StepUpRequest:
       type: object
       additionalProperties: false

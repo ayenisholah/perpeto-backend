@@ -33,6 +33,11 @@ pub enum AuthError {
     Conflict(&'static str),
     /// The deployment bootstrap token was invalid or already consumed.
     BootstrapInvalid,
+    /// Passkeys are not configured for this deployment.
+    PasskeysUnavailable,
+    /// A passkey registration or assertion failed verification (including a
+    /// detected authenticator clone). Deliberately non-specific to the client.
+    PasskeyProofInvalid,
     /// An unexpected internal failure.
     Internal(String),
 }
@@ -50,10 +55,12 @@ impl AuthError {
             | Self::UserSuspended
             | Self::AccountDeleted
             | Self::BootstrapInvalid
+            | Self::PasskeyProofInvalid
             | Self::Unauthorized => 401,
             Self::Forbidden => 403,
             Self::NotFound => 404,
             Self::ChallengeConsumed | Self::Conflict(_) => 409,
+            Self::PasskeysUnavailable => 503,
             Self::Internal(_) => 500,
         }
     }
@@ -75,6 +82,8 @@ impl AuthError {
             Self::NotFound => "NOT_FOUND",
             Self::Conflict(_) => "CONFLICT",
             Self::BootstrapInvalid => "BOOTSTRAP_INVALID",
+            Self::PasskeysUnavailable => "PASSKEYS_UNAVAILABLE",
+            Self::PasskeyProofInvalid => "PASSKEY_PROOF_INVALID",
             Self::Internal(_) => "INTERNAL",
         }
     }
@@ -95,6 +104,8 @@ impl AuthError {
             Self::Forbidden => "You do not have access to this resource.".to_owned(),
             Self::NotFound => "The requested resource was not found.".to_owned(),
             Self::BootstrapInvalid => "The deployment token was not accepted.".to_owned(),
+            Self::PasskeysUnavailable => "Passkeys are not available on this deployment.".to_owned(),
+            Self::PasskeyProofInvalid => "The passkey could not be verified.".to_owned(),
             Self::Internal(_) => "The request could not be completed.".to_owned(),
         }
     }

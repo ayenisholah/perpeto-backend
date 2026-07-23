@@ -1,6 +1,6 @@
 # Perpeto Backend
 
-Perpeto is a private funding-rate arbitrage platform. This repository contains the Rust control plane, venue connectors, execution and risk services, persistence, API contracts, and Docker Compose deployment used by the Expo mobile client.
+Perpeto is a shared, multi-tenant funding-rate arbitrage platform: one operator-managed deployment serves many independent traders, each in an isolated personal tenant that connects only their own exchange accounts. This repository contains the Rust control plane, venue connectors, execution and risk services, persistence, API contracts, and Docker Compose deployment used by the Expo mobile client.
 
 The backend is the only component allowed to evaluate opportunities, hold venue credentials, submit orders, supervise positions, or reconcile accounting. The mobile application is an authenticated operations client.
 

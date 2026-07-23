@@ -9,13 +9,18 @@ pub mod config;
 pub mod dto;
 pub mod error;
 pub mod mfa;
+pub mod passkey;
 pub mod providers;
 pub mod repo;
 pub mod service;
 pub mod tokens;
 
-pub use config::{AuthConfig, ConfigError};
+pub use config::{AuthConfig, ConfigError, PasskeyConfig};
 pub use error::{AuthError, AuthResult};
+pub use passkey::{
+    ActionProofReceipt, AssertionOutcome, CeremonyChallenge, PasskeyService, PasskeyView,
+    build_webauthn,
+};
 pub use providers::{IdentityTokenVerifier, LiveIdentityVerifier, VerifiedIdentity};
 pub use repo::Repo;
 pub use service::{AuthService, CallerContext};

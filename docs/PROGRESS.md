@@ -15,6 +15,7 @@
 - Advanced the local OpenAPI/client contract through `@ayenisholah/perpeto-api-client@0.15.0`; the lossless-decimal contract introduced in `0.14.0` remains intact, local typecheck and 21 contract tests pass, and the mobile app consumes the matching `0.15.0` vendored tarball.
 - Verified that documentation synchronization and mobile API-update automation are configured; `0.7.0` is the latest API-client version confirmed published to GitHub Packages.
 - Added the first M4 isolation slices: personal tenants and session-derived context plus a quarantine-only legacy backfill, tenant columns/composite constraints, forced RLS on private trading aggregates, tenant-bound repository transactions, tenant-dispatched background work, and unsafe runtime-role rejection. No caller-selectable tenant input or secret endpoint was added.
+- Added the M4 passkey slice locally: WebAuthn registration/assertion and one-use action-authorization proofs. Migration `0017` adds `passkey_credentials`, `webauthn_challenges` and `passkey_action_proofs`, each forced-RLS under the same policy as `0016`; `funding_arb_domain::auth` owns the monotonic sign-count clone check and one-use `ActionProof`; `auth-service/src/passkey.rs` delegates verification to `webauthn-rs` and persists only through tenant transactions. Additive endpoints, OpenAPI/client `0.16.0` (vendored into mobile) and a flag-gated mobile passkey surface were added. The TypeScript client typechecks and its 21 contract tests plus the mobile typecheck/lint/tests pass; no secret-exposing endpoint was introduced.
 
 ## Exit gates and unverified work
 
@@ -24,7 +25,8 @@
 - Primary public/private WebSocket ingestion and connector-specific sequence recovery are implemented locally for Bybit, Binance and OKX, including bounded reconnecting transport and disconnect-to-reconciliation signaling. Linked Rust compilation and live venue evidence remain pending.
 - No venue has accepted certification evidence. Credentialed Bybit/Binance testnet, OKX demo, production read-only shadow, reconciliation and the required 72-hour/14-day windows remain outstanding.
 - M1A real-device, accessibility, security and full provider/replay integration evidence remains incomplete.
-- The first forced-RLS/private-runtime isolation slice is implemented locally. PostgreSQL execution under distinct migration/runtime roles, broader adversarial API/job evidence, tenant-scoped caches/WebSocket delivery/exports, Vault Transit, WebAuthn passkeys, credential enrollment, account preflight and production CEX writes remain M4 work.
+- The first forced-RLS/private-runtime isolation slice is implemented locally. PostgreSQL execution under distinct migration/runtime roles, broader adversarial API/job evidence, tenant-scoped caches/WebSocket delivery/exports, Vault Transit, credential enrollment, account preflight and production CEX writes remain M4 work.
+- The passkey slice is implemented locally but not build- or database-verified. Linked Rust compilation of `webauthn-rs` and `auth-service`, a credentialed registration→assertion round-trip, and the new `passkey_isolation` forced-RLS/cross-tenant tests (which require a non-`BYPASSRLS` runtime role) remain to run. Passkey proofs are recorded but not yet consumed by any credential or live-arming gate, and the native mobile device ceremony stays dark behind `EXPO_PUBLIC_PASSKEYS_ENABLED` until an EAS development build exists.
 - Live trading remains unavailable by design.
 
 ## Current blockers
@@ -38,4 +40,5 @@
 1. Restore a usable local Rust linker or use an approved verification environment; compile and execute the new WebSocket/parser and tenant-isolation tests before treating either slice as build-verified.
 2. Run the implemented lossless-decimal DTO/persistence and precision-regression tests before closing M2.
 3. Run the credentialed M3 sandbox/demo/shadow certification matrix and timed windows without production writes.
-4. Verify migration `0016` with distinct migrator/runtime roles and adversarial cross-tenant database/API/job tests. Keep passkey/Vault/credential enrollment as a later atomic security slice.
+4. Verify migration `0016` with distinct migrator/runtime roles and adversarial cross-tenant database/API/job tests.
+5. Compile the passkey slice (`webauthn-rs`, `auth-service`), run the passkey domain, isolation and assertion round-trip tests under a non-`BYPASSRLS` role, then continue with Vault/credential enrollment as the next atomic security slice consuming passkey action proofs.

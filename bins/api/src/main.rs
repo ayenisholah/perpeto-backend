@@ -11,7 +11,9 @@ use std::str::FromStr;
 use std::sync::Arc;
 use std::{env, thread, time::Duration};
 
-use funding_arb_auth_service::{AuthConfig, AuthService, LiveIdentityVerifier, Repo};
+use funding_arb_auth_service::{
+    AuthConfig, AuthService, LiveIdentityVerifier, PasskeyService, Repo, build_webauthn,
+};
 use funding_arb_domain::TradingMode;
 use funding_arb_execution_service::{
     BreakersRepo, ExecutionService, MonitoringRepo, OutboxRepo, PositionsRepo,
@@ -116,6 +118,16 @@ async fn run() -> ExitCode {
         Some(Arc::new(ConnectorRegistry::new(pool.clone(), master_key)))
     };
     let execution = ExecutionService::default();
+    let passkeys = match config.passkey.as_ref() {
+        Some(passkey_config) => match build_webauthn(passkey_config) {
+            Ok(webauthn) => Some(PasskeyService::new(pool.clone(), webauthn)),
+            Err(error) => {
+                eprintln!("invalid passkey configuration: {error}");
+                return ExitCode::FAILURE;
+            }
+        },
+        None => None,
+    };
     let repo = Repo::new(pool);
 
     if let (Some(hash), Some(expiry)) = (
@@ -135,6 +147,7 @@ async fn run() -> ExitCode {
     let router = build_router(AppState {
         mode,
         service,
+        passkeys,
         scanner,
         execution,
         positions,

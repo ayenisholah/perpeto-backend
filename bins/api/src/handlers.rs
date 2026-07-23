@@ -218,6 +218,101 @@ pub async fn acknowledge_recovery(
     Ok(Json(state.service.acknowledge_recovery(request).await?))
 }
 
+/// Body for finishing a passkey registration ceremony.
+#[derive(Debug, Deserialize)]
+pub struct FinishRegistrationRequest {
+    pub challenge_id: String,
+    pub label: String,
+    /// Opaque `RegisterPublicKeyCredential` produced by the authenticator.
+    pub credential: serde_json::Value,
+}
+
+/// Body for finishing a passkey assertion ceremony.
+#[derive(Debug, Deserialize)]
+pub struct FinishAuthenticationRequest {
+    pub challenge_id: String,
+    /// Opaque `PublicKeyCredential` produced by the authenticator.
+    pub credential: serde_json::Value,
+}
+
+/// Resolve the configured passkey service or fail with 503.
+fn passkeys(state: &AppState) -> Result<&funding_arb_auth_service::PasskeyService, ApiError> {
+    state
+        .passkeys
+        .as_ref()
+        .ok_or_else(|| AuthError::PasskeysUnavailable.into())
+}
+
+/// `POST /api/v1/passkeys/register/start`
+pub async fn start_passkey_registration(
+    State(state): State<AppState>,
+    Extension(caller): Extension<CallerContext>,
+) -> Result<impl IntoResponse, ApiError> {
+    caller.require_active()?;
+    Ok(Json(passkeys(&state)?.start_registration(&caller).await?))
+}
+
+/// `POST /api/v1/passkeys/register/finish`
+pub async fn finish_passkey_registration(
+    State(state): State<AppState>,
+    Extension(caller): Extension<CallerContext>,
+    Json(request): Json<FinishRegistrationRequest>,
+) -> Result<impl IntoResponse, ApiError> {
+    caller.require_active()?;
+    let view = passkeys(&state)?
+        .finish_registration(
+            &caller,
+            &request.challenge_id,
+            &request.label,
+            request.credential,
+        )
+        .await?;
+    Ok((StatusCode::CREATED, Json(view)))
+}
+
+/// `POST /api/v1/passkeys/authenticate/start`
+pub async fn start_passkey_authentication(
+    State(state): State<AppState>,
+    Extension(caller): Extension<CallerContext>,
+) -> Result<impl IntoResponse, ApiError> {
+    caller.require_active()?;
+    Ok(Json(passkeys(&state)?.start_authentication(&caller).await?))
+}
+
+/// `POST /api/v1/passkeys/authenticate/finish`
+pub async fn finish_passkey_authentication(
+    State(state): State<AppState>,
+    Extension(caller): Extension<CallerContext>,
+    Json(request): Json<FinishAuthenticationRequest>,
+) -> Result<impl IntoResponse, ApiError> {
+    caller.require_active()?;
+    Ok(Json(
+        passkeys(&state)?
+            .finish_authentication(&caller, &request.challenge_id, request.credential)
+            .await?,
+    ))
+}
+
+/// `GET /api/v1/passkeys`
+pub async fn list_passkeys(
+    State(state): State<AppState>,
+    Extension(caller): Extension<CallerContext>,
+) -> Result<impl IntoResponse, ApiError> {
+    caller.require_active()?;
+    Ok(Json(passkeys(&state)?.list(&caller).await?))
+}
+
+/// `POST /api/v1/passkeys/{id}/revoke`
+pub async fn revoke_passkey(
+    State(state): State<AppState>,
+    Extension(caller): Extension<CallerContext>,
+    Path(id): Path<String>,
+) -> Result<impl IntoResponse, ApiError> {
+    caller.require_active()?;
+    passkeys(&state)?.revoke(&caller, &id).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
 /// Optional filters and sort for the opportunity scan feed (PRODUCT_SPEC §4.6).
 #[derive(Debug, Deserialize)]
 pub struct OpportunityQuery {

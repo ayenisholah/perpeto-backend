@@ -29,6 +29,27 @@ pub fn build_router(state: AppState) -> Router {
             post(handlers::approve_access_request),
         )
         .route("/api/v1/account", delete(handlers::delete_account))
+        .route(
+            "/api/v1/passkeys/register/start",
+            post(handlers::start_passkey_registration),
+        )
+        .route(
+            "/api/v1/passkeys/register/finish",
+            post(handlers::finish_passkey_registration),
+        )
+        .route(
+            "/api/v1/passkeys/authenticate/start",
+            post(handlers::start_passkey_authentication),
+        )
+        .route(
+            "/api/v1/passkeys/authenticate/finish",
+            post(handlers::finish_passkey_authentication),
+        )
+        .route("/api/v1/passkeys", get(handlers::list_passkeys))
+        .route(
+            "/api/v1/passkeys/{id}/revoke",
+            post(handlers::revoke_passkey),
+        )
         .route("/api/v1/opportunities", get(handlers::list_opportunities))
         .route(
             "/api/v1/opportunities/{route_id}",

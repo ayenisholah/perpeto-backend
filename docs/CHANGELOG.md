@@ -6,6 +6,8 @@ All notable repository changes are recorded here using Keep a Changelog categori
 
 ### Added
 
+- M4 passkey slice — WebAuthn registration/assertion and one-use action-authorization proofs. Migration `0017` adds forced-RLS `passkey_credentials`, `webauthn_challenges` and `passkey_action_proofs`; the domain owns the monotonic sign-count clone check and single-use `ActionProof`; `auth-service` delegates verification to `webauthn-rs` through tenant transactions. Additive passkey endpoints and API client **0.16.0** (vendored into mobile) plus a flag-gated mobile passkey surface. No secret-exposing endpoint was added; linked Rust/PostgreSQL verification and the credentialed assertion round-trip remain open, and the native device ceremony stays behind `EXPO_PUBLIC_PASSKEYS_ENABLED`.
+
 - M3 Slice 21 — replaced connector polling streams with bounded reconnecting WebSocket transports for Bybit, Binance and OKX public/private data, added venue sequence/reset recovery and disconnect reconciliation signaling, and extended credentialed evidence to require a fresh private-stream event. Parser/transport tests are written; linked Rust execution and live credentialed evidence remain pending the unavailable Windows build toolchain.
 
 - M4 isolation Slices 2–3 (local, unverified) — added migration `0016_tenant_isolation.sql`, quarantined legacy rows in a suspended tenant, enabled forced RLS across private trading aggregates, introduced transaction-local tenant context and unsafe-role startup rejection, and scoped API repositories, connector secrets/accounting/execution/reconciliation, engine work, reconciler work and worker outbox processing. Added cross-tenant persistence tests. No client-selected tenant context or credential endpoint was introduced.

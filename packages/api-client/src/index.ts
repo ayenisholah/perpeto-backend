@@ -237,6 +237,24 @@ export interface MfaEnrollment {
   readonly otpauth_uri: string;
 }
 
+export interface Passkey {
+  readonly id: string;
+  readonly label: string;
+  readonly created_at: string;
+  readonly last_used_at: string | null;
+}
+
+/** Opaque WebAuthn ceremony options relayed verbatim to the authenticator. */
+export interface PasskeyCeremonyChallenge {
+  readonly challenge_id: string;
+  readonly options: Record<string, unknown>;
+}
+
+export interface PasskeyAssertionOutcome {
+  readonly verified: boolean;
+  readonly credential_id: string;
+}
+
 export type Venue = "BINANCE" | "BYBIT" | "OKX" | "DYDX" | "HYPERLIQUID";
 /** Canonical base-10 decimal serialized without an IEEE-754 conversion. */
 export type DecimalString = string;
@@ -708,6 +726,45 @@ export class PerpetoClient {
 
   public deleteAccount(): Promise<void> {
     return this.#request("/api/v1/account", { method: "DELETE" });
+  }
+
+  public listPasskeys(): Promise<readonly Passkey[]> {
+    return this.#request("/api/v1/passkeys");
+  }
+
+  public startPasskeyRegistration(): Promise<PasskeyCeremonyChallenge> {
+    return this.#request("/api/v1/passkeys/register/start", { method: "POST" });
+  }
+
+  public finishPasskeyRegistration(request: {
+    readonly challenge_id: string;
+    readonly label: string;
+    readonly credential: Record<string, unknown>;
+  }): Promise<Passkey> {
+    return this.#request("/api/v1/passkeys/register/finish", {
+      method: "POST",
+      body: JSON.stringify(request),
+    });
+  }
+
+  public startPasskeyAuthentication(): Promise<PasskeyCeremonyChallenge> {
+    return this.#request("/api/v1/passkeys/authenticate/start", { method: "POST" });
+  }
+
+  public finishPasskeyAuthentication(request: {
+    readonly challenge_id: string;
+    readonly credential: Record<string, unknown>;
+  }): Promise<PasskeyAssertionOutcome> {
+    return this.#request("/api/v1/passkeys/authenticate/finish", {
+      method: "POST",
+      body: JSON.stringify(request),
+    });
+  }
+
+  public revokePasskey(passkeyId: string): Promise<void> {
+    return this.#request(`/api/v1/passkeys/${encodeURIComponent(passkeyId)}/revoke`, {
+      method: "POST",
+    });
   }
 
   public async listOpportunities(filter: OpportunityFilter = {}): Promise<OpportunityScan> {

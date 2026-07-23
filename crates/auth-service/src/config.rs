@@ -29,6 +29,21 @@ pub struct AuthConfig {
     /// pending-approval or MFA. Intended for the single shared v1 backend; v2
     /// isolates each user's backend and restores gated approval (see DEC-0009).
     pub open_registration: bool,
+    /// WebAuthn relying-party configuration. `None` disables passkeys, which
+    /// stays valid until the credential/live gates depend on them.
+    pub passkey: Option<PasskeyConfig>,
+}
+
+/// WebAuthn relying-party settings resolved from the environment.
+#[derive(Clone, Debug)]
+pub struct PasskeyConfig {
+    /// Relying-party ID (an effective registrable domain, e.g. `perpeto.app`).
+    pub rp_id: String,
+    /// Human-readable relying-party name shown by authenticators.
+    pub rp_name: String,
+    /// Allowed origins; the first is primary, the rest are appended. Every
+    /// assertion/registration origin must match one of these exactly.
+    pub origins: Vec<String>,
 }
 
 /// Reasons configuration could not be resolved.
@@ -128,6 +143,32 @@ impl AuthConfig {
             .map(|value| value.trim().eq_ignore_ascii_case("true"))
             .unwrap_or(false);
 
+        let passkey = match env::var("PERPETO_PASSKEY_RP_ID") {
+            Ok(rp_id) if !rp_id.trim().is_empty() => {
+                let origins: Vec<String> = required("PERPETO_PASSKEY_ORIGINS")?
+                    .split(',')
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(str::to_owned)
+                    .collect();
+                if origins.is_empty() {
+                    return Err(ConfigError(
+                        "PERPETO_PASSKEY_ORIGINS must list at least one origin".to_owned(),
+                    ));
+                }
+                let rp_name = env::var("PERPETO_PASSKEY_RP_NAME")
+                    .ok()
+                    .filter(|value| !value.trim().is_empty())
+                    .unwrap_or_else(|| String::from("Perpeto"));
+                Some(PasskeyConfig {
+                    rp_id: rp_id.trim().to_owned(),
+                    rp_name,
+                    origins,
+                })
+            }
+            _ => None,
+        };
+
         Ok(Self {
             database_url,
             bind_address,
@@ -139,6 +180,7 @@ impl AuthConfig {
             bootstrap_token_expires_at,
             mfa_encryption_key,
             open_registration,
+            passkey,
         })
     }
 }

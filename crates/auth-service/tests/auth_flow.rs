@@ -53,6 +53,7 @@ fn test_config(database_url: String, bootstrap_token: &str, open_registration: b
         bootstrap_token_expires_at: Some("2999-01-01T00:00:00Z".to_owned()),
         mfa_encryption_key: Some([22_u8; 32]),
         open_registration,
+        passkey: None,
     }
 }
 

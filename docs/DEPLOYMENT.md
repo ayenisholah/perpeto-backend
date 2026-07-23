@@ -2,7 +2,7 @@
 
 This file first documents the implemented paper/M3 staging deployment, then the accepted M4 production target. The target section is not yet implemented.
 
-GitHub deploys only to a pre-existing Docker-ready staging VPS in paper mode. It does not create users, install packages, modify the firewall, configure DNS, provision TLS, or create per-client infrastructure.
+GitHub deploys only to a pre-existing Docker-ready staging VPS in paper mode. It does not create users, install packages, modify the firewall, configure DNS, or provision TLS. That single operator-managed VPS runs one shared control plane serving many personal tenants via PostgreSQL row-level security and per-tenant Vault encryption; deployment does not stand up separate infrastructure per trader.
 
 ## GitHub environment
 

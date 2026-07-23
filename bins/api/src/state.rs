@@ -1,6 +1,6 @@
 //! Shared application state.
 
-use funding_arb_auth_service::AuthService;
+use funding_arb_auth_service::{AuthService, PasskeyService};
 use funding_arb_domain::TradingMode;
 use funding_arb_execution_service::{
     BreakersRepo, ExecutionService, MonitoringRepo, OutboxRepo, PositionsRepo,
@@ -18,6 +18,8 @@ pub struct AppState {
     pub mode: TradingMode,
     /// The authentication application service.
     pub service: AuthService,
+    /// WebAuthn passkey service; `None` when passkeys are not configured.
+    pub passkeys: Option<PasskeyService>,
     /// Read access to the latest funding-arbitrage scan.
     pub scanner: ScannerRepo,
     /// The paper execution service (opens positions from ranked opportunities).
