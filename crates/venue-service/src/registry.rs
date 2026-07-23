@@ -1,6 +1,6 @@
 //! Builds connector instances from masked account records and encrypted secrets.
 
-use std::{error::Error, fmt, sync::Arc};
+use std::{env, error::Error, fmt, sync::Arc};
 
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use funding_arb_connectors::{
@@ -13,7 +13,8 @@ use uuid::Uuid;
 use zeroize::Zeroizing;
 
 use crate::{
-    EncryptedPostgresSecretStore, SecretContext, SecretStore, VenueAccountDto, VenueAccountsRepo,
+    EncryptedPostgresSecretStore, SecretContext, SecretStore, VaultConfig,
+    VaultTransitSecretStore, VenueAccountDto, VenueAccountsRepo,
 };
 
 #[derive(Clone)]
@@ -32,6 +33,8 @@ pub enum RegistryError {
     Persistence,
     SecretUnavailable,
     ModeForbidden,
+    MissingBackend,
+    VaultMisconfigured,
 }
 
 impl fmt::Display for RegistryError {
@@ -42,6 +45,12 @@ impl fmt::Display for RegistryError {
             Self::Persistence => "venue account persistence failed",
             Self::SecretUnavailable => "venue account secret is unavailable",
             Self::ModeForbidden => "runtime mode forbids configured connector environment",
+            Self::MissingBackend => {
+                "no credential backend configured; set PERPETO_VAULT_ADDR or PERPETO_SECRET_MASTER_KEY"
+            }
+            Self::VaultMisconfigured => {
+                "vault backend selected but its configuration is incomplete"
+            }
         })
     }
 }
@@ -50,16 +59,42 @@ impl Error for RegistryError {}
 
 pub struct ConnectorRegistry {
     accounts: VenueAccountsRepo,
-    secrets: EncryptedPostgresSecretStore,
+    secrets: Box<dyn SecretStore>,
 }
 
 impl ConnectorRegistry {
+    /// Build a registry backed by the transitional AES master-key store. Used
+    /// by paper/dev and tests; live deployments should use
+    /// [`Self::with_secret_store`] with the Vault backend.
     #[must_use]
     pub fn new(pool: PgPool, master_key: [u8; 32]) -> Self {
+        let accounts = VenueAccountsRepo::new(pool.clone());
         Self {
-            accounts: VenueAccountsRepo::new(pool.clone()),
-            secrets: EncryptedPostgresSecretStore::new(pool, master_key, 1),
+            accounts,
+            secrets: Box::new(EncryptedPostgresSecretStore::new(pool, master_key, 1)),
         }
+    }
+
+    /// Build a registry over any [`SecretStore`] backend (AES or Vault Transit).
+    #[must_use]
+    pub fn with_secret_store(pool: PgPool, secrets: Box<dyn SecretStore>) -> Self {
+        Self {
+            accounts: VenueAccountsRepo::new(pool),
+            secrets,
+        }
+    }
+
+    /// Resolve the credential backend from the environment: Vault Transit when
+    /// `PERPETO_VAULT_ADDR` is set, otherwise the transitional AES master key.
+    /// Outside PAPER exactly one must resolve, else the process should refuse to
+    /// start.
+    ///
+    /// # Errors
+    /// Returns [`RegistryError`] when Vault is misconfigured or neither backend
+    /// is available.
+    pub fn from_env(pool: PgPool) -> Result<Self, RegistryError> {
+        let secrets = secret_store_from_env(pool.clone())?;
+        Ok(Self::with_secret_store(pool, secrets))
     }
 
     pub async fn load(
@@ -140,6 +175,26 @@ impl ConnectorRegistry {
             }
         }
         Ok(connectors)
+    }
+}
+
+/// Resolve the credential [`SecretStore`] from the environment: Vault Transit
+/// when `PERPETO_VAULT_ADDR` is set, otherwise the transitional AES master-key
+/// store. Shared by [`ConnectorRegistry::from_env`] and the `venue-admin` CLI.
+///
+/// # Errors
+/// Returns [`RegistryError`] when Vault is misconfigured or neither backend is
+/// available.
+pub fn secret_store_from_env(pool: PgPool) -> Result<Box<dyn SecretStore>, RegistryError> {
+    match VaultConfig::from_env() {
+        Ok(Some(vault)) => Ok(Box::new(VaultTransitSecretStore::new(pool, vault))),
+        Ok(None) => {
+            let encoded =
+                env::var("PERPETO_SECRET_MASTER_KEY").map_err(|_| RegistryError::MissingBackend)?;
+            let master_key = decode_master_key(&encoded)?;
+            Ok(Box::new(EncryptedPostgresSecretStore::new(pool, master_key, 1)))
+        }
+        Err(_) => Err(RegistryError::VaultMisconfigured),
     }
 }
 

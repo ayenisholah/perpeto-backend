@@ -5,7 +5,6 @@ use funding_arb_domain::TradingMode;
 use funding_arb_tenant_context::{TenantContext, TenantId, assert_safe_runtime_role};
 use funding_arb_venue_service::{
     ConnectorRegistry, ReconciliationService, ReconciliationState, VenueAccountsRepo,
-    decode_master_key,
 };
 use sqlx::postgres::PgPoolOptions;
 
@@ -27,16 +26,6 @@ async fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    let master_key = match env::var("PERPETO_SECRET_MASTER_KEY")
-        .map_err(|_| "PERPETO_SECRET_MASTER_KEY is required".to_owned())
-        .and_then(|value| decode_master_key(&value).map_err(|error| error.to_string()))
-    {
-        Ok(value) => value,
-        Err(error) => {
-            eprintln!("{error}");
-            return ExitCode::FAILURE;
-        }
-    };
     let pool = match PgPoolOptions::new()
         .max_connections(5)
         .connect(&database_url)
@@ -53,7 +42,13 @@ async fn main() -> ExitCode {
         .and_then(|value| value.parse::<u64>().ok())
         .filter(|value| *value > 0)
         .unwrap_or(60);
-    let registry = ConnectorRegistry::new(pool.clone(), master_key);
+    let registry = match ConnectorRegistry::from_env(pool.clone()) {
+        Ok(value) => value,
+        Err(error) => {
+            eprintln!("{error}");
+            return ExitCode::FAILURE;
+        }
+    };
     let service = ReconciliationService::new(pool.clone());
     let accounts = VenueAccountsRepo::new(pool);
     println!("Perpeto connector reconciler started in {mode} mode");

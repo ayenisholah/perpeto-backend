@@ -23,7 +23,6 @@ use funding_arb_strategy_service::StrategiesRepo;
 use funding_arb_tenant_context::assert_safe_runtime_role;
 use funding_arb_venue_service::{
     ConnectorExecutionCoordinator, ConnectorMonitoringRepo, ConnectorRegistry, VenueAccountsRepo,
-    decode_master_key,
 };
 use sqlx::postgres::PgPoolOptions;
 
@@ -101,21 +100,15 @@ async fn run() -> ExitCode {
     let connector_registry = if mode.is_paper() {
         None
     } else {
-        let encoded = match env::var("PERPETO_SECRET_MASTER_KEY") {
-            Ok(value) => value,
-            Err(_) => {
-                eprintln!("PERPETO_SECRET_MASTER_KEY is required outside PAPER mode");
-                return ExitCode::FAILURE;
-            }
-        };
-        let master_key = match decode_master_key(&encoded) {
-            Ok(value) => value,
+        // Prefer Vault Transit when configured; otherwise the transitional AES
+        // master key. Outside PAPER exactly one must resolve, else fail closed.
+        match ConnectorRegistry::from_env(pool.clone()) {
+            Ok(registry) => Some(Arc::new(registry)),
             Err(error) => {
                 eprintln!("{error}");
                 return ExitCode::FAILURE;
             }
-        };
-        Some(Arc::new(ConnectorRegistry::new(pool.clone(), master_key)))
+        }
     };
     let execution = ExecutionService::default();
     let passkeys = match config.passkey.as_ref() {

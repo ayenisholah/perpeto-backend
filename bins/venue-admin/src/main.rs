@@ -1,11 +1,10 @@
 use std::{env, error::Error, io::Read};
 
-use base64::{Engine as _, engine::general_purpose::STANDARD};
 use chrono::Utc;
 use funding_arb_tenant_context::{TenantContext, TenantId};
 use funding_arb_venue_service::{
-    CertificationState, CredentialBundle, EncryptedPostgresSecretStore, ProductConnectionDto,
-    ReconciliationState, SecretContext, SecretStore, VenueAccountDto, VenueAccountsRepo,
+    CertificationState, CredentialBundle, ProductConnectionDto, ReconciliationState, SecretContext,
+    SecretStore, VenueAccountDto, VenueAccountsRepo, secret_store_from_env,
 };
 use sqlx::postgres::PgPoolOptions;
 use uuid::Uuid;
@@ -24,14 +23,12 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     match arguments.first().map(String::as_str) {
         Some("import") => {
-            let key = master_key()?;
-            let store = EncryptedPostgresSecretStore::new(pool, key, 1);
-            import(tenant, &accounts, &store, &arguments[1..]).await?;
+            let store = secret_store_from_env(pool.clone())?;
+            import(tenant, &accounts, store.as_ref(), &arguments[1..]).await?;
         }
         Some("rotate") => {
-            let key = master_key()?;
-            let store = EncryptedPostgresSecretStore::new(pool, key, 1);
-            rotate(tenant, &store, &arguments[1..]).await?;
+            let store = secret_store_from_env(pool.clone())?;
+            rotate(tenant, store.as_ref(), &arguments[1..]).await?;
         }
         Some("disable") => disable(tenant, &accounts, &arguments[1..]).await?,
         Some("inspect") => inspect(tenant, &accounts).await?,
@@ -43,7 +40,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 async fn import(
     tenant: TenantContext,
     accounts: &VenueAccountsRepo,
-    store: &impl SecretStore,
+    store: &dyn SecretStore,
     arguments: &[String],
 ) -> Result<(), Box<dyn Error>> {
     if arguments.len() != 4 {
@@ -105,7 +102,7 @@ async fn import(
 
 async fn rotate(
     tenant: TenantContext,
-    store: &impl SecretStore,
+    store: &dyn SecretStore,
     arguments: &[String],
 ) -> Result<(), Box<dyn Error>> {
     if arguments.len() != 4 {
@@ -167,22 +164,6 @@ fn quarantine_tenant() -> Result<TenantContext, uuid::Error> {
     Uuid::parse_str("00000000-0000-0000-0000-000000000001")
         .map(TenantId::new)
         .map(TenantContext::new)
-}
-
-fn master_key() -> Result<[u8; 32], Box<dyn Error>> {
-    let encoded = Zeroizing::new(
-        env::var("PERPETO_SECRET_MASTER_KEY")
-            .map_err(|_| "PERPETO_SECRET_MASTER_KEY is required")?,
-    );
-    let decoded = Zeroizing::new(
-        STANDARD
-            .decode(encoded.as_bytes())
-            .map_err(|_| "PERPETO_SECRET_MASTER_KEY must be base64")?,
-    );
-    decoded
-        .as_slice()
-        .try_into()
-        .map_err(|_| "PERPETO_SECRET_MASTER_KEY must decode to exactly 32 bytes".into())
 }
 
 fn read_credential(venue: &str) -> Result<CredentialBundle, Box<dyn Error>> {

@@ -6,6 +6,7 @@ mod reconcile;
 mod registry;
 mod repo;
 mod secret;
+mod vault;
 
 pub use coordinator::{
     ConnectorExecutionCoordinator, CoordinatorError, SubmissionResult, SubmissionState,
@@ -16,10 +17,14 @@ pub use dto::{
     ReconciliationRunDto, ReconciliationState, VenueAccountDto, VenueSummaryDto,
 };
 pub use reconcile::{ReconciliationError, ReconciliationReport, ReconciliationService};
-pub use registry::{ConfiguredConnector, ConnectorRegistry, RegistryError, decode_master_key};
+pub use registry::{
+    ConfiguredConnector, ConnectorRegistry, RegistryError, decode_master_key,
+    secret_store_from_env,
+};
 pub use repo::ConnectorMonitoringRepo;
 pub use repo::VenueAccountsRepo;
 pub use secret::{
     CredentialBundle, EncryptedPostgresSecretStore, SecretContext, SecretMetadata, SecretStore,
     SecretStoreError,
 };
+pub use vault::{VaultConfig, VaultConfigError, VaultTransitSecretStore};

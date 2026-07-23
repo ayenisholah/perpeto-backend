@@ -23,7 +23,7 @@ use funding_arb_scanner_service::{Scanner, ScannerRepo};
 use funding_arb_strategy_service::{PositionSummary, StrategiesRepo, StrategyService};
 use funding_arb_tenant_context::{TenantContext, TenantId, assert_safe_runtime_role};
 use funding_arb_venue_service::{
-    ConfiguredConnector, ConnectorRegistry, InstrumentDto, VenueAccountsRepo, decode_master_key,
+    ConfiguredConnector, ConnectorRegistry, InstrumentDto, VenueAccountsRepo,
 };
 use futures_util::StreamExt;
 use rust_decimal::Decimal;
@@ -115,17 +115,13 @@ async fn run(mode: TradingMode) -> ExitCode {
     let configured = if mode.is_paper() {
         Vec::new()
     } else {
-        let master_key = match env::var("PERPETO_SECRET_MASTER_KEY")
-            .map_err(|_| "PERPETO_SECRET_MASTER_KEY is required".to_owned())
-            .and_then(|value| decode_master_key(&value).map_err(|error| error.to_string()))
-        {
+        let registry = match ConnectorRegistry::from_env(pool.clone()) {
             Ok(value) => value,
             Err(error) => {
                 eprintln!("{error}");
                 return ExitCode::FAILURE;
             }
         };
-        let registry = ConnectorRegistry::new(pool.clone(), master_key);
         let mut value = Vec::new();
         let tenants = match active_tenant_contexts(&pool).await {
             Ok(tenants) => tenants,

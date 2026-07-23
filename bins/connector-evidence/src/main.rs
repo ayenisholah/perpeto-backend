@@ -9,7 +9,7 @@ use funding_arb_connectors::{
 use funding_arb_domain::{TradingMode, market::Venue};
 use funding_arb_tenant_context::{TenantContext, TenantId};
 use funding_arb_venue_service::{
-    ConfiguredConnector, ConnectorRegistry, ReconciliationService, decode_master_key,
+    ConfiguredConnector, ConnectorRegistry, ReconciliationService,
 };
 use futures_util::StreamExt;
 use serde_json::{Value, json};
@@ -63,14 +63,11 @@ async fn public_evidence() -> Result<(), Box<dyn Error>> {
 async fn credentialed_evidence() -> Result<(), Box<dyn Error>> {
     let mode = parse_mode()?;
     let database_url = env::var("DATABASE_URL").map_err(|_| "DATABASE_URL is required")?;
-    let master_key = env::var("PERPETO_SECRET_MASTER_KEY")
-        .map_err(|_| "PERPETO_SECRET_MASTER_KEY is required")
-        .and_then(|value| decode_master_key(&value).map_err(|error| error.to_string()))?;
     let pool = PgPoolOptions::new()
         .max_connections(3)
         .connect(&database_url)
         .await?;
-    let registry = ConnectorRegistry::new(pool.clone(), master_key);
+    let registry = ConnectorRegistry::from_env(pool.clone())?;
     let tenant = quarantine_tenant()?;
     let configured = registry.load(tenant, mode).await?;
     if configured.is_empty() {

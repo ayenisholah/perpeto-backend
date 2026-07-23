@@ -982,11 +982,13 @@ dependencies = [
  "funding-arb-domain",
  "funding-arb-tenant-context",
  "rand 0.8.7",
+ "reqwest",
  "rust_decimal",
  "serde",
  "serde_json",
  "sha2",
  "sqlx",
+ "tokio",
  "uuid",
  "zeroize",
 ]

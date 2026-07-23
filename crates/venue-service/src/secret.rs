@@ -68,6 +68,7 @@ pub enum SecretStoreError {
     ContextMismatch,
     EncryptionFailed,
     PersistenceFailed,
+    VaultUnavailable,
 }
 
 impl fmt::Display for SecretStoreError {
@@ -79,6 +80,7 @@ impl fmt::Display for SecretStoreError {
             Self::ContextMismatch => "credential context mismatch",
             Self::EncryptionFailed => "credential encryption operation failed",
             Self::PersistenceFailed => "credential persistence operation failed",
+            Self::VaultUnavailable => "vault transit backend is unavailable",
         })
     }
 }

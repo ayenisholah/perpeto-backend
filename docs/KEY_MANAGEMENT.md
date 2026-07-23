@@ -6,6 +6,8 @@
 
 This is the accepted M4 target design. The current environment-master-key and server-side CLI flow is transitional and is not approved for shared multi-user live trading.
 
+The Vault Transit **application backend** has landed in code (`crates/venue-service/src/vault.rs`, a `VaultTransitSecretStore` behind the existing `SecretStore` trait, selected when `PERPETO_VAULT_ADDR` is set). The operator **infrastructure** below — deploying Vault with integrated storage and TLS, creating the per-tenant Transit keys, 2-of-3 Shamir initialization, workload auth/policies, token rotation, the rewrap job and custodian runbooks — remains to be provisioned, and the store is unverified against a live Vault until then.
+
 Perpeto must execute authorized strategies while a trader's phone is offline without exposing raw exchange credentials to the database, logs, mobile storage, backups, support tooling or other tenants. A device passkey authorizes sensitive lifecycle actions; HashiCorp Vault Transit is the persistent cryptographic control plane.
 
 ## Credential policy
