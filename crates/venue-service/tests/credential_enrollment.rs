@@ -7,7 +7,7 @@
 use funding_arb_tenant_context::{TenantContext, TenantId};
 use funding_arb_venue_service::{
     CredentialBundle, CredentialEnrollmentService, EncryptedPostgresSecretStore, EnrollRequest,
-    SecretContext, SecretStore,
+    SecretContext, SecretStore, VenueAccountsRepo,
 };
 use sqlx::PgPool;
 use sqlx::postgres::PgPoolOptions;
@@ -89,6 +89,12 @@ async fn enroll_stores_secret_then_revoke_destroys_it() {
         .expect("enroll");
     let connection = &account.connections[0];
     assert_eq!(connection.status, "PENDING_PREFLIGHT");
+    // The masked account returned to callers never carries credential material.
+    let rendered = serde_json::to_string(&account).expect("serialize account");
+    assert!(
+        !rendered.contains("test-secret"),
+        "masked account must not leak the api secret"
+    );
     let secret_ref = Uuid::parse_str(connection.secret_ref.as_ref().expect("secret_ref"))
         .expect("secret uuid");
 
@@ -114,6 +120,45 @@ async fn enroll_stores_secret_then_revoke_destroys_it() {
     assert!(revoked.connections[0].secret_ref.is_none());
     assert_eq!(revoked.connections[0].status, "DISABLED");
     assert!(store(&pool).load(secret_ref, &ctx).await.is_err());
+}
+
+#[tokio::test]
+async fn venue_accounts_are_tenant_isolated() {
+    let Some(pool) = pool().await else {
+        eprintln!("skipping: DATABASE_URL not set");
+        return;
+    };
+    let tenant = seed_tenant(&pool).await;
+    let service = service(&pool);
+    let account = service
+        .enroll(tenant, &request("isolated"), &credential("iso-key"))
+        .await
+        .expect("enroll");
+
+    let accounts = VenueAccountsRepo::new(pool.clone());
+    // The owning tenant sees the account; another tenant sees neither it nor any.
+    assert!(
+        accounts
+            .get(tenant, &account.id)
+            .await
+            .expect("owner get")
+            .is_some()
+    );
+    let other = seed_tenant(&pool).await;
+    assert!(
+        accounts
+            .get(other, &account.id)
+            .await
+            .expect("cross-tenant get")
+            .is_none()
+    );
+    assert!(
+        accounts
+            .list(other)
+            .await
+            .expect("cross-tenant list")
+            .is_empty()
+    );
 }
 
 #[tokio::test]

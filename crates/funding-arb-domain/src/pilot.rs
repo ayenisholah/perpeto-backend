@@ -228,6 +228,37 @@ mod tests {
     }
 
     #[test]
+    fn full_pipeline_arms_then_gates_live_risk() {
+        // Paper → eligible → armed, with an eligible + certified route, passes.
+        let eligible = PilotState::PaperOnly
+            .grant_eligibility(true)
+            .expect("eligible");
+        assert_eq!(eligible, PilotState::PilotEligible);
+        let armed = eligible.arm(true, true).expect("armed");
+        assert_eq!(armed, PilotState::PilotArmed);
+        assert_eq!(permit_live_risk(armed, true, true), Ok(()));
+
+        // The gate is closed until every factor holds.
+        assert_eq!(
+            permit_live_risk(eligible, true, true),
+            Err(LiveRiskDenied::NotArmed)
+        );
+        assert_eq!(
+            permit_live_risk(armed, false, true),
+            Err(LiveRiskDenied::RouteNotEligible)
+        );
+        assert_eq!(
+            permit_live_risk(armed, true, false),
+            Err(LiveRiskDenied::RouteNotCertified)
+        );
+
+        // Disarming returns to eligible and re-closes the gate.
+        let back = armed.disarm().expect("disarm");
+        assert_eq!(back, PilotState::PilotEligible);
+        assert_eq!(permit_live_risk(back, true, true), Err(LiveRiskDenied::NotArmed));
+    }
+
+    #[test]
     fn live_risk_requires_armed_eligible_and_certified() {
         assert_eq!(permit_live_risk(PilotState::PilotArmed, true, true), Ok(()));
         assert_eq!(
