@@ -232,6 +232,32 @@ impl CredentialEnrollmentService {
         Ok(account)
     }
 
+    /// Advance a venue account's platform certification by one legal step. This
+    /// records an operator assertion; the venue soak/evidence justifying it is a
+    /// separate, deferred concern.
+    pub async fn set_certification(
+        &self,
+        tenant: TenantContext,
+        account_id: &str,
+        target: CertificationState,
+    ) -> Result<VenueAccountDto, EnrollmentError> {
+        let mut account = self
+            .accounts
+            .get(tenant, account_id)
+            .await
+            .map_err(|_| EnrollmentError::Persistence)?
+            .ok_or(EnrollmentError::NotFound)?;
+        account.certification_state = account
+            .certification_state
+            .promote(target)
+            .map_err(|_| EnrollmentError::InvalidState)?;
+        self.accounts
+            .update(tenant, &account)
+            .await
+            .map_err(|_| EnrollmentError::Persistence)?;
+        Ok(account)
+    }
+
     async fn locate(
         &self,
         tenant: TenantContext,

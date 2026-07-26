@@ -13,8 +13,8 @@ pub use coordinator::{
     ConnectorExecutionCoordinator, CoordinatorError, SubmissionResult, SubmissionState,
 };
 pub use dto::{
-    CertificationState, ConnectionTestDto, ConnectorAccountingDto, ConnectorOrderDto,
-    ExactBalanceDto, ExactVenuePositionDto, InstrumentDto, ProductConnectionDto,
+    CertificationError, CertificationState, ConnectionTestDto, ConnectorAccountingDto,
+    ConnectorOrderDto, ExactBalanceDto, ExactVenuePositionDto, InstrumentDto, ProductConnectionDto,
     ReconciliationRunDto, ReconciliationState, VenueAccountDto, VenueSummaryDto,
 };
 pub use enrollment::{CredentialEnrollmentService, EnrollRequest, EnrollmentError};

@@ -255,6 +255,13 @@ export interface PasskeyAssertionOutcome {
   readonly credential_id: string;
 }
 
+export type CertificationState =
+  | "DISABLED"
+  | "PAPER_ONLY"
+  | "SHADOW"
+  | "PILOT"
+  | "CERTIFIED_LIVE";
+
 /** Write-only exchange credential. Never returned by any endpoint. */
 export interface CredentialSecret {
   readonly api_key: string;
@@ -864,6 +871,30 @@ export class PerpetoClient {
   ): Promise<VenueAccount> {
     return this.#request(
       `/api/v1/venue-credentials/${encodeURIComponent(accountId)}/revoke/finish`,
+      { method: "POST", body: JSON.stringify(request) },
+    );
+  }
+
+  public startRouteCertification(
+    accountId: string,
+    request: { readonly target: CertificationState },
+  ): Promise<PasskeyCeremonyChallenge> {
+    return this.#request(
+      `/api/v1/venue-credentials/${encodeURIComponent(accountId)}/certify/start`,
+      { method: "POST", body: JSON.stringify(request) },
+    );
+  }
+
+  public finishRouteCertification(
+    accountId: string,
+    request: {
+      readonly challenge_id: string;
+      readonly target: CertificationState;
+      readonly assertion: Record<string, unknown>;
+    },
+  ): Promise<VenueAccount> {
+    return this.#request(
+      `/api/v1/venue-credentials/${encodeURIComponent(accountId)}/certify/finish`,
       { method: "POST", body: JSON.stringify(request) },
     );
   }

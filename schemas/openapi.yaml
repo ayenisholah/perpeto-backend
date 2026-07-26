@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Perpeto Control API
-  version: 0.18.0
+  version: 0.19.0
   description: >-
     Social identity, MFA, and secure sessions plus the M2 deterministic paper
     scanner and coordinated simulated positions. Live execution remains unavailable.
@@ -649,6 +649,55 @@ paths:
         "401": { $ref: "#/components/responses/ProblemResponse" }
         "403": { $ref: "#/components/responses/ProblemResponse" }
         "404": { $ref: "#/components/responses/ProblemResponse" }
+        "503": { $ref: "#/components/responses/ProblemResponse" }
+  /api/v1/venue-credentials/{account_id}/certify/start:
+    post:
+      tags: [Credentials]
+      summary: Begin passkey-authorized certification promotion of a route (Owner only)
+      operationId: startRouteCertification
+      parameters:
+        - in: path
+          name: account_id
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CertifyTarget" }
+      responses:
+        "200":
+          description: WebAuthn action challenge.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PasskeyCeremonyChallenge" }
+        "403": { $ref: "#/components/responses/ProblemResponse" }
+        "503": { $ref: "#/components/responses/ProblemResponse" }
+  /api/v1/venue-credentials/{account_id}/certify/finish:
+    post:
+      tags: [Credentials]
+      summary: Complete a certification promotion (records operator assertion; Owner only)
+      operationId: finishRouteCertification
+      parameters:
+        - in: path
+          name: account_id
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CertifyFinish" }
+      responses:
+        "200":
+          description: Masked venue account with the updated certification state.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/VenueAccount" }
+        "401": { $ref: "#/components/responses/ProblemResponse" }
+        "403": { $ref: "#/components/responses/ProblemResponse" }
+        "404": { $ref: "#/components/responses/ProblemResponse" }
+        "409": { $ref: "#/components/responses/ProblemResponse" }
         "503": { $ref: "#/components/responses/ProblemResponse" }
   /api/v1/pilot:
     get:
@@ -2121,6 +2170,26 @@ components:
           description: Opaque WebAuthn PublicKeyCredential authorizing the arm.
           additionalProperties: true
         confirmation: { type: string, description: Must equal the account alias. }
+    CertificationState:
+      type: string
+      enum: [DISABLED, PAPER_ONLY, SHADOW, PILOT, CERTIFIED_LIVE]
+    CertifyTarget:
+      type: object
+      additionalProperties: false
+      required: [target]
+      properties:
+        target: { $ref: "#/components/schemas/CertificationState" }
+    CertifyFinish:
+      type: object
+      additionalProperties: false
+      required: [challenge_id, target, assertion]
+      properties:
+        challenge_id: { type: string, format: uuid }
+        target: { $ref: "#/components/schemas/CertificationState" }
+        assertion:
+          type: object
+          description: Opaque WebAuthn PublicKeyCredential authorizing the promotion.
+          additionalProperties: true
     CredentialRotateFinish:
       type: object
       additionalProperties: false

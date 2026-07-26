@@ -113,6 +113,37 @@ impl PilotState {
     }
 }
 
+/// Authorize live risk on a **production** route. The caller decides
+/// production-ness (testnet/sandbox never reaches here — it needs no arming).
+/// Fail-closed: every factor must hold.
+///
+/// # Errors
+/// Returns [`LiveRiskDenied`] identifying the first missing factor.
+pub fn permit_live_risk(
+    pilot: PilotState,
+    account_eligible: bool,
+    route_certified: bool,
+) -> Result<(), LiveRiskDenied> {
+    if !pilot.is_armed() {
+        return Err(LiveRiskDenied::NotArmed);
+    }
+    if !account_eligible {
+        return Err(LiveRiskDenied::RouteNotEligible);
+    }
+    if !route_certified {
+        return Err(LiveRiskDenied::RouteNotCertified);
+    }
+    Ok(())
+}
+
+/// Why live risk was refused on a production route.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum LiveRiskDenied {
+    NotArmed,
+    RouteNotEligible,
+    RouteNotCertified,
+}
+
 /// Why a pilot transition was refused.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PilotError {
@@ -193,6 +224,23 @@ mod tests {
         assert_eq!(
             PilotState::PilotEligible.disarm(),
             Err(PilotError::NotArmed)
+        );
+    }
+
+    #[test]
+    fn live_risk_requires_armed_eligible_and_certified() {
+        assert_eq!(permit_live_risk(PilotState::PilotArmed, true, true), Ok(()));
+        assert_eq!(
+            permit_live_risk(PilotState::PilotEligible, true, true),
+            Err(LiveRiskDenied::NotArmed)
+        );
+        assert_eq!(
+            permit_live_risk(PilotState::PilotArmed, false, true),
+            Err(LiveRiskDenied::RouteNotEligible)
+        );
+        assert_eq!(
+            permit_live_risk(PilotState::PilotArmed, true, false),
+            Err(LiveRiskDenied::RouteNotCertified)
         );
     }
 

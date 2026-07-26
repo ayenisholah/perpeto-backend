@@ -100,6 +100,98 @@ pub enum CertificationState {
     CertifiedLive,
 }
 
+/// Why a certification promotion was refused.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CertificationError {
+    IllegalTransition,
+}
+
+impl CertificationState {
+    /// Stable text form matching the wire enum.
+    #[must_use]
+    pub const fn wire(self) -> &'static str {
+        match self {
+            Self::Disabled => "DISABLED",
+            Self::PaperOnly => "PAPER_ONLY",
+            Self::Shadow => "SHADOW",
+            Self::Pilot => "PILOT",
+            Self::CertifiedLive => "CERTIFIED_LIVE",
+        }
+    }
+
+    /// Advance certification by exactly one legal step, or disable from any
+    /// state. Skips and backward moves are rejected; `Disabled` is terminal for
+    /// promotion (re-enrollment is a separate flow).
+    ///
+    /// # Errors
+    /// Returns [`CertificationError::IllegalTransition`] for any other move.
+    pub fn promote(self, target: Self) -> Result<Self, CertificationError> {
+        if target == Self::Disabled {
+            return Ok(Self::Disabled);
+        }
+        let legal = matches!(
+            (self, target),
+            (Self::PaperOnly, Self::Shadow)
+                | (Self::Shadow, Self::Pilot)
+                | (Self::Pilot, Self::CertifiedLive)
+        );
+        if legal {
+            Ok(target)
+        } else {
+            Err(CertificationError::IllegalTransition)
+        }
+    }
+}
+
+#[cfg(test)]
+mod certification_tests {
+    use super::{CertificationError, CertificationState};
+
+    #[test]
+    fn promotion_advances_one_legal_step() {
+        assert_eq!(
+            CertificationState::PaperOnly.promote(CertificationState::Shadow),
+            Ok(CertificationState::Shadow)
+        );
+        assert_eq!(
+            CertificationState::Shadow.promote(CertificationState::Pilot),
+            Ok(CertificationState::Pilot)
+        );
+        assert_eq!(
+            CertificationState::Pilot.promote(CertificationState::CertifiedLive),
+            Ok(CertificationState::CertifiedLive)
+        );
+    }
+
+    #[test]
+    fn promotion_rejects_skips_and_reverses() {
+        assert_eq!(
+            CertificationState::PaperOnly.promote(CertificationState::Pilot),
+            Err(CertificationError::IllegalTransition)
+        );
+        assert_eq!(
+            CertificationState::Pilot.promote(CertificationState::Shadow),
+            Err(CertificationError::IllegalTransition)
+        );
+        assert_eq!(
+            CertificationState::PaperOnly.promote(CertificationState::PaperOnly),
+            Err(CertificationError::IllegalTransition)
+        );
+    }
+
+    #[test]
+    fn any_state_can_be_disabled_but_disabled_is_terminal() {
+        assert_eq!(
+            CertificationState::Pilot.promote(CertificationState::Disabled),
+            Ok(CertificationState::Disabled)
+        );
+        assert_eq!(
+            CertificationState::Disabled.promote(CertificationState::Shadow),
+            Err(CertificationError::IllegalTransition)
+        );
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum ReconciliationState {

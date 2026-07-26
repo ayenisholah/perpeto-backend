@@ -363,6 +363,11 @@ pub enum ActionDescriptor {
         venue_account_id: String,
         product: String,
     },
+    /// Promote a venue account's platform certification (e.g. to `PILOT`).
+    CertifyRoute {
+        venue_account_id: String,
+        target: String,
+    },
 }
 
 impl ActionDescriptor {
@@ -401,6 +406,10 @@ impl ActionDescriptor {
                 venue_account_id,
                 product,
             } => length_prefixed("arm_pilot", &[venue_account_id, product]),
+            Self::CertifyRoute {
+                venue_account_id,
+                target,
+            } => length_prefixed("certify_route", &[venue_account_id, target]),
         }
     }
 }
@@ -746,12 +755,17 @@ mod tests {
             venue_account_id: "acct-1".to_owned(),
             product: "LINEAR_PERPETUAL".to_owned(),
         };
-        // The credential actions, pilot arming, and passkey actions are all distinct.
+        let certify = ActionDescriptor::CertifyRoute {
+            venue_account_id: "acct-1".to_owned(),
+            target: "PILOT".to_owned(),
+        };
+        // The credential actions, pilot arming/certification, and passkey actions are distinct.
         let forms = [
             enroll.canonical(),
             rotate.canonical(),
             revoke.canonical(),
             arm.canonical(),
+            certify.canonical(),
             ActionDescriptor::RegisterPasskey.canonical(),
         ];
         for (i, left) in forms.iter().enumerate() {

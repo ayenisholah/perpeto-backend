@@ -18,7 +18,7 @@ use funding_arb_connectors::{
 };
 use funding_arb_domain::auth::ActionDescriptor;
 use funding_arb_domain::market::Venue;
-use funding_arb_domain::pilot::{PilotError, PilotState};
+use funding_arb_domain::pilot::{LiveRiskDenied, PilotError, PilotState, permit_live_risk};
 use funding_arb_domain::risk::RiskLimits;
 use funding_arb_execution_service::{
     BreakerAction, BreakerScope, OpenError, OpenPositionRequest, PositionDto, PositionListDto,
@@ -571,6 +571,61 @@ async fn require_enrollment_account(
         .ok_or_else(|| AuthError::NotFound.into())
 }
 
+// ---- Route certification promotion (M4 Slice 8) ---------------------------
+
+#[derive(Debug, Deserialize)]
+pub struct CertifyStartRequest {
+    pub target: CertificationState,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CertifyFinishRequest {
+    pub challenge_id: String,
+    pub target: CertificationState,
+    /// Opaque WebAuthn assertion authorizing the promotion.
+    pub assertion: serde_json::Value,
+}
+
+/// `POST /api/v1/venue-credentials/{id}/certify/start`
+pub async fn certify_route_start(
+    State(state): State<AppState>,
+    Extension(caller): Extension<CallerContext>,
+    Path(id): Path<String>,
+    Json(request): Json<CertifyStartRequest>,
+) -> Result<impl IntoResponse, ApiError> {
+    require_owner(&caller)?;
+    require_enrollment(&state)?;
+    let action = ActionDescriptor::CertifyRoute {
+        venue_account_id: id,
+        target: request.target.wire().to_owned(),
+    };
+    Ok(Json(passkeys(&state)?.start_action(&caller, &action).await?))
+}
+
+/// `POST /api/v1/venue-credentials/{id}/certify/finish`
+pub async fn certify_route_finish(
+    State(state): State<AppState>,
+    Extension(caller): Extension<CallerContext>,
+    Path(id): Path<String>,
+    Json(request): Json<CertifyFinishRequest>,
+) -> Result<impl IntoResponse, ApiError> {
+    require_owner(&caller)?;
+    let enrollment = require_enrollment(&state)?;
+    let action = ActionDescriptor::CertifyRoute {
+        venue_account_id: id.clone(),
+        target: request.target.wire().to_owned(),
+    };
+    passkeys(&state)?
+        .finish_action(&caller, &request.challenge_id, &action, request.assertion)
+        .await?;
+    let tenant = caller.tenant_context()?;
+    let account = enrollment
+        .set_certification(tenant, &id, request.target)
+        .await
+        .map_err(map_enrollment)?;
+    Ok(Json(account))
+}
+
 // ---- Pilot arming control plane (M4 Slice 7) ------------------------------
 
 /// A preflight-eligible route a tenant may arm.
@@ -618,6 +673,15 @@ fn map_pilot_error(error: PilotError) -> ApiError {
         PilotError::AccountNotEligible => AuthError::Conflict("route is not preflight-eligible"),
         PilotError::NotEligible => AuthError::Conflict("tenant is not pilot-eligible"),
         PilotError::NotArmed => AuthError::Conflict("tenant is not armed"),
+    }
+    .into()
+}
+
+fn map_live_risk(error: LiveRiskDenied) -> ApiError {
+    match error {
+        LiveRiskDenied::NotArmed => AuthError::Conflict("tenant is not armed for live risk"),
+        LiveRiskDenied::RouteNotEligible => AuthError::Conflict("route is not preflight-eligible"),
+        LiveRiskDenied::RouteNotCertified => AuthError::Conflict("route is not certified for pilot"),
     }
     .into()
 }
@@ -769,14 +833,14 @@ pub async fn pilot_disarm(
     let current = state.service.pilot_state(&caller).await?;
     let next = current.disarm().map_err(map_pilot_error)?;
     state.service.set_pilot_state(&caller, next).await?;
-    // Reaching safety halts new risk immediately.
+    // Reaching safety flattens open positions and blocks new risk.
     state
         .breakers
         .activate(
             caller.tenant_context()?,
             BreakerScope::Global,
             None,
-            BreakerAction::HaltNewRisk,
+            BreakerAction::Flatten,
             "OPERATOR",
             "pilot disarmed".to_owned(),
             Some(caller.user_id.clone()),
@@ -1866,6 +1930,22 @@ pub async fn submit_connector_order(
     }
     let tenant = caller.tenant_context()?;
     let (configured, intent) = connector_intent(&state, tenant, &id, &request).await?;
+    // Live-risk gate: a production route may only take risk when the tenant is
+    // armed, the route is preflight-eligible, and it is platform-certified.
+    // Testnet/sandbox is exempt. Fail-closed and inert while LIVE is locked.
+    if !configured.environment.is_non_production() {
+        let pilot = state.service.pilot_state(&caller).await?;
+        let eligible = configured
+            .account
+            .connections
+            .iter()
+            .any(|connection| connection.product == request.product && connection.status == "ELIGIBLE");
+        let certified = matches!(
+            configured.account.certification_state,
+            CertificationState::Pilot | CertificationState::CertifiedLive
+        );
+        permit_live_risk(pilot, eligible, certified).map_err(map_live_risk)?;
+    }
     let result = state
         .connector_execution
         .submit_sandbox(
