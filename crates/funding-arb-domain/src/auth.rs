@@ -358,6 +358,11 @@ pub enum ActionDescriptor {
         venue: String,
         product: String,
     },
+    /// Arm a tenant for pilot trading against one preflight-eligible route.
+    ArmPilot {
+        venue_account_id: String,
+        product: String,
+    },
 }
 
 impl ActionDescriptor {
@@ -392,6 +397,10 @@ impl ActionDescriptor {
                 venue,
                 product,
             } => length_prefixed("revoke_credential", &[venue_account_id, venue, product]),
+            Self::ArmPilot {
+                venue_account_id,
+                product,
+            } => length_prefixed("arm_pilot", &[venue_account_id, product]),
         }
     }
 }
@@ -733,11 +742,16 @@ mod tests {
             venue: "BYBIT".to_owned(),
             product: "LINEAR_PERPETUAL".to_owned(),
         };
-        // The three credential actions and the passkey actions are all distinct.
+        let arm = ActionDescriptor::ArmPilot {
+            venue_account_id: "acct-1".to_owned(),
+            product: "LINEAR_PERPETUAL".to_owned(),
+        };
+        // The credential actions, pilot arming, and passkey actions are all distinct.
         let forms = [
             enroll.canonical(),
             rotate.canonical(),
             revoke.canonical(),
+            arm.canonical(),
             ActionDescriptor::RegisterPasskey.canonical(),
         ];
         for (i, left) in forms.iter().enumerate() {

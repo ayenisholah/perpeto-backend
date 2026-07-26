@@ -86,6 +86,41 @@ impl Repo {
         Ok(())
     }
 
+    /// Read a tenant's `tenant_state` text form.
+    ///
+    /// # Errors
+    /// [`AuthError::NotFound`] when the tenant does not exist; database failures
+    /// otherwise.
+    pub async fn pilot_state(&self, tenant_id: &str) -> AuthResult<String> {
+        let state: Option<String> =
+            sqlx::query_scalar("SELECT state::text FROM tenants WHERE id = $1")
+                .bind(parse_uuid(tenant_id)?)
+                .fetch_optional(&self.pool)
+                .await?;
+        state.ok_or(AuthError::NotFound)
+    }
+
+    /// Transition a tenant's `tenant_state`. Deleted tenants are immutable.
+    ///
+    /// # Errors
+    /// [`AuthError::NotFound`] when no live tenant row matched; database failures
+    /// otherwise.
+    pub async fn set_pilot_state(&self, tenant_id: &str, state: &str) -> AuthResult<()> {
+        let affected = sqlx::query(
+            "UPDATE tenants SET state = $2::tenant_state, updated_at = now() \
+             WHERE id = $1 AND state <> 'DELETED'",
+        )
+        .bind(parse_uuid(tenant_id)?)
+        .bind(state)
+        .execute(&self.pool)
+        .await?
+        .rows_affected();
+        if affected == 0 {
+            return Err(AuthError::NotFound);
+        }
+        Ok(())
+    }
+
     /// Insert a fresh sign-in or link challenge.
     ///
     /// # Errors

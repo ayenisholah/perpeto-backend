@@ -9,6 +9,7 @@ pub mod auth;
 pub mod forecast;
 pub mod market;
 pub mod opportunity;
+pub mod pilot;
 pub mod position;
 pub mod risk;
 pub mod strategy;

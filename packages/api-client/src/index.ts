@@ -262,6 +262,24 @@ export interface CredentialSecret {
   readonly passphrase?: string | null;
 }
 
+export type PilotState =
+  | "PAPER_ONLY"
+  | "PILOT_ELIGIBLE"
+  | "PILOT_ARMED"
+  | "SUSPENDED"
+  | "DELETED";
+
+export interface EligibleRoute {
+  readonly venue_account_id: string;
+  readonly alias: string;
+  readonly product: string;
+}
+
+export interface PilotStatus {
+  readonly state: PilotState;
+  readonly eligible: readonly EligibleRoute[];
+}
+
 export type Venue = "BINANCE" | "BYBIT" | "OKX" | "DYDX" | "HYPERLIQUID";
 /** Canonical base-10 decimal serialized without an IEEE-754 conversion. */
 export type DecimalString = string;
@@ -848,6 +866,41 @@ export class PerpetoClient {
       `/api/v1/venue-credentials/${encodeURIComponent(accountId)}/revoke/finish`,
       { method: "POST", body: JSON.stringify(request) },
     );
+  }
+
+  public getPilotStatus(): Promise<PilotStatus> {
+    return this.#request("/api/v1/pilot");
+  }
+
+  public grantPilotEligibility(): Promise<PilotStatus> {
+    return this.#request("/api/v1/pilot/eligibility", { method: "POST" });
+  }
+
+  public startPilotArm(request: {
+    readonly venue_account_id: string;
+    readonly product: string;
+  }): Promise<PasskeyCeremonyChallenge> {
+    return this.#request("/api/v1/pilot/arm/start", {
+      method: "POST",
+      body: JSON.stringify(request),
+    });
+  }
+
+  public finishPilotArm(request: {
+    readonly challenge_id: string;
+    readonly venue_account_id: string;
+    readonly product: string;
+    readonly assertion: Record<string, unknown>;
+    readonly confirmation: string;
+  }): Promise<PilotStatus> {
+    return this.#request("/api/v1/pilot/arm/finish", {
+      method: "POST",
+      body: JSON.stringify(request),
+    });
+  }
+
+  public disarmPilot(): Promise<PilotStatus> {
+    return this.#request("/api/v1/pilot/disarm", { method: "POST" });
   }
 
   public async listOpportunities(filter: OpportunityFilter = {}): Promise<OpportunityScan> {

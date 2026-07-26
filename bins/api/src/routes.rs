@@ -74,6 +74,14 @@ pub fn build_router(state: AppState) -> Router {
             "/api/v1/venue-credentials/{id}/revoke/finish",
             post(handlers::revoke_credential_finish),
         )
+        .route("/api/v1/pilot", get(handlers::get_pilot))
+        .route(
+            "/api/v1/pilot/eligibility",
+            post(handlers::grant_pilot_eligibility),
+        )
+        .route("/api/v1/pilot/arm/start", post(handlers::pilot_arm_start))
+        .route("/api/v1/pilot/arm/finish", post(handlers::pilot_arm_finish))
+        .route("/api/v1/pilot/disarm", post(handlers::pilot_disarm))
         .route("/api/v1/opportunities", get(handlers::list_opportunities))
         .route(
             "/api/v1/opportunities/{route_id}",

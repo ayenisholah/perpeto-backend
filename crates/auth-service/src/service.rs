@@ -5,6 +5,7 @@
 
 use std::sync::Arc;
 
+use funding_arb_domain::pilot::PilotState;
 use funding_arb_tenant_context::{TenantContext, TenantId};
 use subtle::ConstantTimeEq;
 use uuid::Uuid;
@@ -103,6 +104,28 @@ impl AuthService {
     #[must_use]
     pub const fn repo(&self) -> &Repo {
         &self.repo
+    }
+
+    /// The caller's tenant pilot state.
+    ///
+    /// # Errors
+    /// Returns [`AuthError`] when the tenant is missing or its state is unknown.
+    pub async fn pilot_state(&self, caller: &CallerContext) -> AuthResult<PilotState> {
+        let wire = self.repo.pilot_state(&caller.tenant_id).await?;
+        PilotState::from_wire(&wire)
+            .ok_or_else(|| AuthError::Internal(format!("unknown tenant state: {wire}")))
+    }
+
+    /// Persist a pilot-state transition for the caller's own tenant.
+    ///
+    /// # Errors
+    /// Returns [`AuthError::NotFound`] when the tenant is not live.
+    pub async fn set_pilot_state(
+        &self,
+        caller: &CallerContext,
+        state: PilotState,
+    ) -> AuthResult<()> {
+        self.repo.set_pilot_state(&caller.tenant_id, state.wire()).await
     }
 
     /// Verify an access token minted by this service.

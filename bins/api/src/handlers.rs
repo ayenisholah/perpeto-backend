@@ -18,6 +18,7 @@ use funding_arb_connectors::{
 };
 use funding_arb_domain::auth::ActionDescriptor;
 use funding_arb_domain::market::Venue;
+use funding_arb_domain::pilot::{PilotError, PilotState};
 use funding_arb_domain::risk::RiskLimits;
 use funding_arb_execution_service::{
     BreakerAction, BreakerScope, OpenError, OpenPositionRequest, PositionDto, PositionListDto,
@@ -31,7 +32,7 @@ use funding_arb_venue_service::{
     VenueAccountDto,
 };
 use rust_decimal::Decimal;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::problem::ApiError;
@@ -568,6 +569,223 @@ async fn require_enrollment_account(
         .await
         .map_err(|_| ApiError::from(AuthError::Internal("account lookup failed".to_owned())))?
         .ok_or_else(|| AuthError::NotFound.into())
+}
+
+// ---- Pilot arming control plane (M4 Slice 7) ------------------------------
+
+/// A preflight-eligible route a tenant may arm.
+#[derive(Debug, Serialize)]
+pub struct EligibleRoute {
+    pub venue_account_id: String,
+    pub alias: String,
+    pub product: String,
+}
+
+/// Current tenant pilot state plus the routes eligible for arming.
+#[derive(Debug, Serialize)]
+pub struct PilotStatus {
+    pub state: String,
+    pub eligible: Vec<EligibleRoute>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct PilotRouteRequest {
+    pub venue_account_id: String,
+    pub product: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct PilotArmFinishRequest {
+    pub challenge_id: String,
+    pub venue_account_id: String,
+    pub product: String,
+    /// Opaque WebAuthn assertion authorizing the arm.
+    pub assertion: serde_json::Value,
+    /// Typed confirmation; must equal the account alias.
+    pub confirmation: String,
+}
+
+const STATUS_ELIGIBLE: &str = "ELIGIBLE";
+
+fn map_pilot_error(error: PilotError) -> ApiError {
+    match error {
+        PilotError::ConfirmationRequired => {
+            AuthError::BadRequest("typed confirmation does not match the account alias")
+        }
+        PilotError::TenantUnavailable => AuthError::Forbidden,
+        PilotError::NotPaperOnly => AuthError::Conflict("tenant is already past paper mode"),
+        PilotError::NoEligibleAccount => AuthError::Conflict("no preflight-eligible account"),
+        PilotError::AccountNotEligible => AuthError::Conflict("route is not preflight-eligible"),
+        PilotError::NotEligible => AuthError::Conflict("tenant is not pilot-eligible"),
+        PilotError::NotArmed => AuthError::Conflict("tenant is not armed"),
+    }
+    .into()
+}
+
+fn require_owner(caller: &CallerContext) -> Result<(), ApiError> {
+    caller.require_active()?;
+    if caller.is_owner() {
+        Ok(())
+    } else {
+        Err(AuthError::Forbidden.into())
+    }
+}
+
+/// Build the current pilot status: tenant state plus eligible routes.
+async fn pilot_status(state: &AppState, caller: &CallerContext) -> Result<PilotStatus, ApiError> {
+    let current = state.service.pilot_state(caller).await?;
+    let accounts = state
+        .venues
+        .list(caller.tenant_context()?)
+        .await
+        .map_err(internal)?;
+    let eligible = accounts
+        .into_iter()
+        .flat_map(|account| {
+            let alias = account.alias;
+            let account_id = account.id;
+            account
+                .connections
+                .into_iter()
+                .filter(|connection| connection.status == STATUS_ELIGIBLE)
+                .map(move |connection| EligibleRoute {
+                    venue_account_id: account_id.clone(),
+                    alias: alias.clone(),
+                    product: connection.product,
+                })
+        })
+        .collect();
+    Ok(PilotStatus {
+        state: current.wire().to_owned(),
+        eligible,
+    })
+}
+
+/// Emit a control-plane pilot event on the durable outbox.
+async fn emit_pilot_event(
+    state: &AppState,
+    caller: &CallerContext,
+    event: &str,
+    next: PilotState,
+) -> Result<(), ApiError> {
+    state
+        .outbox
+        .append(
+            caller.tenant_context()?,
+            event,
+            &caller.tenant_id,
+            serde_json::json!({ "state": next.wire() }),
+            Utc::now(),
+        )
+        .await
+        .map_err(internal)?;
+    Ok(())
+}
+
+/// `GET /api/v1/pilot`
+pub async fn get_pilot(
+    State(state): State<AppState>,
+    Extension(caller): Extension<CallerContext>,
+) -> Result<impl IntoResponse, ApiError> {
+    caller.require_active()?;
+    Ok(Json(pilot_status(&state, &caller).await?))
+}
+
+/// `POST /api/v1/pilot/eligibility`
+pub async fn grant_pilot_eligibility(
+    State(state): State<AppState>,
+    Extension(caller): Extension<CallerContext>,
+) -> Result<impl IntoResponse, ApiError> {
+    require_owner(&caller)?;
+    let accounts = state
+        .venues
+        .list(caller.tenant_context()?)
+        .await
+        .map_err(internal)?;
+    let has_eligible = accounts.iter().any(|account| {
+        account
+            .connections
+            .iter()
+            .any(|connection| connection.status == STATUS_ELIGIBLE)
+    });
+    let current = state.service.pilot_state(&caller).await?;
+    let next = current
+        .grant_eligibility(has_eligible)
+        .map_err(map_pilot_error)?;
+    state.service.set_pilot_state(&caller, next).await?;
+    emit_pilot_event(&state, &caller, "PILOT_ELIGIBILITY_GRANTED", next).await?;
+    Ok(Json(pilot_status(&state, &caller).await?))
+}
+
+/// `POST /api/v1/pilot/arm/start`
+pub async fn pilot_arm_start(
+    State(state): State<AppState>,
+    Extension(caller): Extension<CallerContext>,
+    Json(request): Json<PilotRouteRequest>,
+) -> Result<impl IntoResponse, ApiError> {
+    require_owner(&caller)?;
+    let action = ActionDescriptor::ArmPilot {
+        venue_account_id: request.venue_account_id,
+        product: request.product,
+    };
+    Ok(Json(passkeys(&state)?.start_action(&caller, &action).await?))
+}
+
+/// `POST /api/v1/pilot/arm/finish`
+pub async fn pilot_arm_finish(
+    State(state): State<AppState>,
+    Extension(caller): Extension<CallerContext>,
+    Json(request): Json<PilotArmFinishRequest>,
+) -> Result<impl IntoResponse, ApiError> {
+    require_owner(&caller)?;
+    let action = ActionDescriptor::ArmPilot {
+        venue_account_id: request.venue_account_id.clone(),
+        product: request.product.clone(),
+    };
+    // Consume the one-use passkey proof before changing any state.
+    passkeys(&state)?
+        .finish_action(&caller, &request.challenge_id, &action, request.assertion)
+        .await?;
+
+    let account = require_enrollment_account(&state, &caller, &request.venue_account_id).await?;
+    let eligible = account
+        .connections
+        .iter()
+        .any(|connection| connection.product == request.product && connection.status == STATUS_ELIGIBLE);
+    let confirmation_ok = request.confirmation.trim() == account.alias;
+    let current = state.service.pilot_state(&caller).await?;
+    let next = current.arm(eligible, confirmation_ok).map_err(map_pilot_error)?;
+    state.service.set_pilot_state(&caller, next).await?;
+    emit_pilot_event(&state, &caller, "PILOT_ARMED", next).await?;
+    Ok(Json(pilot_status(&state, &caller).await?))
+}
+
+/// `POST /api/v1/pilot/disarm` — always available; halts new risk.
+pub async fn pilot_disarm(
+    State(state): State<AppState>,
+    Extension(caller): Extension<CallerContext>,
+) -> Result<impl IntoResponse, ApiError> {
+    require_owner(&caller)?;
+    let current = state.service.pilot_state(&caller).await?;
+    let next = current.disarm().map_err(map_pilot_error)?;
+    state.service.set_pilot_state(&caller, next).await?;
+    // Reaching safety halts new risk immediately.
+    state
+        .breakers
+        .activate(
+            caller.tenant_context()?,
+            BreakerScope::Global,
+            None,
+            BreakerAction::HaltNewRisk,
+            "OPERATOR",
+            "pilot disarmed".to_owned(),
+            Some(caller.user_id.clone()),
+            Utc::now(),
+        )
+        .await
+        .map_err(internal)?;
+    emit_pilot_event(&state, &caller, "PILOT_DISARMED", next).await?;
+    Ok(Json(pilot_status(&state, &caller).await?))
 }
 
 /// Optional filters and sort for the opportunity scan feed (PRODUCT_SPEC §4.6).

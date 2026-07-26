@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Perpeto Control API
-  version: 0.17.0
+  version: 0.18.0
   description: >-
     Social identity, MFA, and secure sessions plus the M2 deterministic paper
     scanner and coordinated simulated positions. Live execution remains unavailable.
@@ -650,6 +650,82 @@ paths:
         "403": { $ref: "#/components/responses/ProblemResponse" }
         "404": { $ref: "#/components/responses/ProblemResponse" }
         "503": { $ref: "#/components/responses/ProblemResponse" }
+  /api/v1/pilot:
+    get:
+      tags: [Pilot]
+      summary: Current tenant pilot state and preflight-eligible routes
+      operationId: getPilotStatus
+      responses:
+        "200":
+          description: Pilot status.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PilotStatus" }
+        "401": { $ref: "#/components/responses/ProblemResponse" }
+  /api/v1/pilot/eligibility:
+    post:
+      tags: [Pilot]
+      summary: Promote a paper tenant to pilot-eligible (Owner only)
+      operationId: grantPilotEligibility
+      responses:
+        "200":
+          description: Updated pilot status.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PilotStatus" }
+        "403": { $ref: "#/components/responses/ProblemResponse" }
+        "409": { $ref: "#/components/responses/ProblemResponse" }
+  /api/v1/pilot/arm/start:
+    post:
+      tags: [Pilot]
+      summary: Begin passkey-authorized arming of a preflight-eligible route (Owner only)
+      operationId: startPilotArm
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PilotRoute" }
+      responses:
+        "200":
+          description: WebAuthn action challenge.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PasskeyCeremonyChallenge" }
+        "403": { $ref: "#/components/responses/ProblemResponse" }
+        "503": { $ref: "#/components/responses/ProblemResponse" }
+  /api/v1/pilot/arm/finish:
+    post:
+      tags: [Pilot]
+      summary: Complete arming with a passkey proof and typed confirmation (Owner only)
+      operationId: finishPilotArm
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PilotArmFinish" }
+      responses:
+        "200":
+          description: Updated pilot status (PILOT_ARMED).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PilotStatus" }
+        "400": { $ref: "#/components/responses/ProblemResponse" }
+        "401": { $ref: "#/components/responses/ProblemResponse" }
+        "403": { $ref: "#/components/responses/ProblemResponse" }
+        "409": { $ref: "#/components/responses/ProblemResponse" }
+  /api/v1/pilot/disarm:
+    post:
+      tags: [Pilot]
+      summary: Disarm to pilot-eligible and halt new risk (Owner only, always available)
+      operationId: disarmPilot
+      responses:
+        "200":
+          description: Updated pilot status (PILOT_ELIGIBLE).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PilotStatus" }
+        "403": { $ref: "#/components/responses/ProblemResponse" }
+        "409": { $ref: "#/components/responses/ProblemResponse" }
   /api/v1/opportunities:
     get:
       tags: [Opportunities]
@@ -2005,6 +2081,46 @@ components:
       required: [product]
       properties:
         product: { type: string }
+    PilotState:
+      type: string
+      enum: [PAPER_ONLY, PILOT_ELIGIBLE, PILOT_ARMED, SUSPENDED, DELETED]
+    EligibleRoute:
+      type: object
+      additionalProperties: false
+      required: [venue_account_id, alias, product]
+      properties:
+        venue_account_id: { type: string, format: uuid }
+        alias: { type: string }
+        product: { type: string }
+    PilotStatus:
+      type: object
+      additionalProperties: false
+      required: [state, eligible]
+      properties:
+        state: { $ref: "#/components/schemas/PilotState" }
+        eligible:
+          type: array
+          items: { $ref: "#/components/schemas/EligibleRoute" }
+    PilotRoute:
+      type: object
+      additionalProperties: false
+      required: [venue_account_id, product]
+      properties:
+        venue_account_id: { type: string, format: uuid }
+        product: { type: string }
+    PilotArmFinish:
+      type: object
+      additionalProperties: false
+      required: [challenge_id, venue_account_id, product, assertion, confirmation]
+      properties:
+        challenge_id: { type: string, format: uuid }
+        venue_account_id: { type: string, format: uuid }
+        product: { type: string }
+        assertion:
+          type: object
+          description: Opaque WebAuthn PublicKeyCredential authorizing the arm.
+          additionalProperties: true
+        confirmation: { type: string, description: Must equal the account alias. }
     CredentialRotateFinish:
       type: object
       additionalProperties: false
