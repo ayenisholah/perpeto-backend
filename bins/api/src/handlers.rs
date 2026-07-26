@@ -16,6 +16,7 @@ use funding_arb_auth_service::service::CallerContext;
 use funding_arb_connectors::{
     AccountId, CanonicalOrderIntent, InstrumentId, OrderSide, ProductType,
 };
+use funding_arb_domain::auth::ActionDescriptor;
 use funding_arb_domain::market::Venue;
 use funding_arb_domain::risk::RiskLimits;
 use funding_arb_execution_service::{
@@ -25,6 +26,10 @@ use funding_arb_scanner_service::{OpportunityScanDto, RiskLimitsDto};
 use funding_arb_strategy_service::StrategyDto;
 use funding_arb_venue_service::{CertificationState, ConnectionTestDto, VenueSummaryDto};
 use funding_arb_venue_service::{ConfiguredConnector, SubmissionState};
+use funding_arb_venue_service::{
+    CredentialBundle, CredentialEnrollmentService, EnrollRequest, EnrollmentError, SecretStoreError,
+    VenueAccountDto,
+};
 use rust_decimal::Decimal;
 use serde::Deserialize;
 use uuid::Uuid;
@@ -311,6 +316,258 @@ pub async fn revoke_passkey(
     caller.require_active()?;
     passkeys(&state)?.revoke(&caller, &id).await?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+// ---- Credential lifecycle (passkey-gated) ---------------------------------
+
+/// Write-only exchange credential material submitted during enroll/rotate.
+/// Deliberately not `Debug` so it cannot be logged.
+#[derive(Deserialize)]
+pub struct CredentialInput {
+    pub api_key: String,
+    pub api_secret: String,
+    pub passphrase: Option<String>,
+}
+
+impl CredentialInput {
+    fn into_bundle(self) -> CredentialBundle {
+        CredentialBundle {
+            api_key: self.api_key,
+            api_secret: self.api_secret,
+            passphrase: self.passphrase,
+        }
+    }
+}
+
+/// `{venue,alias,product,environment}` for a new-account enrollment.
+#[derive(Debug, Deserialize)]
+pub struct EnrollStartRequest {
+    pub venue: String,
+    pub alias: String,
+    pub product: String,
+    pub environment: String,
+}
+
+#[derive(Deserialize)]
+pub struct EnrollFinishRequest {
+    pub challenge_id: String,
+    pub venue: String,
+    pub alias: String,
+    pub product: String,
+    pub environment: String,
+    /// Opaque WebAuthn assertion authorizing the enrollment.
+    pub assertion: serde_json::Value,
+    pub credential: CredentialInput,
+}
+
+/// `{product}` plus the account id from the path, for rotate/revoke start.
+#[derive(Debug, Deserialize)]
+pub struct ProductRequest {
+    pub product: String,
+}
+
+#[derive(Deserialize)]
+pub struct RotateFinishRequest {
+    pub challenge_id: String,
+    pub product: String,
+    pub assertion: serde_json::Value,
+    pub credential: CredentialInput,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct RevokeFinishRequest {
+    pub challenge_id: String,
+    pub product: String,
+    pub assertion: serde_json::Value,
+}
+
+/// Resolve the credential enrollment service or fail with 503.
+fn require_enrollment(state: &AppState) -> Result<&CredentialEnrollmentService, ApiError> {
+    state
+        .enrollment
+        .as_deref()
+        .ok_or_else(|| AuthError::CredentialsUnavailable.into())
+}
+
+/// Map a redacted [`EnrollmentError`] to a transport error. Vault unavailability
+/// surfaces as 503; nothing here echoes credential material.
+fn map_enrollment(error: EnrollmentError) -> ApiError {
+    match error {
+        EnrollmentError::InvalidRequest => AuthError::BadRequest("invalid enrollment request"),
+        EnrollmentError::NotFound => AuthError::NotFound,
+        EnrollmentError::Conflict => AuthError::Conflict("venue account already exists"),
+        EnrollmentError::InvalidState => AuthError::Conflict("invalid connection state"),
+        EnrollmentError::Secret(SecretStoreError::VaultUnavailable) => {
+            AuthError::CredentialsUnavailable
+        }
+        EnrollmentError::Secret(_) | EnrollmentError::Persistence => {
+            AuthError::Internal("credential operation failed".to_owned())
+        }
+    }
+    .into()
+}
+
+/// Require an active trader/owner for credential mutations.
+fn require_credential_role(caller: &CallerContext) -> Result<(), ApiError> {
+    caller.require_active()?;
+    if caller.can_trade() {
+        Ok(())
+    } else {
+        Err(AuthError::Forbidden.into())
+    }
+}
+
+/// `POST /api/v1/venue-credentials/enroll/start`
+pub async fn enroll_credential_start(
+    State(state): State<AppState>,
+    Extension(caller): Extension<CallerContext>,
+    Json(request): Json<EnrollStartRequest>,
+) -> Result<impl IntoResponse, ApiError> {
+    require_credential_role(&caller)?;
+    require_enrollment(&state)?;
+    let action = ActionDescriptor::EnrollCredential {
+        venue: request.venue,
+        alias: request.alias,
+        product: request.product,
+        environment: request.environment,
+    };
+    Ok(Json(passkeys(&state)?.start_action(&caller, &action).await?))
+}
+
+/// `POST /api/v1/venue-credentials/enroll/finish`
+pub async fn enroll_credential_finish(
+    State(state): State<AppState>,
+    Extension(caller): Extension<CallerContext>,
+    Json(request): Json<EnrollFinishRequest>,
+) -> Result<impl IntoResponse, ApiError> {
+    require_credential_role(&caller)?;
+    let enrollment = require_enrollment(&state)?;
+    let action = ActionDescriptor::EnrollCredential {
+        venue: request.venue.clone(),
+        alias: request.alias.clone(),
+        product: request.product.clone(),
+        environment: request.environment.clone(),
+    };
+    // Consume the one-use passkey proof before touching any secret.
+    passkeys(&state)?
+        .finish_action(&caller, &request.challenge_id, &action, request.assertion)
+        .await?;
+    let enroll_request = EnrollRequest {
+        venue: request.venue,
+        alias: request.alias,
+        product: request.product,
+        environment: request.environment,
+    };
+    let tenant = caller.tenant_context()?;
+    let account = enrollment
+        .enroll(tenant, &enroll_request, &request.credential.into_bundle())
+        .await
+        .map_err(map_enrollment)?;
+    Ok((StatusCode::CREATED, Json(account)))
+}
+
+/// `POST /api/v1/venue-credentials/{id}/rotate/start`
+pub async fn rotate_credential_start(
+    State(state): State<AppState>,
+    Extension(caller): Extension<CallerContext>,
+    Path(id): Path<String>,
+    Json(request): Json<ProductRequest>,
+) -> Result<impl IntoResponse, ApiError> {
+    require_credential_role(&caller)?;
+    require_enrollment(&state)?;
+    let account = require_enrollment_account(&state, &caller, &id).await?;
+    let action = ActionDescriptor::RotateCredential {
+        venue_account_id: id,
+        venue: account.venue,
+        product: request.product,
+    };
+    Ok(Json(passkeys(&state)?.start_action(&caller, &action).await?))
+}
+
+/// `POST /api/v1/venue-credentials/{id}/rotate/finish`
+pub async fn rotate_credential_finish(
+    State(state): State<AppState>,
+    Extension(caller): Extension<CallerContext>,
+    Path(id): Path<String>,
+    Json(request): Json<RotateFinishRequest>,
+) -> Result<impl IntoResponse, ApiError> {
+    require_credential_role(&caller)?;
+    let enrollment = require_enrollment(&state)?;
+    let account = require_enrollment_account(&state, &caller, &id).await?;
+    let action = ActionDescriptor::RotateCredential {
+        venue_account_id: id.clone(),
+        venue: account.venue,
+        product: request.product.clone(),
+    };
+    passkeys(&state)?
+        .finish_action(&caller, &request.challenge_id, &action, request.assertion)
+        .await?;
+    let tenant = caller.tenant_context()?;
+    let updated = enrollment
+        .rotate(tenant, &id, &request.product, &request.credential.into_bundle())
+        .await
+        .map_err(map_enrollment)?;
+    Ok(Json(updated))
+}
+
+/// `POST /api/v1/venue-credentials/{id}/revoke/start`
+pub async fn revoke_credential_start(
+    State(state): State<AppState>,
+    Extension(caller): Extension<CallerContext>,
+    Path(id): Path<String>,
+    Json(request): Json<ProductRequest>,
+) -> Result<impl IntoResponse, ApiError> {
+    require_credential_role(&caller)?;
+    require_enrollment(&state)?;
+    let account = require_enrollment_account(&state, &caller, &id).await?;
+    let action = ActionDescriptor::RevokeCredential {
+        venue_account_id: id,
+        venue: account.venue,
+        product: request.product,
+    };
+    Ok(Json(passkeys(&state)?.start_action(&caller, &action).await?))
+}
+
+/// `POST /api/v1/venue-credentials/{id}/revoke/finish`
+pub async fn revoke_credential_finish(
+    State(state): State<AppState>,
+    Extension(caller): Extension<CallerContext>,
+    Path(id): Path<String>,
+    Json(request): Json<RevokeFinishRequest>,
+) -> Result<impl IntoResponse, ApiError> {
+    require_credential_role(&caller)?;
+    let enrollment = require_enrollment(&state)?;
+    let account = require_enrollment_account(&state, &caller, &id).await?;
+    let action = ActionDescriptor::RevokeCredential {
+        venue_account_id: id.clone(),
+        venue: account.venue,
+        product: request.product.clone(),
+    };
+    passkeys(&state)?
+        .finish_action(&caller, &request.challenge_id, &action, request.assertion)
+        .await?;
+    let tenant = caller.tenant_context()?;
+    let updated = enrollment
+        .revoke(tenant, &id, &request.product)
+        .await
+        .map_err(map_enrollment)?;
+    Ok(Json(updated))
+}
+
+/// Load the caller's venue account (tenant-scoped) so an action can be bound to
+/// its exact venue; 404 if it does not exist.
+async fn require_enrollment_account(
+    state: &AppState,
+    caller: &CallerContext,
+    id: &str,
+) -> Result<VenueAccountDto, ApiError> {
+    let tenant = caller.tenant_context()?;
+    state
+        .venues
+        .get(tenant, id)
+        .await
+        .map_err(|_| ApiError::from(AuthError::Internal("account lookup failed".to_owned())))?
+        .ok_or_else(|| AuthError::NotFound.into())
 }
 
 /// Optional filters and sort for the opportunity scan feed (PRODUCT_SPEC §4.6).

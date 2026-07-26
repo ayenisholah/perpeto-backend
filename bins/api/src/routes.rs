@@ -50,6 +50,30 @@ pub fn build_router(state: AppState) -> Router {
             "/api/v1/passkeys/{id}/revoke",
             post(handlers::revoke_passkey),
         )
+        .route(
+            "/api/v1/venue-credentials/enroll/start",
+            post(handlers::enroll_credential_start),
+        )
+        .route(
+            "/api/v1/venue-credentials/enroll/finish",
+            post(handlers::enroll_credential_finish),
+        )
+        .route(
+            "/api/v1/venue-credentials/{id}/rotate/start",
+            post(handlers::rotate_credential_start),
+        )
+        .route(
+            "/api/v1/venue-credentials/{id}/rotate/finish",
+            post(handlers::rotate_credential_finish),
+        )
+        .route(
+            "/api/v1/venue-credentials/{id}/revoke/start",
+            post(handlers::revoke_credential_start),
+        )
+        .route(
+            "/api/v1/venue-credentials/{id}/revoke/finish",
+            post(handlers::revoke_credential_finish),
+        )
         .route("/api/v1/opportunities", get(handlers::list_opportunities))
         .route(
             "/api/v1/opportunities/{route_id}",

@@ -2,6 +2,7 @@
 
 mod coordinator;
 mod dto;
+mod enrollment;
 mod reconcile;
 mod registry;
 mod repo;
@@ -16,6 +17,7 @@ pub use dto::{
     ExactBalanceDto, ExactVenuePositionDto, InstrumentDto, ProductConnectionDto,
     ReconciliationRunDto, ReconciliationState, VenueAccountDto, VenueSummaryDto,
 };
+pub use enrollment::{CredentialEnrollmentService, EnrollRequest, EnrollmentError};
 pub use reconcile::{ReconciliationError, ReconciliationReport, ReconciliationService};
 pub use registry::{
     ConfiguredConnector, ConnectorRegistry, RegistryError, decode_master_key,

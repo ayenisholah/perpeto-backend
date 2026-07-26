@@ -633,8 +633,9 @@ fn hex(bytes: &[u8]) -> String {
 /// Map a Postgres unique-violation to a fail-closed conflict; anything else is
 /// an internal error.
 fn map_unique_conflict(error: sqlx::Error) -> AuthError {
-    if let sqlx::Error::Database(db) = &error
-        && db.code().as_deref() == Some("23505")
+    if error
+        .as_database_error()
+        .is_some_and(|db| db.is_unique_violation())
     {
         return AuthError::PasskeyProofInvalid;
     }

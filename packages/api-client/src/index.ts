@@ -255,6 +255,13 @@ export interface PasskeyAssertionOutcome {
   readonly credential_id: string;
 }
 
+/** Write-only exchange credential. Never returned by any endpoint. */
+export interface CredentialSecret {
+  readonly api_key: string;
+  readonly api_secret: string;
+  readonly passphrase?: string | null;
+}
+
 export type Venue = "BINANCE" | "BYBIT" | "OKX" | "DYDX" | "HYPERLIQUID";
 /** Canonical base-10 decimal serialized without an IEEE-754 conversion. */
 export type DecimalString = string;
@@ -765,6 +772,82 @@ export class PerpetoClient {
     return this.#request(`/api/v1/passkeys/${encodeURIComponent(passkeyId)}/revoke`, {
       method: "POST",
     });
+  }
+
+  public startCredentialEnrollment(request: {
+    readonly venue: Venue;
+    readonly alias: string;
+    readonly product: string;
+    readonly environment: string;
+  }): Promise<PasskeyCeremonyChallenge> {
+    return this.#request("/api/v1/venue-credentials/enroll/start", {
+      method: "POST",
+      body: JSON.stringify(request),
+    });
+  }
+
+  public finishCredentialEnrollment(request: {
+    readonly challenge_id: string;
+    readonly venue: Venue;
+    readonly alias: string;
+    readonly product: string;
+    readonly environment: string;
+    readonly assertion: Record<string, unknown>;
+    readonly credential: CredentialSecret;
+  }): Promise<VenueAccount> {
+    return this.#request("/api/v1/venue-credentials/enroll/finish", {
+      method: "POST",
+      body: JSON.stringify(request),
+    });
+  }
+
+  public startCredentialRotation(
+    accountId: string,
+    request: { readonly product: string },
+  ): Promise<PasskeyCeremonyChallenge> {
+    return this.#request(
+      `/api/v1/venue-credentials/${encodeURIComponent(accountId)}/rotate/start`,
+      { method: "POST", body: JSON.stringify(request) },
+    );
+  }
+
+  public finishCredentialRotation(
+    accountId: string,
+    request: {
+      readonly challenge_id: string;
+      readonly product: string;
+      readonly assertion: Record<string, unknown>;
+      readonly credential: CredentialSecret;
+    },
+  ): Promise<VenueAccount> {
+    return this.#request(
+      `/api/v1/venue-credentials/${encodeURIComponent(accountId)}/rotate/finish`,
+      { method: "POST", body: JSON.stringify(request) },
+    );
+  }
+
+  public startCredentialRevocation(
+    accountId: string,
+    request: { readonly product: string },
+  ): Promise<PasskeyCeremonyChallenge> {
+    return this.#request(
+      `/api/v1/venue-credentials/${encodeURIComponent(accountId)}/revoke/start`,
+      { method: "POST", body: JSON.stringify(request) },
+    );
+  }
+
+  public finishCredentialRevocation(
+    accountId: string,
+    request: {
+      readonly challenge_id: string;
+      readonly product: string;
+      readonly assertion: Record<string, unknown>;
+    },
+  ): Promise<VenueAccount> {
+    return this.#request(
+      `/api/v1/venue-credentials/${encodeURIComponent(accountId)}/revoke/finish`,
+      { method: "POST", body: JSON.stringify(request) },
+    );
   }
 
   public async listOpportunities(filter: OpportunityFilter = {}): Promise<OpportunityScan> {

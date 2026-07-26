@@ -22,7 +22,8 @@ use funding_arb_scanner_service::ScannerRepo;
 use funding_arb_strategy_service::StrategiesRepo;
 use funding_arb_tenant_context::assert_safe_runtime_role;
 use funding_arb_venue_service::{
-    ConnectorExecutionCoordinator, ConnectorMonitoringRepo, ConnectorRegistry, VenueAccountsRepo,
+    ConnectorExecutionCoordinator, ConnectorMonitoringRepo, ConnectorRegistry,
+    CredentialEnrollmentService, VenueAccountsRepo,
 };
 use sqlx::postgres::PgPoolOptions;
 
@@ -110,6 +111,18 @@ async fn run() -> ExitCode {
             }
         }
     };
+    // Passkey-gated credential enrollment shares the non-PAPER secret backend.
+    let enrollment = if mode.is_paper() {
+        None
+    } else {
+        match CredentialEnrollmentService::from_env(pool.clone()) {
+            Ok(service) => Some(Arc::new(service)),
+            Err(error) => {
+                eprintln!("{error}");
+                return ExitCode::FAILURE;
+            }
+        }
+    };
     let execution = ExecutionService::default();
     let passkeys = match config.passkey.as_ref() {
         Some(passkey_config) => match build_webauthn(passkey_config) {
@@ -151,6 +164,7 @@ async fn run() -> ExitCode {
         venues,
         connector_monitoring,
         connector_registry,
+        enrollment,
         connector_execution,
     });
 

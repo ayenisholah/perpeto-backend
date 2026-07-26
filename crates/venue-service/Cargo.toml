@@ -24,7 +24,9 @@ zeroize.workspace = true
 rust_decimal.workspace = true
 
 [dev-dependencies]
+funding-arb-tenant-context = { path = "../tenant-context" }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+uuid.workspace = true
 
 [lints]
 workspace = true

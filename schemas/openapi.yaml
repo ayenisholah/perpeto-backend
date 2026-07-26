@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Perpeto Control API
-  version: 0.16.0
+  version: 0.17.0
   description: >-
     Social identity, MFA, and secure sessions plus the M2 deterministic paper
     scanner and coordinated simulated positions. Live execution remains unavailable.
@@ -507,6 +507,147 @@ paths:
       responses:
         "204": { description: Passkey revoked. }
         "401": { $ref: "#/components/responses/ProblemResponse" }
+        "404": { $ref: "#/components/responses/ProblemResponse" }
+        "503": { $ref: "#/components/responses/ProblemResponse" }
+  /api/v1/venue-credentials/enroll/start:
+    post:
+      tags: [Credentials]
+      summary: Begin passkey-authorized enrollment of a new exchange credential
+      operationId: startCredentialEnrollment
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CredentialEnrollStart" }
+      responses:
+        "200":
+          description: WebAuthn action challenge.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PasskeyCeremonyChallenge" }
+        "401": { $ref: "#/components/responses/ProblemResponse" }
+        "403": { $ref: "#/components/responses/ProblemResponse" }
+        "503": { $ref: "#/components/responses/ProblemResponse" }
+  /api/v1/venue-credentials/enroll/finish:
+    post:
+      tags: [Credentials]
+      summary: Complete enrollment, encrypting the credential and creating the masked account
+      operationId: finishCredentialEnrollment
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CredentialEnrollFinish" }
+      responses:
+        "201":
+          description: Masked venue account.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/VenueAccount" }
+        "400": { $ref: "#/components/responses/ProblemResponse" }
+        "401": { $ref: "#/components/responses/ProblemResponse" }
+        "403": { $ref: "#/components/responses/ProblemResponse" }
+        "409": { $ref: "#/components/responses/ProblemResponse" }
+        "503": { $ref: "#/components/responses/ProblemResponse" }
+  /api/v1/venue-credentials/{account_id}/rotate/start:
+    post:
+      tags: [Credentials]
+      summary: Begin passkey-authorized rotation of a connection credential
+      operationId: startCredentialRotation
+      parameters:
+        - in: path
+          name: account_id
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CredentialProduct" }
+      responses:
+        "200":
+          description: WebAuthn action challenge.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PasskeyCeremonyChallenge" }
+        "401": { $ref: "#/components/responses/ProblemResponse" }
+        "403": { $ref: "#/components/responses/ProblemResponse" }
+        "404": { $ref: "#/components/responses/ProblemResponse" }
+        "503": { $ref: "#/components/responses/ProblemResponse" }
+  /api/v1/venue-credentials/{account_id}/rotate/finish:
+    post:
+      tags: [Credentials]
+      summary: Complete a credential rotation and require preflight revalidation
+      operationId: finishCredentialRotation
+      parameters:
+        - in: path
+          name: account_id
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CredentialRotateFinish" }
+      responses:
+        "200":
+          description: Masked venue account.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/VenueAccount" }
+        "400": { $ref: "#/components/responses/ProblemResponse" }
+        "401": { $ref: "#/components/responses/ProblemResponse" }
+        "403": { $ref: "#/components/responses/ProblemResponse" }
+        "404": { $ref: "#/components/responses/ProblemResponse" }
+        "503": { $ref: "#/components/responses/ProblemResponse" }
+  /api/v1/venue-credentials/{account_id}/revoke/start:
+    post:
+      tags: [Credentials]
+      summary: Begin passkey-authorized revocation of a connection credential
+      operationId: startCredentialRevocation
+      parameters:
+        - in: path
+          name: account_id
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CredentialProduct" }
+      responses:
+        "200":
+          description: WebAuthn action challenge.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PasskeyCeremonyChallenge" }
+        "401": { $ref: "#/components/responses/ProblemResponse" }
+        "403": { $ref: "#/components/responses/ProblemResponse" }
+        "404": { $ref: "#/components/responses/ProblemResponse" }
+        "503": { $ref: "#/components/responses/ProblemResponse" }
+  /api/v1/venue-credentials/{account_id}/revoke/finish:
+    post:
+      tags: [Credentials]
+      summary: Complete a credential revocation, destroying the stored secret
+      operationId: finishCredentialRevocation
+      parameters:
+        - in: path
+          name: account_id
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CredentialRevokeFinish" }
+      responses:
+        "200":
+          description: Masked venue account.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/VenueAccount" }
+        "401": { $ref: "#/components/responses/ProblemResponse" }
+        "403": { $ref: "#/components/responses/ProblemResponse" }
         "404": { $ref: "#/components/responses/ProblemResponse" }
         "503": { $ref: "#/components/responses/ProblemResponse" }
   /api/v1/opportunities:
@@ -1825,6 +1966,68 @@ components:
       properties:
         verified: { type: boolean }
         credential_id: { type: string, description: Hex-encoded credential id. }
+    CredentialSecret:
+      type: object
+      description: Write-only exchange API credential. Never returned by any endpoint.
+      additionalProperties: false
+      required: [api_key, api_secret]
+      properties:
+        api_key: { type: string, writeOnly: true }
+        api_secret: { type: string, writeOnly: true }
+        passphrase: { type: [string, "null"], writeOnly: true }
+    CredentialEnrollStart:
+      type: object
+      additionalProperties: false
+      required: [venue, alias, product, environment]
+      properties:
+        venue: { $ref: "#/components/schemas/Venue" }
+        alias: { type: string, minLength: 1, maxLength: 120 }
+        product: { type: string }
+        environment: { type: string }
+    CredentialEnrollFinish:
+      type: object
+      additionalProperties: false
+      required: [challenge_id, venue, alias, product, environment, assertion, credential]
+      properties:
+        challenge_id: { type: string, format: uuid }
+        venue: { $ref: "#/components/schemas/Venue" }
+        alias: { type: string, minLength: 1, maxLength: 120 }
+        product: { type: string }
+        environment: { type: string }
+        assertion:
+          type: object
+          description: Opaque WebAuthn PublicKeyCredential authorizing the enrollment.
+          additionalProperties: true
+        credential: { $ref: "#/components/schemas/CredentialSecret" }
+    CredentialProduct:
+      type: object
+      additionalProperties: false
+      required: [product]
+      properties:
+        product: { type: string }
+    CredentialRotateFinish:
+      type: object
+      additionalProperties: false
+      required: [challenge_id, product, assertion, credential]
+      properties:
+        challenge_id: { type: string, format: uuid }
+        product: { type: string }
+        assertion:
+          type: object
+          description: Opaque WebAuthn PublicKeyCredential authorizing the rotation.
+          additionalProperties: true
+        credential: { $ref: "#/components/schemas/CredentialSecret" }
+    CredentialRevokeFinish:
+      type: object
+      additionalProperties: false
+      required: [challenge_id, product, assertion]
+      properties:
+        challenge_id: { type: string, format: uuid }
+        product: { type: string }
+        assertion:
+          type: object
+          description: Opaque WebAuthn PublicKeyCredential authorizing the revocation.
+          additionalProperties: true
     StepUpRequest:
       type: object
       additionalProperties: false

@@ -35,6 +35,9 @@ pub enum AuthError {
     BootstrapInvalid,
     /// Passkeys are not configured for this deployment.
     PasskeysUnavailable,
+    /// Credential enrollment is unavailable (no secret backend configured, or
+    /// the Vault backend is unreachable).
+    CredentialsUnavailable,
     /// A passkey registration or assertion failed verification (including a
     /// detected authenticator clone). Deliberately non-specific to the client.
     PasskeyProofInvalid,
@@ -60,7 +63,7 @@ impl AuthError {
             Self::Forbidden => 403,
             Self::NotFound => 404,
             Self::ChallengeConsumed | Self::Conflict(_) => 409,
-            Self::PasskeysUnavailable => 503,
+            Self::PasskeysUnavailable | Self::CredentialsUnavailable => 503,
             Self::Internal(_) => 500,
         }
     }
@@ -83,6 +86,7 @@ impl AuthError {
             Self::Conflict(_) => "CONFLICT",
             Self::BootstrapInvalid => "BOOTSTRAP_INVALID",
             Self::PasskeysUnavailable => "PASSKEYS_UNAVAILABLE",
+            Self::CredentialsUnavailable => "CREDENTIALS_UNAVAILABLE",
             Self::PasskeyProofInvalid => "PASSKEY_PROOF_INVALID",
             Self::Internal(_) => "INTERNAL",
         }
@@ -105,6 +109,7 @@ impl AuthError {
             Self::NotFound => "The requested resource was not found.".to_owned(),
             Self::BootstrapInvalid => "The deployment token was not accepted.".to_owned(),
             Self::PasskeysUnavailable => "Passkeys are not available on this deployment.".to_owned(),
+            Self::CredentialsUnavailable => "Credential enrollment is not available.".to_owned(),
             Self::PasskeyProofInvalid => "The passkey could not be verified.".to_owned(),
             Self::Internal(_) => "The request could not be completed.".to_owned(),
         }

@@ -337,7 +337,27 @@ impl SignCount {
 #[non_exhaustive]
 pub enum ActionDescriptor {
     RegisterPasskey,
-    RevokePasskey { credential_id: CredentialId },
+    RevokePasskey {
+        credential_id: CredentialId,
+    },
+    /// Enroll a new exchange credential (creating the account). A new account has
+    /// no id yet, so the natural key is bound.
+    EnrollCredential {
+        venue: String,
+        alias: String,
+        product: String,
+        environment: String,
+    },
+    RotateCredential {
+        venue_account_id: String,
+        venue: String,
+        product: String,
+    },
+    RevokeCredential {
+        venue_account_id: String,
+        venue: String,
+        product: String,
+    },
 }
 
 impl ActionDescriptor {
@@ -356,8 +376,36 @@ impl ActionDescriptor {
                 }
                 encoded
             }
+            Self::EnrollCredential {
+                venue,
+                alias,
+                product,
+                environment,
+            } => length_prefixed("enroll_credential", &[venue, alias, product, environment]),
+            Self::RotateCredential {
+                venue_account_id,
+                venue,
+                product,
+            } => length_prefixed("rotate_credential", &[venue_account_id, venue, product]),
+            Self::RevokeCredential {
+                venue_account_id,
+                venue,
+                product,
+            } => length_prefixed("revoke_credential", &[venue_account_id, venue, product]),
         }
     }
+}
+
+/// Injective `tag:len:value:len:value...` encoding. The length prefixes make the
+/// result unambiguous even when a field (e.g. a user-chosen alias) contains the
+/// delimiter, so distinct field tuples never collide.
+fn length_prefixed(tag: &str, parts: &[&str]) -> String {
+    use std::fmt::Write as _;
+    let mut encoded = String::from(tag);
+    for part in parts {
+        let _ = write!(encoded, ":{}:{part}", part.len());
+    }
+    encoded
 }
 
 /// A single-use authorization proof bound to one action. Verifying a passkey
@@ -665,5 +713,53 @@ mod tests {
         };
         assert_ne!(a.canonical(), b.canonical());
         assert_ne!(a.canonical(), ActionDescriptor::RegisterPasskey.canonical());
+    }
+
+    #[test]
+    fn credential_action_descriptors_are_distinct_and_injective() {
+        let enroll = ActionDescriptor::EnrollCredential {
+            venue: "BYBIT".to_owned(),
+            alias: "primary".to_owned(),
+            product: "LINEAR_PERPETUAL".to_owned(),
+            environment: "PRODUCTION".to_owned(),
+        };
+        let rotate = ActionDescriptor::RotateCredential {
+            venue_account_id: "acct-1".to_owned(),
+            venue: "BYBIT".to_owned(),
+            product: "LINEAR_PERPETUAL".to_owned(),
+        };
+        let revoke = ActionDescriptor::RevokeCredential {
+            venue_account_id: "acct-1".to_owned(),
+            venue: "BYBIT".to_owned(),
+            product: "LINEAR_PERPETUAL".to_owned(),
+        };
+        // The three credential actions and the passkey actions are all distinct.
+        let forms = [
+            enroll.canonical(),
+            rotate.canonical(),
+            revoke.canonical(),
+            ActionDescriptor::RegisterPasskey.canonical(),
+        ];
+        for (i, left) in forms.iter().enumerate() {
+            for right in &forms[i + 1..] {
+                assert_ne!(left, right);
+            }
+        }
+
+        // Length-prefixing keeps distinct field tuples from colliding even when a
+        // field contains the ':' delimiter.
+        let tricky_a = ActionDescriptor::EnrollCredential {
+            venue: "A".to_owned(),
+            alias: "x:y".to_owned(),
+            product: "P".to_owned(),
+            environment: "E".to_owned(),
+        };
+        let tricky_b = ActionDescriptor::EnrollCredential {
+            venue: "A".to_owned(),
+            alias: "x".to_owned(),
+            product: "y:P".to_owned(),
+            environment: "E".to_owned(),
+        };
+        assert_ne!(tricky_a.canonical(), tricky_b.canonical());
     }
 }
