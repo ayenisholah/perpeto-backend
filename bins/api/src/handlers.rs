@@ -169,6 +169,22 @@ pub async fn list_access_requests(
     Ok(Json(state.service.list_access_requests().await?))
 }
 
+/// `GET /api/v1/audit`
+///
+/// Owner-only tamper-evident activity log for the caller's tenant: the
+/// hash-chained control-plane events plus an `intact` integrity flag. Exposes
+/// only pseudonymized actors and non-secret details.
+pub async fn get_audit_log(
+    State(state): State<AppState>,
+    Extension(caller): Extension<CallerContext>,
+) -> Result<impl IntoResponse, ApiError> {
+    caller.require_active()?;
+    if !caller.is_owner() {
+        return Err(AuthError::Forbidden.into());
+    }
+    Ok(Json(state.service.audit_log(&caller).await?))
+}
+
 /// `POST /api/v1/access-requests/{user_id}/approve`
 pub async fn approve_access_request(
     State(state): State<AppState>,

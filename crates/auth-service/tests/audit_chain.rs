@@ -73,6 +73,16 @@ async fn chain_links_verify_and_detect_tampering() {
     // The freshly built chain verifies.
     assert!(repo.verify_audit_chain(tenant).await.expect("verify intact"));
 
+    // The review listing returns every event (newest first) with safe fields.
+    let listed = repo.list_audit(tenant).await.expect("list audit");
+    assert_eq!(listed.len(), 3);
+    assert!(listed.iter().all(|row| row.subject_id == "acct-1"));
+    let mut kinds: Vec<&str> = listed.iter().map(|row| row.event_type.as_str()).collect();
+    kinds.sort_unstable();
+    assert_eq!(kinds, ["CREDENTIAL_ENROLLED", "PILOT_ARMED", "ROUTE_CERTIFIED"]);
+    // Newest first: occurred_at is non-increasing down the list.
+    assert!(listed.windows(2).all(|pair| pair[0].occurred_at >= pair[1].occurred_at));
+
     // A second tenant's chain is independent (empty ⇒ trivially intact) — proving
     // appends and verification are tenant-scoped under forced RLS.
     let other = seed_tenant(&pool).await;

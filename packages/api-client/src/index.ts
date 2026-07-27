@@ -231,6 +231,21 @@ export interface AccessRequest {
   readonly requested_at: string;
 }
 
+export interface AuditEntry {
+  readonly occurred_at: string;
+  readonly event_type: string;
+  readonly subject_type: string;
+  readonly subject_id: string;
+  readonly actor: string;
+  readonly details: Record<string, unknown>;
+  readonly event_hash: string;
+}
+
+export interface AuditLog {
+  readonly intact: boolean;
+  readonly events: readonly AuditEntry[];
+}
+
 export interface MfaEnrollment {
   readonly method_id: string;
   readonly secret: string;
@@ -766,6 +781,10 @@ export class PerpetoClient {
 
   public listAccessRequests(): Promise<readonly AccessRequest[]> {
     return this.#request("/api/v1/access-requests");
+  }
+
+  public getAuditLog(): Promise<AuditLog> {
+    return this.#request("/api/v1/audit");
   }
 
   public approveAccessRequest(userId: string): Promise<CurrentUser> {

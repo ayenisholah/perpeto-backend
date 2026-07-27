@@ -1091,6 +1091,43 @@ impl Repo {
         }
         Ok(true)
     }
+
+    /// List a tenant's audit events, newest first, with the pseudonymized actor.
+    /// Exposes only non-secret display fields — never `previous_hash`, session, or
+    /// request identifiers.
+    ///
+    /// # Errors
+    /// Propagates database failures.
+    pub async fn list_audit(&self, tenant: TenantContext) -> AuthResult<Vec<AuditRow>> {
+        let mut transaction = TenantTransaction::begin(&self.pool, tenant)
+            .await
+            .map_err(|error| AuthError::Internal(format!("tenant transaction: {error}")))?;
+        let rows = sqlx::query(
+            "SELECT e.occurred_at, e.event_type, e.subject_type, e.subject_id,
+                    e.details::text AS details, e.event_hash, a.pseudonym AS pseudonym
+             FROM audit_events e JOIN audit_actors a ON a.id = e.actor_id
+             WHERE e.tenant_id = $1 ORDER BY e.occurred_at DESC, e.id DESC",
+        )
+        .bind(tenant.tenant_id().as_uuid())
+        .fetch_all(transaction.connection())
+        .await?;
+        transaction
+            .commit()
+            .await
+            .map_err(|error| AuthError::Internal(format!("commit list audit: {error}")))?;
+        Ok(rows
+            .into_iter()
+            .map(|row| AuditRow {
+                occurred_at: row.get("occurred_at"),
+                event_type: row.get("event_type"),
+                subject_type: row.get("subject_type"),
+                subject_id: row.get("subject_id"),
+                details: row.get("details"),
+                event_hash: row.get("event_hash"),
+                pseudonym: row.get("pseudonym"),
+            })
+            .collect())
+    }
 }
 
 /// A session row used by the refresh path.
@@ -1141,6 +1178,18 @@ pub struct AccessRequestRow {
     pub display_name: Option<String>,
     pub email: Option<String>,
     pub requested_at: DateTime<Utc>,
+}
+
+/// An audit-event row for owner review (non-secret display fields only).
+#[derive(Clone, Debug)]
+pub struct AuditRow {
+    pub occurred_at: DateTime<Utc>,
+    pub event_type: String,
+    pub subject_type: String,
+    pub subject_id: String,
+    pub details: String,
+    pub event_hash: Vec<u8>,
+    pub pseudonym: Uuid,
 }
 
 /// A TOTP method row.

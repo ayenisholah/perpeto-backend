@@ -12,10 +12,11 @@ use uuid::Uuid;
 
 use crate::config::AuthConfig;
 use crate::dto::{
-    AccessRequest, AcknowledgeRecoveryRequest, AuthTransition, BootstrapRequest,
-    CreateChallengeRequest, CurrentUser, ExchangeRequest, LinkedIdentity, MfaConfirmRequest,
-    MfaConfirmResponse, MfaEnrollment, MfaVerifyRequest, NextState, Provider, RefreshRequest, Role,
-    SessionCredentials, SessionSummary, SocialChallenge, TenantSummary, UserStatus,
+    AccessRequest, AcknowledgeRecoveryRequest, AuditEntry, AuditLog, AuthTransition,
+    BootstrapRequest, CreateChallengeRequest, CurrentUser, ExchangeRequest, LinkedIdentity,
+    MfaConfirmRequest, MfaConfirmResponse, MfaEnrollment, MfaVerifyRequest, NextState, Provider,
+    RefreshRequest, Role, SessionCredentials, SessionSummary, SocialChallenge, TenantSummary,
+    UserStatus,
 };
 use crate::error::{AuthError, AuthResult};
 use crate::mfa;
@@ -564,6 +565,31 @@ impl AuthService {
                 })
             })
             .collect())
+    }
+
+    /// The caller tenant's audit log plus a tamper-evidence integrity flag.
+    ///
+    /// # Errors
+    /// Returns [`AuthError`] when the tenant context is invalid or a query fails.
+    pub async fn audit_log(&self, caller: &CallerContext) -> AuthResult<AuditLog> {
+        let tenant = caller.tenant_context()?;
+        let intact = self.repo.verify_audit_chain(tenant).await?;
+        let events = self
+            .repo
+            .list_audit(tenant)
+            .await?
+            .into_iter()
+            .map(|row| AuditEntry {
+                occurred_at: to_rfc3339(row.occurred_at),
+                event_type: row.event_type,
+                subject_type: row.subject_type,
+                subject_id: row.subject_id,
+                actor: row.pseudonym.to_string(),
+                details: serde_json::from_str(&row.details).unwrap_or(serde_json::Value::Null),
+                event_hash: row.event_hash.iter().map(|byte| format!("{byte:02x}")).collect(),
+            })
+            .collect();
+        Ok(AuditLog { intact, events })
     }
 
     /// Approve a pending user as Viewer (owners only).

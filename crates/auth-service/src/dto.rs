@@ -179,6 +179,28 @@ pub struct AccessRequest {
     pub requested_at: String,
 }
 
+/// A single reviewable audit event (non-secret fields only).
+#[derive(Clone, Debug, Serialize)]
+pub struct AuditEntry {
+    pub occurred_at: String,
+    pub event_type: String,
+    pub subject_type: String,
+    pub subject_id: String,
+    /// Pseudonymized actor identifier — never the real user id.
+    pub actor: String,
+    pub details: serde_json::Value,
+    /// Lowercase hex of the row's chained `event_hash`.
+    pub event_hash: String,
+}
+
+/// The tenant's audit log with a tamper-evidence integrity flag.
+#[derive(Clone, Debug, Serialize)]
+pub struct AuditLog {
+    /// `true` when the hash chain verifies end to end.
+    pub intact: bool,
+    pub events: Vec<AuditEntry>,
+}
+
 /// MFA enrollment material.
 #[derive(Clone, Debug, Serialize)]
 pub struct MfaEnrollment {

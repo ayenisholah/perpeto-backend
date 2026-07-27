@@ -28,6 +28,7 @@ pub fn build_router(state: AppState) -> Router {
             "/api/v1/access-requests/{user_id}/approve",
             post(handlers::approve_access_request),
         )
+        .route("/api/v1/audit", get(handlers::get_audit_log))
         .route("/api/v1/account", delete(handlers::delete_account))
         .route(
             "/api/v1/passkeys/register/start",

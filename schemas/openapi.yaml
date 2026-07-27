@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Perpeto Control API
-  version: 0.21.0
+  version: 0.22.0
   description: >-
     Social identity, MFA, and secure sessions plus the M2 deterministic paper
     scanner and coordinated simulated positions. Live execution remains unavailable.
@@ -386,6 +386,19 @@ paths:
               schema: { $ref: "#/components/schemas/CurrentUser" }
         "403": { $ref: "#/components/responses/ProblemResponse" }
         "409": { $ref: "#/components/responses/ProblemResponse" }
+  /api/v1/audit:
+    get:
+      tags: [Audit]
+      summary: Review the tenant's tamper-evident control-plane audit log (Owner only)
+      operationId: getAuditLog
+      responses:
+        "200":
+          description: The audit log and its integrity flag.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AuditLog" }
+        "401": { $ref: "#/components/responses/ProblemResponse" }
+        "403": { $ref: "#/components/responses/ProblemResponse" }
   /api/v1/account:
     delete:
       tags: [Account]
@@ -2133,6 +2146,27 @@ components:
         display_name: { type: [string, "null"] }
         email: { type: [string, "null"], format: email }
         requested_at: { type: string, format: date-time }
+    AuditEntry:
+      type: object
+      additionalProperties: false
+      required: [occurred_at, event_type, subject_type, subject_id, actor, details, event_hash]
+      properties:
+        occurred_at: { type: string, format: date-time }
+        event_type: { type: string }
+        subject_type: { type: string }
+        subject_id: { type: string }
+        actor: { type: string, format: uuid, description: Pseudonymized actor identifier. }
+        details: { type: object, additionalProperties: true }
+        event_hash: { type: string, description: Lowercase hex of the chained event hash. }
+    AuditLog:
+      type: object
+      additionalProperties: false
+      required: [intact, events]
+      properties:
+        intact: { type: boolean, description: Whether the hash chain verifies end to end. }
+        events:
+          type: array
+          items: { $ref: "#/components/schemas/AuditEntry" }
     Passkey:
       type: object
       additionalProperties: false
