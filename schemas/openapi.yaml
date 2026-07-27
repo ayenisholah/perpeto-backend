@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Perpeto Control API
-  version: 0.20.0
+  version: 0.21.0
   description: >-
     Social identity, MFA, and secure sessions plus the M2 deterministic paper
     scanner and coordinated simulated positions. Live execution remains unavailable.
@@ -649,6 +649,49 @@ paths:
         "401": { $ref: "#/components/responses/ProblemResponse" }
         "403": { $ref: "#/components/responses/ProblemResponse" }
         "404": { $ref: "#/components/responses/ProblemResponse" }
+        "503": { $ref: "#/components/responses/ProblemResponse" }
+  /api/v1/venue-credentials/{account_id}/delete/start:
+    post:
+      tags: [Credentials]
+      summary: Begin passkey-authorized deletion of a venue account
+      operationId: startCredentialDeletion
+      parameters:
+        - in: path
+          name: account_id
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: WebAuthn action challenge.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PasskeyCeremonyChallenge" }
+        "401": { $ref: "#/components/responses/ProblemResponse" }
+        "403": { $ref: "#/components/responses/ProblemResponse" }
+        "404": { $ref: "#/components/responses/ProblemResponse" }
+        "503": { $ref: "#/components/responses/ProblemResponse" }
+  /api/v1/venue-credentials/{account_id}/delete/finish:
+    post:
+      tags: [Credentials]
+      summary: Delete a venue account, destroying every connection secret and tombstoning it
+      operationId: finishCredentialDeletion
+      parameters:
+        - in: path
+          name: account_id
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CredentialDeleteFinish" }
+      responses:
+        "204":
+          description: The account and its secrets were deleted.
+        "401": { $ref: "#/components/responses/ProblemResponse" }
+        "403": { $ref: "#/components/responses/ProblemResponse" }
+        "404": { $ref: "#/components/responses/ProblemResponse" }
+        "409": { $ref: "#/components/responses/ProblemResponse" }
         "503": { $ref: "#/components/responses/ProblemResponse" }
   /api/v1/venue-credentials/{account_id}/certify/start:
     post:
@@ -2260,6 +2303,16 @@ components:
         assertion:
           type: object
           description: Opaque WebAuthn PublicKeyCredential authorizing the revocation.
+          additionalProperties: true
+    CredentialDeleteFinish:
+      type: object
+      additionalProperties: false
+      required: [challenge_id, assertion]
+      properties:
+        challenge_id: { type: string, format: uuid }
+        assertion:
+          type: object
+          description: Opaque WebAuthn PublicKeyCredential authorizing the deletion.
           additionalProperties: true
     StepUpRequest:
       type: object

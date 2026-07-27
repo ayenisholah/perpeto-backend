@@ -75,6 +75,14 @@ pub fn build_router(state: AppState) -> Router {
             post(handlers::revoke_credential_finish),
         )
         .route(
+            "/api/v1/venue-credentials/{id}/delete/start",
+            post(handlers::delete_credential_start),
+        )
+        .route(
+            "/api/v1/venue-credentials/{id}/delete/finish",
+            post(handlers::delete_credential_finish),
+        )
+        .route(
             "/api/v1/venue-credentials/{id}/certify/start",
             post(handlers::certify_route_start),
         )

@@ -204,6 +204,38 @@ impl CredentialEnrollmentService {
         Ok(account)
     }
 
+    /// Delete a venue account entirely: destroy every connection's stored secret,
+    /// clear and disable each connection, then tombstone the account so it is
+    /// invisible to all read paths. Idempotent — a tombstoned (or missing) account
+    /// is `NotFound`, so a repeat delete is a no-op 404.
+    pub async fn delete(
+        &self,
+        tenant: TenantContext,
+        account_id: &str,
+    ) -> Result<(), EnrollmentError> {
+        let mut account = self
+            .accounts
+            .get(tenant, account_id)
+            .await
+            .map_err(|_| EnrollmentError::Persistence)?
+            .ok_or(EnrollmentError::NotFound)?;
+        for connection in &mut account.connections {
+            if let Some(secret_ref) = connection.secret_ref.clone() {
+                let secret_ref =
+                    Uuid::parse_str(&secret_ref).map_err(|_| EnrollmentError::NotFound)?;
+                self.secrets.revoke(tenant, secret_ref).await?;
+            }
+            connection.secret_ref = None;
+            connection.status = STATUS_DISABLED.to_owned();
+        }
+        account.tombstoned_at = Some(chrono::Utc::now().to_rfc3339());
+        self.accounts
+            .update(tenant, &account)
+            .await
+            .map_err(|_| EnrollmentError::Persistence)?;
+        Ok(())
+    }
+
     /// Record the outcome of preflight validation, moving the connection to
     /// `ELIGIBLE` or `PREFLIGHT_FAILED`. Re-running after a failure (or to
     /// re-validate an eligible route) is allowed; a disabled/revoked connection

@@ -891,6 +891,26 @@ export class PerpetoClient {
     );
   }
 
+  public startCredentialDeletion(accountId: string): Promise<PasskeyCeremonyChallenge> {
+    return this.#request(
+      `/api/v1/venue-credentials/${encodeURIComponent(accountId)}/delete/start`,
+      { method: "POST" },
+    );
+  }
+
+  public finishCredentialDeletion(
+    accountId: string,
+    request: {
+      readonly challenge_id: string;
+      readonly assertion: Record<string, unknown>;
+    },
+  ): Promise<void> {
+    return this.#request(
+      `/api/v1/venue-credentials/${encodeURIComponent(accountId)}/delete/finish`,
+      { method: "POST", body: JSON.stringify(request) },
+    );
+  }
+
   public startRouteCertification(
     accountId: string,
     request: { readonly target: CertificationState },

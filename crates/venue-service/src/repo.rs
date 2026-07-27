@@ -239,12 +239,14 @@ impl VenueAccountsRepo {
         id: &str,
     ) -> Result<Option<VenueAccountDto>, sqlx::Error> {
         let mut transaction = TenantTransaction::begin(&self.pool, context).await?;
-        let row =
-            sqlx::query("SELECT payload FROM venue_accounts WHERE tenant_id = $1 AND id = $2")
-                .bind(context.tenant_id().as_uuid())
-                .bind(parse_uuid(id)?)
-                .fetch_optional(transaction.connection())
-                .await?;
+        let row = sqlx::query(
+            "SELECT payload FROM venue_accounts
+             WHERE tenant_id = $1 AND id = $2 AND tombstoned_at IS NULL",
+        )
+        .bind(context.tenant_id().as_uuid())
+        .bind(parse_uuid(id)?)
+        .fetch_optional(transaction.connection())
+        .await?;
         let result = row
             .map(|value| decode(&value.get::<String, _>("payload")))
             .transpose();

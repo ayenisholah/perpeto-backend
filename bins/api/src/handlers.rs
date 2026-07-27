@@ -382,6 +382,13 @@ pub struct RevokeFinishRequest {
     pub assertion: serde_json::Value,
 }
 
+/// Account-level deletion binds no product, so it carries only the proof.
+#[derive(Debug, Deserialize)]
+pub struct DeleteFinishRequest {
+    pub challenge_id: String,
+    pub assertion: serde_json::Value,
+}
+
 /// Resolve the credential enrollment service or fail with 503.
 fn require_enrollment(state: &AppState) -> Result<&CredentialEnrollmentService, ApiError> {
     state
@@ -567,6 +574,50 @@ pub async fn revoke_credential_finish(
         .await
         .map_err(map_enrollment)?;
     Ok(Json(updated))
+}
+
+/// `POST /api/v1/venue-credentials/{id}/delete/start`
+pub async fn delete_credential_start(
+    State(state): State<AppState>,
+    Extension(caller): Extension<CallerContext>,
+    Path(id): Path<String>,
+) -> Result<impl IntoResponse, ApiError> {
+    require_credential_role(&caller)?;
+    require_enrollment(&state)?;
+    let account = require_enrollment_account(&state, &caller, &id).await?;
+    let action = ActionDescriptor::DeleteCredential {
+        venue_account_id: id,
+        venue: account.venue,
+    };
+    Ok(Json(passkeys(&state)?.start_action(&caller, &action).await?))
+}
+
+/// `POST /api/v1/venue-credentials/{id}/delete/finish`
+///
+/// Destroys every connection secret and tombstones the account. Refused with 409
+/// while a pilot is armed (disarm — which flattens — first); 204 on success.
+pub async fn delete_credential_finish(
+    State(state): State<AppState>,
+    Extension(caller): Extension<CallerContext>,
+    Path(id): Path<String>,
+    Json(request): Json<DeleteFinishRequest>,
+) -> Result<impl IntoResponse, ApiError> {
+    require_credential_role(&caller)?;
+    let enrollment = require_enrollment(&state)?;
+    let account = require_enrollment_account(&state, &caller, &id).await?;
+    if state.service.pilot_state(&caller).await? == PilotState::PilotArmed {
+        return Err(AuthError::Conflict("disarm the pilot before deleting its credential").into());
+    }
+    let action = ActionDescriptor::DeleteCredential {
+        venue_account_id: id.clone(),
+        venue: account.venue,
+    };
+    passkeys(&state)?
+        .finish_action(&caller, &request.challenge_id, &action, request.assertion)
+        .await?;
+    let tenant = caller.tenant_context()?;
+    enrollment.delete(tenant, &id).await.map_err(map_enrollment)?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 /// Load the caller's venue account (tenant-scoped) so an action can be bound to

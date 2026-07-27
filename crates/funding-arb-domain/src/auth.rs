@@ -358,6 +358,12 @@ pub enum ActionDescriptor {
         venue: String,
         product: String,
     },
+    /// Delete a venue account entirely (destroying every connection's secret and
+    /// tombstoning the account). Account-level, so it binds no product.
+    DeleteCredential {
+        venue_account_id: String,
+        venue: String,
+    },
     /// Arm a tenant for pilot trading against one preflight-eligible route.
     ArmPilot {
         venue_account_id: String,
@@ -402,6 +408,10 @@ impl ActionDescriptor {
                 venue,
                 product,
             } => length_prefixed("revoke_credential", &[venue_account_id, venue, product]),
+            Self::DeleteCredential {
+                venue_account_id,
+                venue,
+            } => length_prefixed("delete_credential", &[venue_account_id, venue]),
             Self::ArmPilot {
                 venue_account_id,
                 product,
@@ -759,11 +769,16 @@ mod tests {
             venue_account_id: "acct-1".to_owned(),
             target: "PILOT".to_owned(),
         };
+        let delete = ActionDescriptor::DeleteCredential {
+            venue_account_id: "acct-1".to_owned(),
+            venue: "BYBIT".to_owned(),
+        };
         // The credential actions, pilot arming/certification, and passkey actions are distinct.
         let forms = [
             enroll.canonical(),
             rotate.canonical(),
             revoke.canonical(),
+            delete.canonical(),
             arm.canonical(),
             certify.canonical(),
             ActionDescriptor::RegisterPasskey.canonical(),
