@@ -28,8 +28,8 @@ use funding_arb_strategy_service::StrategyDto;
 use funding_arb_venue_service::{CertificationState, ConnectionTestDto, VenueSummaryDto};
 use funding_arb_venue_service::{ConfiguredConnector, SubmissionState};
 use funding_arb_venue_service::{
-    CredentialBundle, CredentialEnrollmentService, EnrollRequest, EnrollmentError, SecretStoreError,
-    VenueAccountDto,
+    CredentialBundle, CredentialEnrollmentService, EnrollRequest, EnrollmentError, PreflightError,
+    PreflightService, SecretStoreError, VenueAccountDto,
 };
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
@@ -408,6 +408,20 @@ fn map_enrollment(error: EnrollmentError) -> ApiError {
     .into()
 }
 
+/// Map a [`PreflightError`] to a transport error. Registry/persistence failures
+/// surface as internal errors; reconciliation *failure* is not an error here (it
+/// records `PREFLIGHT_FAILED`), so it never reaches this mapping.
+fn map_preflight(error: PreflightError) -> ApiError {
+    match error {
+        PreflightError::NotFound => AuthError::NotFound.into(),
+        PreflightError::InvalidProduct => {
+            AuthError::BadRequest("invalid connector product").into()
+        }
+        PreflightError::Registry(error) => ApiError(AuthError::Internal(error.to_string())),
+        PreflightError::Enrollment(error) => map_enrollment(error),
+    }
+}
+
 /// Require an active trader/owner for credential mutations.
 fn require_credential_role(caller: &CallerContext) -> Result<(), ApiError> {
     caller.require_active()?;
@@ -667,10 +681,13 @@ pub async fn preflight_credential(
     if !caller.can_trade() {
         return Err(AuthError::Forbidden.into());
     }
-    let enrollment = require_enrollment(&state)?;
     let registry = state
         .connector_registry
-        .as_ref()
+        .clone()
+        .ok_or_else(|| ApiError::from(AuthError::CredentialsUnavailable))?;
+    let enrollment = state
+        .enrollment
+        .clone()
         .ok_or_else(|| ApiError::from(AuthError::CredentialsUnavailable))?;
     let tenant = caller.tenant_context()?;
     let account = state
@@ -680,96 +697,23 @@ pub async fn preflight_credential(
         .map_err(internal)?
         .ok_or_else(|| ApiError::from(AuthError::NotFound))?;
 
-    // Snapshot the connection's declared configuration (borrow ends here).
-    let (has_secret, no_withdrawal, read_permission, environment, trade_permission) = {
-        let connection = account
-            .connections
-            .iter()
-            .find(|connection| connection.product == request.product)
-            .ok_or_else(|| ApiError::from(AuthError::NotFound))?;
-        (
-            connection.secret_ref.is_some(),
-            connection.withdrawal_permission != Some(true),
-            connection.read_permission,
-            connection.environment.clone(),
-            connection.trade_permission,
-        )
-    };
-
-    let environment_valid = match state.mode {
-        funding_arb_domain::TradingMode::Sandbox => environment != "PRODUCTION",
-        funding_arb_domain::TradingMode::Shadow => environment == "PRODUCTION" && !trade_permission,
-        funding_arb_domain::TradingMode::Paper => true,
-        funding_arb_domain::TradingMode::Live => false,
-    };
-    let mut checks = vec![
-        if has_secret { "SECRET_PRESENT" } else { "SECRET_MISSING" }.to_owned(),
-        if no_withdrawal { "NO_WITHDRAWAL" } else { "WITHDRAWAL_ENABLED" }.to_owned(),
-        if read_permission { "READ_PERMISSION" } else { "NO_READ_PERMISSION" }.to_owned(),
-        if environment_valid { "ENVIRONMENT_VALID" } else { "ENVIRONMENT_INVALID" }.to_owned(),
-    ];
-    let config_ok = has_secret && no_withdrawal && read_permission && environment_valid;
-
-    // Live reconciliation only runs when the declared config is sound.
-    let mut reconciliation = None;
-    let mut reconcile_ok = false;
-    if config_ok {
-        let product = match request.product.as_str() {
-            "SPOT" => ProductType::Spot,
-            "LINEAR_PERPETUAL" => ProductType::LinearPerpetual,
-            _ => return Err(AuthError::BadRequest("invalid connector product").into()),
-        };
-        let configured = registry
-            .load(tenant, state.mode)
-            .await
-            .map_err(|error| ApiError(AuthError::Internal(error.to_string())))?
-            .into_iter()
-            .find(|configured| configured.account.id == account.id && configured.product == product);
-        match configured {
-            Some(configured) => {
-                match state
-                    .reconciliation
-                    .run(
-                        tenant,
-                        configured.connector.as_ref(),
-                        &AccountId(account.id.clone()),
-                    )
-                    .await
-                {
-                    Ok(report) => {
-                        reconcile_ok = report.status == "RECONCILED" && report.discrepancies == 0;
-                        checks.push(format!("RECONCILE:{}", report.status));
-                        reconciliation = Some(PreflightReconciliation {
-                            status: report.status,
-                            balances_seen: report.balances_seen as u32,
-                            positions_seen: report.positions_seen as u32,
-                            open_orders_seen: report.open_orders_seen as u32,
-                            discrepancies: report.discrepancies as u32,
-                        });
-                    }
-                    Err(_) => checks.push("RECONCILE:FAILED".to_owned()),
-                }
-            }
-            None => checks.push("CONNECTOR_UNAVAILABLE".to_owned()),
-        }
-    }
-
-    let updated = enrollment
-        .record_preflight_result(tenant, &id, &request.product, config_ok && reconcile_ok)
+    let outcome = PreflightService::new(registry, state.reconciliation.clone(), enrollment)
+        .run(tenant, state.mode, &account, &request.product)
         .await
-        .map_err(map_enrollment)?;
-    let status = updated
-        .connections
-        .into_iter()
-        .find(|connection| connection.product == request.product)
-        .map(|connection| connection.status)
-        .unwrap_or_default();
+        .map_err(map_preflight)?;
+
     Ok(Json(PreflightReport {
         account_id: id,
         product: request.product,
-        status,
-        checks,
-        reconciliation,
+        status: outcome.status,
+        checks: outcome.checks,
+        reconciliation: outcome.reconciliation.map(|summary| PreflightReconciliation {
+            status: summary.status,
+            balances_seen: summary.balances_seen as u32,
+            positions_seen: summary.positions_seen as u32,
+            open_orders_seen: summary.open_orders_seen as u32,
+            discrepancies: summary.discrepancies as u32,
+        }),
     }))
 }
 

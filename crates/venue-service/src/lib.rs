@@ -3,6 +3,7 @@
 mod coordinator;
 mod dto;
 mod enrollment;
+mod preflight;
 mod reconcile;
 mod registry;
 mod repo;
@@ -18,6 +19,10 @@ pub use dto::{
     ReconciliationRunDto, ReconciliationState, VenueAccountDto, VenueSummaryDto,
 };
 pub use enrollment::{CredentialEnrollmentService, EnrollRequest, EnrollmentError};
+pub use preflight::{
+    PreflightError, PreflightOutcome, PreflightReconciliationSummary, PreflightService,
+    evaluate_config,
+};
 pub use reconcile::{ReconciliationError, ReconciliationReport, ReconciliationService};
 pub use registry::{
     ConfiguredConnector, ConnectorRegistry, RegistryError, decode_master_key,

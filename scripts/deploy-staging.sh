@@ -29,5 +29,5 @@ for _ in $(seq 1 30); do
 done
 
 echo "staging readiness failed" >&2
-"${compose[@]}" logs --tail=200 api engine reconciler worker >&2
+"${compose[@]}" logs --tail=200 api engine reconciler preflight worker >&2
 exit 1

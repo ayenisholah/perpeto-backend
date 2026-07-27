@@ -900,6 +900,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "funding-arb-preflight"
+version = "0.1.0"
+dependencies = [
+ "funding-arb-domain",
+ "funding-arb-tenant-context",
+ "funding-arb-venue-service",
+ "sqlx",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
 name = "funding-arb-reconciler"
 version = "0.1.0"
 dependencies = [
