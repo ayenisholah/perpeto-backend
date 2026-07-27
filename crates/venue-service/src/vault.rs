@@ -50,6 +50,9 @@ pub struct VaultConfig {
     pub encrypt_token: String,
     /// Decrypt-only token used by execution/reconciliation workloads.
     pub decrypt_token: String,
+    /// Rewrap-capable token used by the ciphertext-rewrap worker. Absent when no
+    /// rewrap job is provisioned, in which case rewrap fails closed.
+    pub rewrap_token: Option<String>,
     /// Prefix for per-tenant key names; keeps names opaque and namespaced.
     pub key_prefix: String,
     /// Optional Vault Enterprise namespace.
@@ -89,6 +92,7 @@ impl VaultConfig {
             mount: non_empty("PERPETO_VAULT_TRANSIT_MOUNT").unwrap_or_else(|| "transit".to_owned()),
             encrypt_token: required("PERPETO_VAULT_ENCRYPT_TOKEN")?,
             decrypt_token: required("PERPETO_VAULT_DECRYPT_TOKEN")?,
+            rewrap_token: non_empty("PERPETO_VAULT_REWRAP_TOKEN"),
             key_prefix: non_empty("PERPETO_VAULT_KEY_PREFIX").unwrap_or_else(|| "perpeto-".to_owned()),
             namespace: non_empty("PERPETO_VAULT_NAMESPACE"),
         }))
@@ -137,6 +141,15 @@ impl VaultTransitSecretStore {
     fn decrypt_url(&self, context: &SecretContext) -> String {
         format!(
             "{}/v1/{}/decrypt/{}",
+            self.config.address,
+            self.config.mount,
+            self.key_name(context)
+        )
+    }
+
+    fn rewrap_url(&self, context: &SecretContext) -> String {
+        format!(
+            "{}/v1/{}/rewrap/{}",
             self.config.address,
             self.config.mount,
             self.key_name(context)
@@ -353,11 +366,98 @@ impl SecretStore for VaultTransitSecretStore {
             .await
             .map_err(|_| SecretStoreError::PersistenceFailed)
     }
+
+    async fn rewrap(
+        &self,
+        tenant: TenantContext,
+        secret_ref: Uuid,
+    ) -> Result<SecretMetadata, SecretStoreError> {
+        // Rewrap requires a dedicated rewrap-capable token; fail closed without it.
+        let Some(rewrap_token) = self.config.rewrap_token.as_deref() else {
+            return Err(SecretStoreError::VaultUnavailable);
+        };
+        let mut transaction = TenantTransaction::begin(&self.pool, tenant)
+            .await
+            .map_err(|_| SecretStoreError::PersistenceFailed)?;
+        let row = sqlx::query_as::<_, (Uuid, String, String, String, i32, DateTime<Utc>, Option<DateTime<Utc>>)>(
+            "SELECT venue_account_id, venue, product, vault_ciphertext, key_version, created_at, rotated_at
+             FROM encrypted_credentials
+             WHERE tenant_id = $1 AND secret_ref = $2 AND backend = 'VAULT' AND revoked_at IS NULL",
+        )
+        .bind(tenant.tenant_id().as_uuid())
+        .bind(secret_ref)
+        .fetch_optional(transaction.connection())
+        .await
+        .map_err(|_| SecretStoreError::PersistenceFailed)?
+        .ok_or(SecretStoreError::NotFound)?;
+        let (venue_account_id, venue, product, ciphertext, current_version, created_at, rotated_at) =
+            row;
+        let context = SecretContext {
+            tenant,
+            venue_account_id,
+            venue,
+            product,
+        };
+
+        // Transit rewraps ciphertext-only; plaintext never leaves Vault.
+        let request = TransitRewrapRequest {
+            ciphertext: ciphertext.clone(),
+            associated_data: STANDARD.encode(associated_data(&context)),
+        };
+        let response = self
+            .send(&self.rewrap_url(&context), rewrap_token, &request)
+            .await?;
+        let parsed: TransitEncryptResponse =
+            serde_json::from_str(&response).map_err(|_| SecretStoreError::EncryptionFailed)?;
+        let new_version = parse_key_version(&parsed.data.ciphertext);
+
+        // Already at the latest key version: nothing to persist.
+        if parsed.data.ciphertext == ciphertext || new_version == current_version {
+            transaction
+                .commit()
+                .await
+                .map_err(|_| SecretStoreError::PersistenceFailed)?;
+            return Ok(SecretMetadata {
+                secret_ref,
+                key_version: current_version,
+                created_at,
+                rotated_at,
+            });
+        }
+
+        sqlx::query(
+            "UPDATE encrypted_credentials SET vault_ciphertext = $3, key_version = $4
+             WHERE tenant_id = $1 AND secret_ref = $2 AND revoked_at IS NULL",
+        )
+        .bind(tenant.tenant_id().as_uuid())
+        .bind(secret_ref)
+        .bind(&parsed.data.ciphertext)
+        .bind(new_version)
+        .execute(transaction.connection())
+        .await
+        .map_err(|_| SecretStoreError::PersistenceFailed)?;
+        transaction
+            .commit()
+            .await
+            .map_err(|_| SecretStoreError::PersistenceFailed)?;
+        Ok(SecretMetadata {
+            secret_ref,
+            key_version: new_version,
+            created_at,
+            rotated_at,
+        })
+    }
 }
 
 #[derive(Serialize)]
 struct TransitEncryptRequest {
     plaintext: String,
+    associated_data: String,
+}
+
+#[derive(Serialize)]
+struct TransitRewrapRequest {
+    ciphertext: String,
     associated_data: String,
 }
 
@@ -441,6 +541,7 @@ mod tests {
             mount: "transit".to_owned(),
             encrypt_token: "e".to_owned(),
             decrypt_token: "d".to_owned(),
+            rewrap_token: None,
             key_prefix: "perpeto-".to_owned(),
             namespace: None,
         };

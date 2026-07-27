@@ -111,6 +111,16 @@ pub trait SecretStore: Send + Sync {
 
     async fn revoke(&self, tenant: TenantContext, secret_ref: Uuid)
     -> Result<(), SecretStoreError>;
+
+    /// Re-encrypt a stored secret to the store's current key version without
+    /// changing the credential. Idempotent: a secret already at the current
+    /// version is a no-op. Plaintext never leaves the store (Vault rewraps
+    /// ciphertext-only; the AES store decrypts and re-encrypts internally).
+    async fn rewrap(
+        &self,
+        tenant: TenantContext,
+        secret_ref: Uuid,
+    ) -> Result<SecretMetadata, SecretStoreError>;
 }
 
 /// AES-256-GCM encrypted Postgres secret store.
@@ -118,6 +128,8 @@ pub struct EncryptedPostgresSecretStore {
     pool: PgPool,
     master_key: [u8; 32],
     key_version: i32,
+    /// Earlier key versions retained only to decrypt rows awaiting rewrap.
+    previous_keys: Vec<(i32, [u8; 32])>,
 }
 
 impl EncryptedPostgresSecretStore {
@@ -127,7 +139,65 @@ impl EncryptedPostgresSecretStore {
             pool,
             master_key,
             key_version,
+            previous_keys: Vec::new(),
         }
+    }
+
+    /// Build a store that can also decrypt earlier key versions, enabling
+    /// [`SecretStore::rewrap`] to migrate rows to the current `key_version`.
+    #[must_use]
+    pub fn with_previous_keys(
+        pool: PgPool,
+        master_key: [u8; 32],
+        key_version: i32,
+        previous_keys: Vec<(i32, [u8; 32])>,
+    ) -> Self {
+        Self {
+            pool,
+            master_key,
+            key_version,
+            previous_keys,
+        }
+    }
+
+    /// Resolve the decryption key for a stored row's version: the current master
+    /// key, or a retained earlier key. Unknown versions cannot be decrypted.
+    fn decrypt_key(&self, key_version: i32) -> Result<&[u8; 32], SecretStoreError> {
+        if key_version == self.key_version {
+            return Ok(&self.master_key);
+        }
+        self.previous_keys
+            .iter()
+            .find(|(version, _)| *version == key_version)
+            .map(|(_, key)| key)
+            .ok_or(SecretStoreError::InvalidMasterKey)
+    }
+
+    /// Decrypt with an explicit key (used by rewrap for older key versions).
+    fn open_with(
+        key: &[u8; 32],
+        context: &SecretContext,
+        key_version: i32,
+        nonce: &[u8],
+        ciphertext: &[u8],
+    ) -> Result<CredentialBundle, SecretStoreError> {
+        let cipher = Aes256Gcm::new_from_slice(key).map_err(|_| SecretStoreError::InvalidMasterKey)?;
+        let nonce: &[u8; 12] = nonce
+            .try_into()
+            .map_err(|_| SecretStoreError::EncryptionFailed)?;
+        let mut plaintext = cipher
+            .decrypt(
+                Nonce::from_slice(nonce),
+                Payload {
+                    msg: ciphertext,
+                    aad: &Self::aad(context, key_version),
+                },
+            )
+            .map_err(|_| SecretStoreError::EncryptionFailed)?;
+        let credential =
+            serde_json::from_slice(&plaintext).map_err(|_| SecretStoreError::EncryptionFailed);
+        plaintext.zeroize();
+        credential
     }
 
     fn aad(context: &SecretContext, key_version: i32) -> Vec<u8> {
@@ -174,32 +244,6 @@ impl EncryptedPostgresSecretStore {
         Ok((nonce, ciphertext, digest))
     }
 
-    fn open(
-        &self,
-        context: &SecretContext,
-        key_version: i32,
-        nonce: &[u8],
-        ciphertext: &[u8],
-    ) -> Result<CredentialBundle, SecretStoreError> {
-        let cipher = Aes256Gcm::new_from_slice(&self.master_key)
-            .map_err(|_| SecretStoreError::InvalidMasterKey)?;
-        let nonce: &[u8; 12] = nonce
-            .try_into()
-            .map_err(|_| SecretStoreError::EncryptionFailed)?;
-        let mut plaintext = cipher
-            .decrypt(
-                Nonce::from_slice(nonce),
-                Payload {
-                    msg: ciphertext,
-                    aad: &Self::aad(context, key_version),
-                },
-            )
-            .map_err(|_| SecretStoreError::EncryptionFailed)?;
-        let credential =
-            serde_json::from_slice(&plaintext).map_err(|_| SecretStoreError::EncryptionFailed);
-        plaintext.zeroize();
-        credential
-    }
 }
 
 #[async_trait]
@@ -266,7 +310,9 @@ impl SecretStore for EncryptedPostgresSecretStore {
         if row.0 != context.venue || row.1 != context.product {
             return Err(SecretStoreError::ContextMismatch);
         }
-        let result = self.open(context, row.2, &row.3, &row.4);
+        let result = self
+            .decrypt_key(row.2)
+            .and_then(|key| Self::open_with(key, context, row.2, &row.3, &row.4));
         transaction
             .commit()
             .await
@@ -342,11 +388,86 @@ impl SecretStore for EncryptedPostgresSecretStore {
             .await
             .map_err(|_| SecretStoreError::PersistenceFailed)
     }
+
+    async fn rewrap(
+        &self,
+        tenant: TenantContext,
+        secret_ref: Uuid,
+    ) -> Result<SecretMetadata, SecretStoreError> {
+        let mut transaction = TenantTransaction::begin(&self.pool, tenant)
+            .await
+            .map_err(|_| SecretStoreError::PersistenceFailed)?;
+        let row = sqlx::query_as::<_, (Uuid, String, String, i32, Vec<u8>, Vec<u8>, DateTime<Utc>, Option<DateTime<Utc>>)>(
+            "SELECT venue_account_id, venue, product, key_version, nonce, ciphertext, created_at, rotated_at
+             FROM encrypted_credentials
+             WHERE tenant_id = $1 AND secret_ref = $2 AND revoked_at IS NULL",
+        )
+        .bind(tenant.tenant_id().as_uuid())
+        .bind(secret_ref)
+        .fetch_optional(transaction.connection())
+        .await
+        .map_err(|_| SecretStoreError::PersistenceFailed)?
+        .ok_or(SecretStoreError::NotFound)?;
+        let (venue_account_id, venue, product, current_version, nonce, ciphertext, created_at, rotated_at) =
+            row;
+
+        // Already at the current key version: nothing to do.
+        if current_version == self.key_version {
+            transaction
+                .commit()
+                .await
+                .map_err(|_| SecretStoreError::PersistenceFailed)?;
+            return Ok(SecretMetadata {
+                secret_ref,
+                key_version: self.key_version,
+                created_at,
+                rotated_at,
+            });
+        }
+
+        let context = SecretContext {
+            tenant,
+            venue_account_id,
+            venue,
+            product,
+        };
+        let key = self.decrypt_key(current_version)?;
+        let credential = Self::open_with(key, &context, current_version, &nonce, &ciphertext)?;
+        let (new_nonce, new_ciphertext, digest) = self.seal(&context, &credential, self.key_version)?;
+        // The credential is unchanged, so plaintext_digest stays identical.
+        sqlx::query(
+            "UPDATE encrypted_credentials
+             SET key_version = $3, nonce = $4, ciphertext = $5, plaintext_digest = $6
+             WHERE tenant_id = $1 AND secret_ref = $2 AND revoked_at IS NULL",
+        )
+        .bind(tenant.tenant_id().as_uuid())
+        .bind(secret_ref)
+        .bind(self.key_version)
+        .bind(new_nonce.as_slice())
+        .bind(new_ciphertext)
+        .bind(digest.as_slice())
+        .execute(transaction.connection())
+        .await
+        .map_err(|_| SecretStoreError::PersistenceFailed)?;
+        transaction
+            .commit()
+            .await
+            .map_err(|_| SecretStoreError::PersistenceFailed)?;
+        Ok(SecretMetadata {
+            secret_ref,
+            key_version: self.key_version,
+            created_at,
+            rotated_at,
+        })
+    }
 }
 
 impl Drop for EncryptedPostgresSecretStore {
     fn drop(&mut self) {
         self.master_key.zeroize();
+        for (_, key) in &mut self.previous_keys {
+            key.zeroize();
+        }
     }
 }
 
@@ -366,6 +487,19 @@ mod tests {
         let rendered = format!("{value:?}");
         assert_eq!(rendered, "CredentialBundle([REDACTED])");
         assert!(!rendered.contains("visible"));
+    }
+
+    #[test]
+    fn rewrap_keyring_selects_current_or_retained_key() {
+        let pool = PgPoolOptions::new()
+            .connect_lazy("postgres://postgres@localhost/perpeto")
+            .expect("lazy pool");
+        let store =
+            EncryptedPostgresSecretStore::with_previous_keys(pool, [2_u8; 32], 2, vec![(1, [1_u8; 32])]);
+        assert_eq!(store.decrypt_key(2).expect("current"), &[2_u8; 32]);
+        assert_eq!(store.decrypt_key(1).expect("previous"), &[1_u8; 32]);
+        // An unknown version cannot be decrypted.
+        assert_eq!(store.decrypt_key(3), Err(SecretStoreError::InvalidMasterKey));
     }
 
     #[test]
@@ -390,6 +524,15 @@ mod tests {
             passphrase: None,
         };
         let (nonce, ciphertext, _) = store.seal(&first, &credential, 1).expect("seal");
-        assert!(store.open(&second, 1, &nonce, &ciphertext).is_err());
+        assert!(
+            EncryptedPostgresSecretStore::open_with(
+                &store.master_key,
+                &second,
+                1,
+                &nonce,
+                &ciphertext
+            )
+            .is_err()
+        );
     }
 }

@@ -1,0 +1,17 @@
+[package]
+name = "funding-arb-rewrap"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+funding-arb-domain = { path = "../../crates/funding-arb-domain" }
+funding-arb-venue-service = { path = "../../crates/venue-service" }
+funding-arb-tenant-context = { path = "../../crates/tenant-context" }
+sqlx.workspace = true
+tokio = { workspace = true, features = ["time"] }
+uuid.workspace = true
+
+[lints]
+workspace = true

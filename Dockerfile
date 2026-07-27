@@ -13,6 +13,7 @@ COPY --from=builder /workspace/target/release/funding-arb-api /usr/local/bin/
 COPY --from=builder /workspace/target/release/funding-arb-engine /usr/local/bin/
 COPY --from=builder /workspace/target/release/funding-arb-reconciler /usr/local/bin/
 COPY --from=builder /workspace/target/release/funding-arb-preflight /usr/local/bin/
+COPY --from=builder /workspace/target/release/funding-arb-rewrap /usr/local/bin/
 COPY --from=builder /workspace/target/release/funding-arb-connector-evidence /usr/local/bin/
 COPY --from=builder /workspace/target/release/funding-arb-worker /usr/local/bin/
 COPY --from=builder /workspace/target/release/funding-arb-signer /usr/local/bin/

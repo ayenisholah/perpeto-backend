@@ -55,6 +55,12 @@ services:
     entrypoint: ["funding-arb-preflight"]
     env_file: ["../../runtime.env"]
 
+  rewrap:
+    <<: *service-security
+    image: ${PERPETO_IMAGE:?PERPETO_IMAGE is required}
+    entrypoint: ["funding-arb-rewrap"]
+    env_file: ["../../runtime.env"]
+
   worker:
     <<: *service-security
     image: ${PERPETO_IMAGE:?PERPETO_IMAGE is required}
