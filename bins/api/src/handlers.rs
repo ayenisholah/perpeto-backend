@@ -626,6 +626,153 @@ pub async fn certify_route_finish(
     Ok(Json(account))
 }
 
+// ---- Credential preflight (M4) --------------------------------------------
+
+#[derive(Debug, Deserialize)]
+pub struct PreflightRequest {
+    pub product: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct PreflightReconciliation {
+    pub status: String,
+    pub balances_seen: u32,
+    pub positions_seen: u32,
+    pub open_orders_seen: u32,
+    pub discrepancies: u32,
+}
+
+#[derive(Debug, Serialize)]
+pub struct PreflightReport {
+    pub account_id: String,
+    pub product: String,
+    /// Resulting connection status: `ELIGIBLE` or `PREFLIGHT_FAILED`.
+    pub status: String,
+    pub checks: Vec<String>,
+    pub reconciliation: Option<PreflightReconciliation>,
+}
+
+/// `POST /api/v1/venue-credentials/{id}/preflight`
+///
+/// Validates a connection's declared permissions and reconciles it against the
+/// venue, then records `ELIGIBLE`/`PREFLIGHT_FAILED`. Fail-closed: no `ELIGIBLE`
+/// without both config and live reconciliation passing. 503 in PAPER.
+pub async fn preflight_credential(
+    State(state): State<AppState>,
+    Extension(caller): Extension<CallerContext>,
+    Path(id): Path<String>,
+    Json(request): Json<PreflightRequest>,
+) -> Result<impl IntoResponse, ApiError> {
+    caller.require_active()?;
+    if !caller.can_trade() {
+        return Err(AuthError::Forbidden.into());
+    }
+    let enrollment = require_enrollment(&state)?;
+    let registry = state
+        .connector_registry
+        .as_ref()
+        .ok_or_else(|| ApiError::from(AuthError::CredentialsUnavailable))?;
+    let tenant = caller.tenant_context()?;
+    let account = state
+        .venues
+        .get(tenant, &id)
+        .await
+        .map_err(internal)?
+        .ok_or_else(|| ApiError::from(AuthError::NotFound))?;
+
+    // Snapshot the connection's declared configuration (borrow ends here).
+    let (has_secret, no_withdrawal, read_permission, environment, trade_permission) = {
+        let connection = account
+            .connections
+            .iter()
+            .find(|connection| connection.product == request.product)
+            .ok_or_else(|| ApiError::from(AuthError::NotFound))?;
+        (
+            connection.secret_ref.is_some(),
+            connection.withdrawal_permission != Some(true),
+            connection.read_permission,
+            connection.environment.clone(),
+            connection.trade_permission,
+        )
+    };
+
+    let environment_valid = match state.mode {
+        funding_arb_domain::TradingMode::Sandbox => environment != "PRODUCTION",
+        funding_arb_domain::TradingMode::Shadow => environment == "PRODUCTION" && !trade_permission,
+        funding_arb_domain::TradingMode::Paper => true,
+        funding_arb_domain::TradingMode::Live => false,
+    };
+    let mut checks = vec![
+        if has_secret { "SECRET_PRESENT" } else { "SECRET_MISSING" }.to_owned(),
+        if no_withdrawal { "NO_WITHDRAWAL" } else { "WITHDRAWAL_ENABLED" }.to_owned(),
+        if read_permission { "READ_PERMISSION" } else { "NO_READ_PERMISSION" }.to_owned(),
+        if environment_valid { "ENVIRONMENT_VALID" } else { "ENVIRONMENT_INVALID" }.to_owned(),
+    ];
+    let config_ok = has_secret && no_withdrawal && read_permission && environment_valid;
+
+    // Live reconciliation only runs when the declared config is sound.
+    let mut reconciliation = None;
+    let mut reconcile_ok = false;
+    if config_ok {
+        let product = match request.product.as_str() {
+            "SPOT" => ProductType::Spot,
+            "LINEAR_PERPETUAL" => ProductType::LinearPerpetual,
+            _ => return Err(AuthError::BadRequest("invalid connector product").into()),
+        };
+        let configured = registry
+            .load(tenant, state.mode)
+            .await
+            .map_err(|error| ApiError(AuthError::Internal(error.to_string())))?
+            .into_iter()
+            .find(|configured| configured.account.id == account.id && configured.product == product);
+        match configured {
+            Some(configured) => {
+                match state
+                    .reconciliation
+                    .run(
+                        tenant,
+                        configured.connector.as_ref(),
+                        &AccountId(account.id.clone()),
+                    )
+                    .await
+                {
+                    Ok(report) => {
+                        reconcile_ok = report.status == "RECONCILED" && report.discrepancies == 0;
+                        checks.push(format!("RECONCILE:{}", report.status));
+                        reconciliation = Some(PreflightReconciliation {
+                            status: report.status,
+                            balances_seen: report.balances_seen as u32,
+                            positions_seen: report.positions_seen as u32,
+                            open_orders_seen: report.open_orders_seen as u32,
+                            discrepancies: report.discrepancies as u32,
+                        });
+                    }
+                    Err(_) => checks.push("RECONCILE:FAILED".to_owned()),
+                }
+            }
+            None => checks.push("CONNECTOR_UNAVAILABLE".to_owned()),
+        }
+    }
+
+    let updated = enrollment
+        .record_preflight_result(tenant, &id, &request.product, config_ok && reconcile_ok)
+        .await
+        .map_err(map_enrollment)?;
+    let status = updated
+        .connections
+        .into_iter()
+        .find(|connection| connection.product == request.product)
+        .map(|connection| connection.status)
+        .unwrap_or_default();
+    Ok(Json(PreflightReport {
+        account_id: id,
+        product: request.product,
+        status,
+        checks,
+        reconciliation,
+    }))
+}
+
 // ---- Pilot arming control plane (M4 Slice 7) ------------------------------
 
 /// A preflight-eligible route a tenant may arm.

@@ -162,6 +162,54 @@ async fn venue_accounts_are_tenant_isolated() {
 }
 
 #[tokio::test]
+async fn preflight_result_transitions_eligibility_and_is_rerunnable() {
+    let Some(pool) = pool().await else {
+        eprintln!("skipping: DATABASE_URL not set");
+        return;
+    };
+    let tenant = seed_tenant(&pool).await;
+    let service = service(&pool);
+    let account = service
+        .enroll(tenant, &request("preflight"), &credential("pf-key"))
+        .await
+        .expect("enroll");
+    let account_id = account.id;
+    assert_eq!(account.connections[0].status, "PENDING_PREFLIGHT");
+
+    // A failing preflight marks the route failed; a subsequent run is allowed
+    // and can move it to eligible; re-validating an eligible route is allowed.
+    let failed = service
+        .record_preflight_result(tenant, &account_id, PRODUCT, false)
+        .await
+        .expect("failed preflight");
+    assert_eq!(failed.connections[0].status, "PREFLIGHT_FAILED");
+    let eligible = service
+        .record_preflight_result(tenant, &account_id, PRODUCT, true)
+        .await
+        .expect("re-run to eligible");
+    assert_eq!(eligible.connections[0].status, "ELIGIBLE");
+    let revalidated = service
+        .record_preflight_result(tenant, &account_id, PRODUCT, true)
+        .await
+        .expect("re-validate eligible");
+    assert_eq!(revalidated.connections[0].status, "ELIGIBLE");
+
+    // A revoked (disabled) route is not preflightable.
+    let revoked = service
+        .revoke(tenant, &account_id, PRODUCT)
+        .await
+        .expect("revoke");
+    assert_eq!(revoked.connections[0].status, "DISABLED");
+    assert!(
+        service
+            .record_preflight_result(tenant, &account_id, PRODUCT, true)
+            .await
+            .is_err(),
+        "a disabled route must not be preflightable"
+    );
+}
+
+#[tokio::test]
 async fn rotate_replaces_the_stored_credential() {
     let Some(pool) = pool().await else {
         eprintln!("skipping: DATABASE_URL not set");

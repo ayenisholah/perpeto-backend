@@ -204,9 +204,10 @@ impl CredentialEnrollmentService {
         Ok(account)
     }
 
-    /// Record the outcome of preflight validation, moving the connection from
-    /// `PENDING_PREFLIGHT` to `ELIGIBLE` or `PREFLIGHT_FAILED`. The live
-    /// validation itself is a deferred worker; this only owns the transition.
+    /// Record the outcome of preflight validation, moving the connection to
+    /// `ELIGIBLE` or `PREFLIGHT_FAILED`. Re-running after a failure (or to
+    /// re-validate an eligible route) is allowed; a disabled/revoked connection
+    /// is not preflightable.
     pub async fn record_preflight_result(
         &self,
         tenant: TenantContext,
@@ -215,7 +216,12 @@ impl CredentialEnrollmentService {
         eligible: bool,
     ) -> Result<VenueAccountDto, EnrollmentError> {
         let (mut account, index) = self.locate(tenant, account_id, product).await?;
-        if account.connections[index].status != STATUS_PENDING_PREFLIGHT {
+        let current = account.connections[index].status.as_str();
+        let preflightable = matches!(
+            current,
+            STATUS_PENDING_PREFLIGHT | STATUS_PREFLIGHT_FAILED | STATUS_ELIGIBLE
+        );
+        if !preflightable {
             return Err(EnrollmentError::InvalidState);
         }
         account.connections[index].status = if eligible {

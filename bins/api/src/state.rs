@@ -7,7 +7,7 @@ use funding_arb_execution_service::{
 };
 use funding_arb_scanner_service::ScannerRepo;
 use funding_arb_strategy_service::StrategiesRepo;
-use funding_arb_venue_service::{ConnectorExecutionCoordinator, ConnectorRegistry};
+use funding_arb_venue_service::{ConnectorExecutionCoordinator, ConnectorRegistry, ReconciliationService};
 use funding_arb_venue_service::{ConnectorMonitoringRepo, CredentialEnrollmentService, VenueAccountsRepo};
 use std::sync::Arc;
 
@@ -45,4 +45,6 @@ pub struct AppState {
     pub enrollment: Option<Arc<CredentialEnrollmentService>>,
     /// Durable sandbox submit-once coordinator.
     pub connector_execution: ConnectorExecutionCoordinator,
+    /// Read-only venue reconciliation used by credential preflight.
+    pub reconciliation: ReconciliationService,
 }

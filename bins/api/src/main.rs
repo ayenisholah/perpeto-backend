@@ -23,7 +23,7 @@ use funding_arb_strategy_service::StrategiesRepo;
 use funding_arb_tenant_context::assert_safe_runtime_role;
 use funding_arb_venue_service::{
     ConnectorExecutionCoordinator, ConnectorMonitoringRepo, ConnectorRegistry,
-    CredentialEnrollmentService, VenueAccountsRepo,
+    CredentialEnrollmentService, ReconciliationService, VenueAccountsRepo,
 };
 use sqlx::postgres::PgPoolOptions;
 
@@ -98,6 +98,7 @@ async fn run() -> ExitCode {
     let venues = VenueAccountsRepo::new(pool.clone());
     let connector_monitoring = ConnectorMonitoringRepo::new(pool.clone());
     let connector_execution = ConnectorExecutionCoordinator::new(pool.clone());
+    let reconciliation = ReconciliationService::new(pool.clone());
     let connector_registry = if mode.is_paper() {
         None
     } else {
@@ -166,6 +167,7 @@ async fn run() -> ExitCode {
         connector_registry,
         enrollment,
         connector_execution,
+        reconciliation,
     });
 
     let listener = match tokio::net::TcpListener::bind(&config.bind_address).await {

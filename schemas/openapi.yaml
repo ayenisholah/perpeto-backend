@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Perpeto Control API
-  version: 0.19.0
+  version: 0.20.0
   description: >-
     Social identity, MFA, and secure sessions plus the M2 deterministic paper
     scanner and coordinated simulated positions. Live execution remains unavailable.
@@ -695,6 +695,31 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/VenueAccount" }
         "401": { $ref: "#/components/responses/ProblemResponse" }
+        "403": { $ref: "#/components/responses/ProblemResponse" }
+        "404": { $ref: "#/components/responses/ProblemResponse" }
+        "409": { $ref: "#/components/responses/ProblemResponse" }
+        "503": { $ref: "#/components/responses/ProblemResponse" }
+  /api/v1/venue-credentials/{account_id}/preflight:
+    post:
+      tags: [Credentials]
+      summary: Validate and reconcile a route, recording ELIGIBLE or PREFLIGHT_FAILED
+      operationId: runPreflight
+      parameters:
+        - in: path
+          name: account_id
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CredentialProduct" }
+      responses:
+        "200":
+          description: Preflight outcome.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PreflightReport" }
         "403": { $ref: "#/components/responses/ProblemResponse" }
         "404": { $ref: "#/components/responses/ProblemResponse" }
         "409": { $ref: "#/components/responses/ProblemResponse" }
@@ -2190,6 +2215,29 @@ components:
           type: object
           description: Opaque WebAuthn PublicKeyCredential authorizing the promotion.
           additionalProperties: true
+    PreflightReconciliation:
+      type: object
+      additionalProperties: false
+      required: [status, balances_seen, positions_seen, open_orders_seen, discrepancies]
+      properties:
+        status: { type: string }
+        balances_seen: { type: integer, minimum: 0 }
+        positions_seen: { type: integer, minimum: 0 }
+        open_orders_seen: { type: integer, minimum: 0 }
+        discrepancies: { type: integer, minimum: 0 }
+    PreflightReport:
+      type: object
+      additionalProperties: false
+      required: [account_id, product, status, checks]
+      properties:
+        account_id: { type: string, format: uuid }
+        product: { type: string }
+        status: { type: string, description: Resulting connection status (ELIGIBLE or PREFLIGHT_FAILED). }
+        checks: { type: array, items: { type: string } }
+        reconciliation:
+          anyOf:
+            - { $ref: "#/components/schemas/PreflightReconciliation" }
+            - { type: "null" }
     CredentialRotateFinish:
       type: object
       additionalProperties: false

@@ -269,6 +269,22 @@ export interface CredentialSecret {
   readonly passphrase?: string | null;
 }
 
+export interface PreflightReconciliation {
+  readonly status: string;
+  readonly balances_seen: number;
+  readonly positions_seen: number;
+  readonly open_orders_seen: number;
+  readonly discrepancies: number;
+}
+
+export interface PreflightReport {
+  readonly account_id: string;
+  readonly product: string;
+  readonly status: string;
+  readonly checks: readonly string[];
+  readonly reconciliation: PreflightReconciliation | null;
+}
+
 export type PilotState =
   | "PAPER_ONLY"
   | "PILOT_ELIGIBLE"
@@ -895,6 +911,16 @@ export class PerpetoClient {
   ): Promise<VenueAccount> {
     return this.#request(
       `/api/v1/venue-credentials/${encodeURIComponent(accountId)}/certify/finish`,
+      { method: "POST", body: JSON.stringify(request) },
+    );
+  }
+
+  public runPreflight(
+    accountId: string,
+    request: { readonly product: string },
+  ): Promise<PreflightReport> {
+    return this.#request(
+      `/api/v1/venue-credentials/${encodeURIComponent(accountId)}/preflight`,
       { method: "POST", body: JSON.stringify(request) },
     );
   }
