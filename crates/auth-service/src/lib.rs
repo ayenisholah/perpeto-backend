@@ -5,6 +5,7 @@
 //! `funding_arb_domain::auth`; adapters (provider verification, tokens, and
 //! Postgres persistence) live here.
 
+pub mod audit;
 pub mod config;
 pub mod dto;
 pub mod error;

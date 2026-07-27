@@ -485,6 +485,15 @@ pub async fn enroll_credential_finish(
         .enroll(tenant, &enroll_request, &request.credential.into_bundle())
         .await
         .map_err(map_enrollment)?;
+    audit_action(
+        &state,
+        &caller,
+        "CREDENTIAL_ENROLLED",
+        "venue_account",
+        &account.id,
+        serde_json::json!({ "venue": account.venue.clone(), "product": enroll_request.product }),
+    )
+    .await;
     Ok((StatusCode::CREATED, Json(account)))
 }
 
@@ -529,6 +538,15 @@ pub async fn rotate_credential_finish(
         .rotate(tenant, &id, &request.product, &request.credential.into_bundle())
         .await
         .map_err(map_enrollment)?;
+    audit_action(
+        &state,
+        &caller,
+        "CREDENTIAL_ROTATED",
+        "venue_account",
+        &id,
+        serde_json::json!({ "product": request.product }),
+    )
+    .await;
     Ok(Json(updated))
 }
 
@@ -573,6 +591,15 @@ pub async fn revoke_credential_finish(
         .revoke(tenant, &id, &request.product)
         .await
         .map_err(map_enrollment)?;
+    audit_action(
+        &state,
+        &caller,
+        "CREDENTIAL_REVOKED",
+        "venue_account",
+        &id,
+        serde_json::json!({ "product": request.product }),
+    )
+    .await;
     Ok(Json(updated))
 }
 
@@ -617,6 +644,15 @@ pub async fn delete_credential_finish(
         .await?;
     let tenant = caller.tenant_context()?;
     enrollment.delete(tenant, &id).await.map_err(map_enrollment)?;
+    audit_action(
+        &state,
+        &caller,
+        "CREDENTIAL_DELETED",
+        "venue_account",
+        &id,
+        serde_json::json!({}),
+    )
+    .await;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -634,6 +670,27 @@ async fn require_enrollment_account(
         .await
         .map_err(|_| ApiError::from(AuthError::Internal("account lookup failed".to_owned())))?
         .ok_or_else(|| AuthError::NotFound.into())
+}
+
+/// Best-effort hash-chained audit append for a sensitive control-plane action.
+/// A failure is logged but must not fail the action the caller already completed
+/// (the action's own durability — secret write, state transition — already
+/// committed); the tamper-evident record is additive.
+async fn audit_action(
+    state: &AppState,
+    caller: &CallerContext,
+    event_type: &str,
+    subject_type: &str,
+    subject_id: &str,
+    details: serde_json::Value,
+) {
+    if let Err(error) = state
+        .service
+        .record_audit(caller, event_type, subject_type, subject_id, &details)
+        .await
+    {
+        eprintln!("audit append failed for {event_type} {subject_id}: {error}");
+    }
 }
 
 // ---- Route certification promotion (M4 Slice 8) ---------------------------
@@ -688,6 +745,15 @@ pub async fn certify_route_finish(
         .set_certification(tenant, &id, request.target)
         .await
         .map_err(map_enrollment)?;
+    audit_action(
+        &state,
+        &caller,
+        "ROUTE_CERTIFIED",
+        "venue_account",
+        &id,
+        serde_json::json!({ "target": account.certification_state.wire() }),
+    )
+    .await;
     Ok(Json(account))
 }
 
@@ -963,6 +1029,15 @@ pub async fn pilot_arm_finish(
     let next = current.arm(eligible, confirmation_ok).map_err(map_pilot_error)?;
     state.service.set_pilot_state(&caller, next).await?;
     emit_pilot_event(&state, &caller, "PILOT_ARMED", next).await?;
+    audit_action(
+        &state,
+        &caller,
+        "PILOT_ARMED",
+        "venue_account",
+        &request.venue_account_id,
+        serde_json::json!({ "product": request.product }),
+    )
+    .await;
     Ok(Json(pilot_status(&state, &caller).await?))
 }
 
@@ -991,6 +1066,15 @@ pub async fn pilot_disarm(
         .await
         .map_err(internal)?;
     emit_pilot_event(&state, &caller, "PILOT_DISARMED", next).await?;
+    audit_action(
+        &state,
+        &caller,
+        "PILOT_DISARMED",
+        "tenant",
+        &caller.tenant_id,
+        serde_json::json!({}),
+    )
+    .await;
     Ok(Json(pilot_status(&state, &caller).await?))
 }
 

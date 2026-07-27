@@ -3,10 +3,12 @@
 //! Enum columns are cast to/from `text` so the driver needs no compile-time
 //! schema, keeping the crate buildable without a live database.
 
-use chrono::{DateTime, Duration, Utc};
+use chrono::{DateTime, Duration, SubsecRound, Utc};
+use funding_arb_tenant_context::{TenantContext, TenantTransaction};
 use sqlx::{PgPool, Row};
 use uuid::Uuid;
 
+use crate::audit::{canonical, event_hash};
 use crate::error::{AuthError, AuthResult};
 
 const SESSION_TTL_DAYS: i64 = 30;
@@ -933,6 +935,162 @@ impl Repo {
         .await?;
         Ok(())
     }
+
+    /// Ensure a pseudonymized audit actor exists for a user, returning its
+    /// `(actor_id, pseudonym)`. The pseudonym is stable across calls.
+    ///
+    /// # Errors
+    /// Propagates database failures.
+    pub async fn ensure_audit_actor(&self, user_id: &str) -> AuthResult<(Uuid, Uuid)> {
+        let row = sqlx::query(
+            "INSERT INTO audit_actors (id, user_id, pseudonym) VALUES ($1, $2, $3)
+             ON CONFLICT (user_id) DO UPDATE SET erased_at = audit_actors.erased_at
+             RETURNING id, pseudonym",
+        )
+        .bind(Uuid::new_v4())
+        .bind(parse_uuid(user_id)?)
+        .bind(Uuid::new_v4())
+        .fetch_one(&self.pool)
+        .await?;
+        Ok((row.get("id"), row.get("pseudonym")))
+    }
+
+    /// Append a hash-chained audit event for a tenant. Serializes per-tenant with
+    /// a transaction-scoped advisory lock so the chain tail cannot fork.
+    ///
+    /// # Errors
+    /// Propagates database failures.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn append_audit(
+        &self,
+        tenant: TenantContext,
+        actor_id: Uuid,
+        actor_pseudonym: Uuid,
+        event_type: &str,
+        subject_type: &str,
+        subject_id: &str,
+        session_id: Option<Uuid>,
+        details_json: &str,
+    ) -> AuthResult<()> {
+        let mut transaction = TenantTransaction::begin(&self.pool, tenant)
+            .await
+            .map_err(|error| AuthError::Internal(format!("tenant transaction: {error}")))?;
+        // Serialize appends for this tenant so no two rows share a predecessor.
+        sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1::text, 0))")
+            .bind(tenant.tenant_id().as_uuid())
+            .execute(transaction.connection())
+            .await?;
+        let previous: Option<Vec<u8>> = sqlx::query_scalar(
+            "SELECT event_hash FROM audit_events WHERE tenant_id = $1
+             ORDER BY occurred_at DESC, id DESC LIMIT 1",
+        )
+        .bind(tenant.tenant_id().as_uuid())
+        .fetch_optional(transaction.connection())
+        .await?;
+        let previous_array: Option<[u8; 32]> =
+            previous.as_deref().and_then(|bytes| bytes.try_into().ok());
+
+        let request_id = Uuid::new_v4();
+        // Truncate to microseconds so the value hashed here equals the timestamptz
+        // read back during verification.
+        let occurred_at = Utc::now().trunc_subsecs(6);
+        let canonical_form = canonical(
+            event_type,
+            subject_type,
+            subject_id,
+            &actor_pseudonym.to_string(),
+            &request_id.to_string(),
+            &session_id.map(|id| id.to_string()).unwrap_or_default(),
+            details_json,
+            &format_audit_ts(occurred_at),
+        );
+        let hash = event_hash(previous_array.as_ref(), &canonical_form);
+
+        sqlx::query(
+            "INSERT INTO audit_events
+                (id, tenant_id, actor_id, event_type, subject_type, subject_id,
+                 session_id, request_id, details, previous_hash, event_hash, occurred_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11, $12)",
+        )
+        .bind(Uuid::new_v4())
+        .bind(tenant.tenant_id().as_uuid())
+        .bind(actor_id)
+        .bind(event_type)
+        .bind(subject_type)
+        .bind(subject_id)
+        .bind(session_id)
+        .bind(request_id)
+        .bind(details_json)
+        .bind(previous.as_deref())
+        .bind(hash.as_slice())
+        .bind(occurred_at)
+        .execute(transaction.connection())
+        .await?;
+        transaction
+            .commit()
+            .await
+            .map_err(|error| AuthError::Internal(format!("commit audit: {error}")))?;
+        Ok(())
+    }
+
+    /// Walk a tenant's audit chain and confirm every link. Returns `true` when the
+    /// chain is intact, `false` when any row's hash or linkage has been altered.
+    ///
+    /// # Errors
+    /// Propagates database failures.
+    pub async fn verify_audit_chain(&self, tenant: TenantContext) -> AuthResult<bool> {
+        let mut transaction = TenantTransaction::begin(&self.pool, tenant)
+            .await
+            .map_err(|error| AuthError::Internal(format!("tenant transaction: {error}")))?;
+        let rows = sqlx::query(
+            "SELECT e.event_type, e.subject_type, e.subject_id, e.request_id, e.session_id,
+                    e.details::text AS details, e.previous_hash, e.event_hash, e.occurred_at,
+                    a.pseudonym AS pseudonym
+             FROM audit_events e JOIN audit_actors a ON a.id = e.actor_id
+             WHERE e.tenant_id = $1 ORDER BY e.occurred_at ASC, e.id ASC",
+        )
+        .bind(tenant.tenant_id().as_uuid())
+        .fetch_all(transaction.connection())
+        .await?;
+        transaction
+            .commit()
+            .await
+            .map_err(|error| AuthError::Internal(format!("commit verify: {error}")))?;
+
+        let mut previous: Option<[u8; 32]> = None;
+        for row in rows {
+            let stored_previous: Option<Vec<u8>> = row.get("previous_hash");
+            // The stored back-link must match the running predecessor hash.
+            if stored_previous.as_deref() != previous.as_ref().map(|hash| hash.as_slice()) {
+                return Ok(false);
+            }
+            let details: String = row.get("details");
+            let normalized = serde_json::from_str::<serde_json::Value>(&details)
+                .map(|value| value.to_string())
+                .unwrap_or(details);
+            let session: Option<Uuid> = row.get("session_id");
+            let request_id: Uuid = row.get("request_id");
+            let pseudonym: Uuid = row.get("pseudonym");
+            let occurred_at: DateTime<Utc> = row.get("occurred_at");
+            let canonical_form = canonical(
+                &row.get::<String, _>("event_type"),
+                &row.get::<String, _>("subject_type"),
+                &row.get::<String, _>("subject_id"),
+                &pseudonym.to_string(),
+                &request_id.to_string(),
+                &session.map(|id| id.to_string()).unwrap_or_default(),
+                &normalized,
+                &format_audit_ts(occurred_at),
+            );
+            let computed = event_hash(previous.as_ref(), &canonical_form);
+            let stored_hash: Vec<u8> = row.get("event_hash");
+            if computed.as_slice() != stored_hash.as_slice() {
+                return Ok(false);
+            }
+            previous = Some(computed);
+        }
+        Ok(true)
+    }
 }
 
 /// A session row used by the refresh path.
@@ -997,6 +1155,12 @@ pub struct MfaMethodRow {
 #[must_use]
 pub fn to_rfc3339(value: DateTime<Utc>) -> String {
     value.to_rfc3339()
+}
+
+/// Fixed-precision (microsecond) UTC timestamp used in the audit hash so a value
+/// hashed on append equals the same row read back during verification.
+fn format_audit_ts(value: DateTime<Utc>) -> String {
+    value.format("%Y-%m-%dT%H:%M:%S%.6f%:z").to_string()
 }
 
 fn parse_uuid(value: &str) -> AuthResult<Uuid> {

@@ -128,6 +128,36 @@ impl AuthService {
         self.repo.set_pilot_state(&caller.tenant_id, state.wire()).await
     }
 
+    /// Append a hash-chained audit event for a sensitive control-plane action,
+    /// resolving (and creating if needed) the caller's pseudonymized actor.
+    ///
+    /// # Errors
+    /// Returns [`AuthError`] when the actor cannot be resolved or the append fails.
+    pub async fn record_audit(
+        &self,
+        caller: &CallerContext,
+        event_type: &str,
+        subject_type: &str,
+        subject_id: &str,
+        details: &serde_json::Value,
+    ) -> AuthResult<()> {
+        let tenant = caller.tenant_context()?;
+        let (actor_id, pseudonym) = self.repo.ensure_audit_actor(&caller.user_id).await?;
+        let session_id = caller.session_id.parse::<Uuid>().ok();
+        self.repo
+            .append_audit(
+                tenant,
+                actor_id,
+                pseudonym,
+                event_type,
+                subject_type,
+                subject_id,
+                session_id,
+                &details.to_string(),
+            )
+            .await
+    }
+
     /// Verify an access token minted by this service.
     ///
     /// # Errors
