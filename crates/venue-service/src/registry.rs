@@ -139,7 +139,7 @@ impl ConnectorRegistry {
                     .and_then(|value| {
                         Uuid::parse_str(value).map_err(|_| RegistryError::InvalidConfiguration)
                     })?;
-                let context = SecretContext {
+                let secret_context = SecretContext {
                     tenant: context,
                     venue_account_id: account_id,
                     venue: account.venue.clone(),
@@ -147,7 +147,7 @@ impl ConnectorRegistry {
                 };
                 let credential = self
                     .secrets
-                    .load(secret_ref, &context)
+                    .load(secret_ref, &secret_context)
                     .await
                     .map_err(|_| RegistryError::SecretUnavailable)?;
                 let connector: Arc<dyn VenueConnector> = match account.venue.as_str() {

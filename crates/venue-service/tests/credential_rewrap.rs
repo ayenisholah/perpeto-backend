@@ -39,6 +39,37 @@ async fn seed_tenant(pool: &PgPool) -> TenantContext {
     TenantContext::new(TenantId::new(id))
 }
 
+/// `encrypted_credentials.venue_account_id` is a foreign key, so a secret cannot
+/// be stored against an account that does not exist. This test exercises the
+/// store directly rather than through the enrollment service, so it seeds the
+/// minimum account row itself. The insert runs inside a tenant transaction
+/// because `venue_accounts` is forced-RLS.
+async fn seed_account(pool: &PgPool, tenant: TenantContext) -> Uuid {
+    let id = Uuid::new_v4();
+    let payload = format!(
+        r#"{{"id":"{id}","venue":"BYBIT","alias":"rewrap","masked_identity":"****-key",
+            "enabled":true,"certification_state":"PAPER_ONLY","reconciliation_state":"PENDING",
+            "connections":[],"last_reconciled_at":null,
+            "created_at":"2026-01-01T00:00:00+00:00","tombstoned_at":null}}"#
+    );
+    let mut transaction = TenantTransaction::begin(pool, tenant)
+        .await
+        .expect("tenant transaction");
+    sqlx::query(
+        "INSERT INTO venue_accounts
+         (tenant_id, id, venue, alias, masked_identity, created_at, payload)
+         VALUES ($1, $2, 'BYBIT', 'rewrap', '****-key', now(), $3)",
+    )
+    .bind(tenant.tenant_id().as_uuid())
+    .bind(id)
+    .bind(payload)
+    .execute(transaction.connection())
+    .await
+    .expect("insert venue account");
+    transaction.commit().await.expect("commit");
+    id
+}
+
 /// Read the forced-RLS credential row for the given secret inside a tenant
 /// transaction: (key_version, ciphertext, plaintext_digest).
 async fn read_row(pool: &PgPool, tenant: TenantContext, secret_ref: Uuid) -> (i32, Vec<u8>, Vec<u8>) {
@@ -65,9 +96,10 @@ async fn rewrap_migrates_key_version_without_changing_the_credential() {
         return;
     };
     let tenant = seed_tenant(&pool).await;
+    let venue_account_id = seed_account(&pool, tenant).await;
     let context = SecretContext {
         tenant,
-        venue_account_id: Uuid::new_v4(),
+        venue_account_id,
         venue: "BYBIT".to_owned(),
         product: PRODUCT.to_owned(),
     };

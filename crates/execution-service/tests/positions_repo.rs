@@ -7,6 +7,7 @@
 use chrono::{TimeZone, Utc};
 use funding_arb_execution_service::{ExecutionService, PositionDto, PositionsRepo};
 use funding_arb_tenant_context::{TenantContext, TenantId, TenantTransaction};
+use rust_decimal::Decimal;
 use sqlx::PgPool;
 use sqlx::postgres::PgPoolOptions;
 use tokio::sync::Mutex;
@@ -33,7 +34,7 @@ async fn prepare_tenants(pool: &PgPool) -> (TenantContext, TenantContext) {
     let first = tenant("10000000-0000-0000-0000-000000000001");
     let second = tenant("20000000-0000-0000-0000-000000000002");
     for (context, name) in [(first, "Test tenant A"), (second, "Test tenant B")] {
-        sqlx::query("INSERT INTO tenants (id, display_name, state) VALUES ($1, $2, 'ACTIVE') ON CONFLICT (id) DO NOTHING")
+        sqlx::query("INSERT INTO tenants (id, display_name) VALUES ($1, $2) ON CONFLICT (id) DO NOTHING")
             .bind(context.tenant_id().as_uuid())
             .bind(name)
             .execute(pool)
@@ -209,7 +210,7 @@ async fn close_update_round_trips() {
         .expect("get")
         .expect("present");
     assert_eq!(fetched.state, "CLOSED");
-    assert!(fetched.funding_captured > 0.0);
+    assert!(fetched.funding_captured > Decimal::ZERO);
     assert!(fetched.realized_pnl <= fetched.funding_captured);
 }
 

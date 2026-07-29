@@ -278,12 +278,21 @@ impl VenueAccountsRepo {
         transaction.commit().await
     }
 
+    /// Persist one connection's mutable state.
+    ///
+    /// `venue_accounts.payload` is the read model behind [`Self::get`] and
+    /// [`Self::list`], so the parent payload must be patched in the same
+    /// transaction as the normalized `venue_product_connections` row. Updating
+    /// only the normalized row leaves `secret_ref` invisible to every reader,
+    /// which silently breaks credential revocation on delete, connector
+    /// credential loading, and the preflight `SECRET_PRESENT` check.
     pub async fn update_connection(
         &self,
         context: TenantContext,
         account_id: &str,
         connection: &ProductConnectionDto,
     ) -> Result<(), sqlx::Error> {
+        let account_uuid = parse_uuid(account_id)?;
         let mut transaction = TenantTransaction::begin(&self.pool, context).await?;
         sqlx::query(
             "UPDATE venue_product_connections
@@ -291,13 +300,44 @@ impl VenueAccountsRepo {
              WHERE tenant_id = $6 AND id = $1 AND venue_account_id = $2",
         )
         .bind(parse_uuid(&connection.id)?)
-        .bind(parse_uuid(account_id)?)
+        .bind(account_uuid)
         .bind(&connection.secret_ref)
         .bind(connection.status != "DISABLED")
         .bind(serde_json::to_string(connection).map_err(protocol)?)
         .bind(context.tenant_id().as_uuid())
         .execute(transaction.connection())
         .await?;
+
+        // `FOR UPDATE` serializes concurrent connection writes to one account so
+        // the read-modify-write below cannot lose an update.
+        let row = sqlx::query(
+            "SELECT payload FROM venue_accounts
+             WHERE tenant_id = $1 AND id = $2 FOR UPDATE",
+        )
+        .bind(context.tenant_id().as_uuid())
+        .bind(account_uuid)
+        .fetch_optional(transaction.connection())
+        .await?;
+        if let Some(row) = row {
+            let mut account = decode(&row.get::<String, _>("payload"))?;
+            if let Some(existing) = account
+                .connections
+                .iter_mut()
+                .find(|candidate| candidate.id == connection.id)
+            {
+                *existing = connection.clone();
+                let payload = serde_json::to_string(&account).map_err(protocol)?;
+                sqlx::query(
+                    "UPDATE venue_accounts SET payload = $3
+                     WHERE tenant_id = $1 AND id = $2",
+                )
+                .bind(context.tenant_id().as_uuid())
+                .bind(account_uuid)
+                .bind(payload)
+                .execute(transaction.connection())
+                .await?;
+            }
+        }
         transaction.commit().await
     }
 

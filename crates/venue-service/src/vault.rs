@@ -534,8 +534,9 @@ mod tests {
         }
     }
 
-    #[test]
-    fn key_names_are_opaque_tenant_identifiers() {
+    // Constructs a `PgPool`, which sqlx can only build inside a Tokio runtime.
+    #[tokio::test]
+    async fn key_names_are_opaque_tenant_identifiers() {
         let config = VaultConfig {
             address: "https://vault.test".to_owned(),
             mount: "transit".to_owned(),

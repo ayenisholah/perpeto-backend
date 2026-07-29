@@ -489,8 +489,9 @@ mod tests {
         assert!(!rendered.contains("visible"));
     }
 
-    #[test]
-    fn rewrap_keyring_selects_current_or_retained_key() {
+    // Constructs a `PgPool`, which sqlx can only build inside a Tokio runtime.
+    #[tokio::test]
+    async fn rewrap_keyring_selects_current_or_retained_key() {
         let pool = PgPoolOptions::new()
             .connect_lazy("postgres://postgres@localhost/perpeto")
             .expect("lazy pool");
@@ -502,8 +503,9 @@ mod tests {
         assert_eq!(store.decrypt_key(3), Err(SecretStoreError::InvalidMasterKey));
     }
 
-    #[test]
-    fn authenticated_context_prevents_cross_account_decryption() {
+    // Constructs a `PgPool`, which sqlx can only build inside a Tokio runtime.
+    #[tokio::test]
+    async fn authenticated_context_prevents_cross_account_decryption() {
         let pool = PgPoolOptions::new()
             .connect_lazy("postgres://postgres@localhost/perpeto")
             .expect("lazy pool");

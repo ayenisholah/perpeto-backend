@@ -84,13 +84,21 @@ ALTER TABLE connector_balance_snapshots ALTER COLUMN tenant_id SET NOT NULL;
 ALTER TABLE connector_position_snapshots ALTER COLUMN tenant_id SET NOT NULL;
 ALTER TABLE connector_funding_ledger ALTER COLUMN tenant_id SET NOT NULL;
 
+-- These unique constraints were created inline by earlier migrations, so their
+-- names are PostgreSQL-generated. Three of them exceed the 63-byte identifier
+-- limit and are truncated: PostgreSQL shortens the column portion while keeping
+-- the trailing `_key`, so the stored name is not simply the first 63 characters
+-- of the obvious name. Each name below is the one actually in `pg_constraint`.
+-- Do not add `IF EXISTS` here: a silently skipped drop would leave the old
+-- tenant-blind unique constraint enforcing global uniqueness across tenants,
+-- which is exactly the isolation defect this migration removes.
 ALTER TABLE positions DROP CONSTRAINT positions_idempotency_key_key;
 ALTER TABLE venue_accounts DROP CONSTRAINT venue_accounts_venue_alias_key;
-ALTER TABLE venue_product_connections DROP CONSTRAINT venue_product_connections_venue_account_id_product_environment_key;
+ALTER TABLE venue_product_connections DROP CONSTRAINT venue_product_connections_venue_account_id_product_environm_key;
 ALTER TABLE encrypted_credentials DROP CONSTRAINT encrypted_credentials_venue_account_id_product_key;
-ALTER TABLE connector_order_intents DROP CONSTRAINT connector_order_intents_venue_venue_account_id_client_order_id_key;
+ALTER TABLE connector_order_intents DROP CONSTRAINT connector_order_intents_venue_venue_account_id_client_order_key;
 ALTER TABLE connector_fills DROP CONSTRAINT connector_fills_venue_venue_account_id_venue_fill_id_key;
-ALTER TABLE connector_funding_ledger DROP CONSTRAINT connector_funding_ledger_venue_venue_account_id_venue_entry_id_key;
+ALTER TABLE connector_funding_ledger DROP CONSTRAINT connector_funding_ledger_venue_venue_account_id_venue_entry_key;
 ALTER TABLE alerts DROP CONSTRAINT alerts_dedup_key_key;
 
 ALTER TABLE positions ADD CONSTRAINT positions_tenant_idempotency_key UNIQUE (tenant_id, idempotency_key);
