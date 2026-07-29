@@ -13,8 +13,8 @@ use uuid::Uuid;
 use zeroize::Zeroizing;
 
 use crate::{
-    EncryptedPostgresSecretStore, SecretContext, SecretStore, VaultConfig,
-    VaultTransitSecretStore, VenueAccountDto, VenueAccountsRepo,
+    EncryptedPostgresSecretStore, SecretContext, SecretStore, VaultConfig, VaultTransitSecretStore,
+    VenueAccountDto, VenueAccountsRepo,
 };
 
 #[derive(Clone)]
@@ -192,7 +192,9 @@ pub fn secret_store_from_env(pool: PgPool) -> Result<Box<dyn SecretStore>, Regis
             let encoded =
                 env::var("PERPETO_SECRET_MASTER_KEY").map_err(|_| RegistryError::MissingBackend)?;
             let master_key = decode_master_key(&encoded)?;
-            Ok(Box::new(EncryptedPostgresSecretStore::new(pool, master_key, 1)))
+            Ok(Box::new(EncryptedPostgresSecretStore::new(
+                pool, master_key, 1,
+            )))
         }
         Err(_) => Err(RegistryError::VaultMisconfigured),
     }

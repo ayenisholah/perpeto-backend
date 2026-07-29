@@ -7,8 +7,12 @@ use funding_arb_execution_service::{
 };
 use funding_arb_scanner_service::ScannerRepo;
 use funding_arb_strategy_service::StrategiesRepo;
-use funding_arb_venue_service::{ConnectorExecutionCoordinator, ConnectorRegistry, ReconciliationService};
-use funding_arb_venue_service::{ConnectorMonitoringRepo, CredentialEnrollmentService, VenueAccountsRepo};
+use funding_arb_venue_service::{
+    ConnectorExecutionCoordinator, ConnectorRegistry, ReconciliationService,
+};
+use funding_arb_venue_service::{
+    ConnectorMonitoringRepo, CredentialEnrollmentService, VenueAccountsRepo,
+};
 use std::sync::Arc;
 
 /// Cloneable state shared across all handlers.

@@ -71,7 +71,10 @@ impl std::error::Error for PreflightError {}
 /// stored secret, no withdrawal permission, read access, and an environment
 /// permitted by the current runtime mode.
 #[must_use]
-pub fn evaluate_config(connection: &ProductConnectionDto, mode: TradingMode) -> (Vec<String>, bool) {
+pub fn evaluate_config(
+    connection: &ProductConnectionDto,
+    mode: TradingMode,
+) -> (Vec<String>, bool) {
     let has_secret = connection.secret_ref.is_some();
     let no_withdrawal = connection.withdrawal_permission != Some(true);
     let read_permission = connection.read_permission;
@@ -84,10 +87,30 @@ pub fn evaluate_config(connection: &ProductConnectionDto, mode: TradingMode) -> 
         TradingMode::Live => false,
     };
     let checks = vec![
-        if has_secret { "SECRET_PRESENT" } else { "SECRET_MISSING" }.to_owned(),
-        if no_withdrawal { "NO_WITHDRAWAL" } else { "WITHDRAWAL_ENABLED" }.to_owned(),
-        if read_permission { "READ_PERMISSION" } else { "NO_READ_PERMISSION" }.to_owned(),
-        if environment_valid { "ENVIRONMENT_VALID" } else { "ENVIRONMENT_INVALID" }.to_owned(),
+        if has_secret {
+            "SECRET_PRESENT"
+        } else {
+            "SECRET_MISSING"
+        }
+        .to_owned(),
+        if no_withdrawal {
+            "NO_WITHDRAWAL"
+        } else {
+            "WITHDRAWAL_ENABLED"
+        }
+        .to_owned(),
+        if read_permission {
+            "READ_PERMISSION"
+        } else {
+            "NO_READ_PERMISSION"
+        }
+        .to_owned(),
+        if environment_valid {
+            "ENVIRONMENT_VALID"
+        } else {
+            "ENVIRONMENT_INVALID"
+        }
+        .to_owned(),
     ];
     let config_ok = has_secret && no_withdrawal && read_permission && environment_valid;
     (checks, config_ok)
@@ -240,8 +263,10 @@ mod tests {
 
     #[test]
     fn sound_testnet_config_passes_in_sandbox() {
-        let (checks, ok) =
-            evaluate_config(&connection("TESTNET", Some(false), true), TradingMode::Sandbox);
+        let (checks, ok) = evaluate_config(
+            &connection("TESTNET", Some(false), true),
+            TradingMode::Sandbox,
+        );
         assert!(ok);
         assert!(checks.contains(&"SECRET_PRESENT".to_owned()));
         assert!(checks.contains(&"NO_WITHDRAWAL".to_owned()));
@@ -259,16 +284,20 @@ mod tests {
 
     #[test]
     fn enabled_withdrawal_fails_config() {
-        let (checks, ok) =
-            evaluate_config(&connection("TESTNET", Some(true), true), TradingMode::Sandbox);
+        let (checks, ok) = evaluate_config(
+            &connection("TESTNET", Some(true), true),
+            TradingMode::Sandbox,
+        );
         assert!(!ok);
         assert!(checks.contains(&"WITHDRAWAL_ENABLED".to_owned()));
     }
 
     #[test]
     fn missing_read_permission_fails_config() {
-        let (checks, ok) =
-            evaluate_config(&connection("TESTNET", Some(false), false), TradingMode::Sandbox);
+        let (checks, ok) = evaluate_config(
+            &connection("TESTNET", Some(false), false),
+            TradingMode::Sandbox,
+        );
         assert!(!ok);
         assert!(checks.contains(&"NO_READ_PERMISSION".to_owned()));
     }
@@ -298,14 +327,16 @@ mod tests {
 
     #[test]
     fn live_mode_never_validates() {
-        let (_, ok) =
-            evaluate_config(&connection("TESTNET", Some(false), true), TradingMode::Live);
+        let (_, ok) = evaluate_config(&connection("TESTNET", Some(false), true), TradingMode::Live);
         assert!(!ok);
     }
 
     #[test]
     fn unknown_product_is_rejected() {
-        assert!(matches!(parse_product("OPTION"), Err(PreflightError::InvalidProduct)));
+        assert!(matches!(
+            parse_product("OPTION"),
+            Err(PreflightError::InvalidProduct)
+        ));
         assert!(parse_product("SPOT").is_ok());
         assert!(parse_product("LINEAR_PERPETUAL").is_ok());
     }

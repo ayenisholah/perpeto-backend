@@ -117,7 +117,10 @@ async fn preflight_demotes_eligible_route_on_withdrawal_drift() {
         .expect("run preflight");
     assert_eq!(outcome.status, "PREFLIGHT_FAILED");
     assert!(
-        outcome.checks.iter().any(|check| check == "WITHDRAWAL_ENABLED"),
+        outcome
+            .checks
+            .iter()
+            .any(|check| check == "WITHDRAWAL_ENABLED"),
         "the withdrawal-permission drift must be the recorded failure: {:?}",
         outcome.checks
     );

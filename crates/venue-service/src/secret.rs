@@ -181,7 +181,8 @@ impl EncryptedPostgresSecretStore {
         nonce: &[u8],
         ciphertext: &[u8],
     ) -> Result<CredentialBundle, SecretStoreError> {
-        let cipher = Aes256Gcm::new_from_slice(key).map_err(|_| SecretStoreError::InvalidMasterKey)?;
+        let cipher =
+            Aes256Gcm::new_from_slice(key).map_err(|_| SecretStoreError::InvalidMasterKey)?;
         let nonce: &[u8; 12] = nonce
             .try_into()
             .map_err(|_| SecretStoreError::EncryptionFailed)?;
@@ -243,7 +244,6 @@ impl EncryptedPostgresSecretStore {
         let ciphertext = encrypted.map_err(|_| SecretStoreError::EncryptionFailed)?;
         Ok((nonce, ciphertext, digest))
     }
-
 }
 
 #[async_trait]
@@ -408,8 +408,16 @@ impl SecretStore for EncryptedPostgresSecretStore {
         .await
         .map_err(|_| SecretStoreError::PersistenceFailed)?
         .ok_or(SecretStoreError::NotFound)?;
-        let (venue_account_id, venue, product, current_version, nonce, ciphertext, created_at, rotated_at) =
-            row;
+        let (
+            venue_account_id,
+            venue,
+            product,
+            current_version,
+            nonce,
+            ciphertext,
+            created_at,
+            rotated_at,
+        ) = row;
 
         // Already at the current key version: nothing to do.
         if current_version == self.key_version {
@@ -433,7 +441,8 @@ impl SecretStore for EncryptedPostgresSecretStore {
         };
         let key = self.decrypt_key(current_version)?;
         let credential = Self::open_with(key, &context, current_version, &nonce, &ciphertext)?;
-        let (new_nonce, new_ciphertext, digest) = self.seal(&context, &credential, self.key_version)?;
+        let (new_nonce, new_ciphertext, digest) =
+            self.seal(&context, &credential, self.key_version)?;
         // The credential is unchanged, so plaintext_digest stays identical.
         sqlx::query(
             "UPDATE encrypted_credentials
@@ -495,12 +504,19 @@ mod tests {
         let pool = PgPoolOptions::new()
             .connect_lazy("postgres://postgres@localhost/perpeto")
             .expect("lazy pool");
-        let store =
-            EncryptedPostgresSecretStore::with_previous_keys(pool, [2_u8; 32], 2, vec![(1, [1_u8; 32])]);
+        let store = EncryptedPostgresSecretStore::with_previous_keys(
+            pool,
+            [2_u8; 32],
+            2,
+            vec![(1, [1_u8; 32])],
+        );
         assert_eq!(store.decrypt_key(2).expect("current"), &[2_u8; 32]);
         assert_eq!(store.decrypt_key(1).expect("previous"), &[1_u8; 32]);
         // An unknown version cannot be decrypted.
-        assert_eq!(store.decrypt_key(3), Err(SecretStoreError::InvalidMasterKey));
+        assert_eq!(
+            store.decrypt_key(3),
+            Err(SecretStoreError::InvalidMasterKey)
+        );
     }
 
     // Constructs a `PgPool`, which sqlx can only build inside a Tokio runtime.

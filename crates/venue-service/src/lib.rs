@@ -25,8 +25,7 @@ pub use preflight::{
 };
 pub use reconcile::{ReconciliationError, ReconciliationReport, ReconciliationService};
 pub use registry::{
-    ConfiguredConnector, ConnectorRegistry, RegistryError, decode_master_key,
-    secret_store_from_env,
+    ConfiguredConnector, ConnectorRegistry, RegistryError, decode_master_key, secret_store_from_env,
 };
 pub use repo::ConnectorMonitoringRepo;
 pub use repo::VenueAccountsRepo;

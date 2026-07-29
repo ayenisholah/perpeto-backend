@@ -16,12 +16,10 @@ use funding_arb_tenant_context::TenantContext;
 use sqlx::PgPool;
 use uuid::Uuid;
 
-use crate::dto::{
-    CertificationState, ProductConnectionDto, ReconciliationState, VenueAccountDto,
-};
+use crate::dto::{CertificationState, ProductConnectionDto, ReconciliationState, VenueAccountDto};
 use crate::registry::{RegistryError, secret_store_from_env};
-use crate::secret::{CredentialBundle, SecretContext, SecretStore, SecretStoreError};
 use crate::repo::VenueAccountsRepo;
+use crate::secret::{CredentialBundle, SecretContext, SecretStore, SecretStoreError};
 
 /// Connection status values for the credential eligibility state machine.
 const STATUS_PENDING_PREFLIGHT: &str = "PENDING_PREFLIGHT";
@@ -167,7 +165,9 @@ impl CredentialEnrollmentService {
             venue: account.venue.clone(),
             product: product.to_owned(),
         };
-        self.secrets.rotate(secret_ref, &context, credential).await?;
+        self.secrets
+            .rotate(secret_ref, &context, credential)
+            .await?;
         account.masked_identity = mask_key(&credential.api_key);
         account.connections[index].status = STATUS_PENDING_PREFLIGHT.to_owned();
         account.connections[index].last_tested_at = None;

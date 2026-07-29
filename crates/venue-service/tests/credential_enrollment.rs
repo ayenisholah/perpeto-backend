@@ -95,8 +95,8 @@ async fn enroll_stores_secret_then_revoke_destroys_it() {
         !rendered.contains("test-secret"),
         "masked account must not leak the api secret"
     );
-    let secret_ref = Uuid::parse_str(connection.secret_ref.as_ref().expect("secret_ref"))
-        .expect("secret uuid");
+    let secret_ref =
+        Uuid::parse_str(connection.secret_ref.as_ref().expect("secret_ref")).expect("secret uuid");
 
     // The credential is retrievable under the owning tenant/account context.
     let ctx = context(tenant, &account.id);
@@ -222,9 +222,13 @@ async fn rotate_replaces_the_stored_credential() {
         .enroll(tenant, &request("rotator"), &credential("old-key"))
         .await
         .expect("enroll");
-    let secret_ref =
-        Uuid::parse_str(account.connections[0].secret_ref.as_ref().expect("secret_ref"))
-            .expect("secret uuid");
+    let secret_ref = Uuid::parse_str(
+        account.connections[0]
+            .secret_ref
+            .as_ref()
+            .expect("secret_ref"),
+    )
+    .expect("secret uuid");
 
     let rotated = service
         .rotate(tenant, &account.id, PRODUCT, &credential("new-key"))

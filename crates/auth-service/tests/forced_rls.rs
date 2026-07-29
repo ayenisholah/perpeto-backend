@@ -58,7 +58,10 @@ async fn every_private_table_forces_rls_with_a_tenant_policy() {
         eprintln!("skipping: DATABASE_URL not set");
         return;
     };
-    let expected: Vec<String> = PRIVATE_TABLES.iter().map(|name| (*name).to_owned()).collect();
+    let expected: Vec<String> = PRIVATE_TABLES
+        .iter()
+        .map(|name| (*name).to_owned())
+        .collect();
     let rows = sqlx::query(
         "SELECT c.relname::text AS relname,
                 c.relforcerowsecurity AS forced,
@@ -82,7 +85,10 @@ async fn every_private_table_forces_rls_with_a_tenant_policy() {
         .map(|row| {
             (
                 row.get::<String, _>("relname"),
-                (row.get::<bool, _>("forced"), row.get::<bool, _>("has_policy")),
+                (
+                    row.get::<bool, _>("forced"),
+                    row.get::<bool, _>("has_policy"),
+                ),
             )
         })
         .collect();
@@ -166,5 +172,8 @@ async fn missing_tenant_context_reads_and_writes_nothing() {
     .bind(tenant.as_str())
     .execute(&mut *anon)
     .await;
-    assert!(write.is_err(), "insert without tenant context must be rejected");
+    assert!(
+        write.is_err(),
+        "insert without tenant context must be rejected"
+    );
 }

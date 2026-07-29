@@ -8,9 +8,7 @@ use funding_arb_connectors::{
 };
 use funding_arb_domain::{TradingMode, market::Venue};
 use funding_arb_tenant_context::{TenantContext, TenantId};
-use funding_arb_venue_service::{
-    ConfiguredConnector, ConnectorRegistry, ReconciliationService,
-};
+use funding_arb_venue_service::{ConfiguredConnector, ConnectorRegistry, ReconciliationService};
 use futures_util::StreamExt;
 use serde_json::{Value, json};
 use sqlx::{PgPool, postgres::PgPoolOptions};

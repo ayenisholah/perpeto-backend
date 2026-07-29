@@ -72,7 +72,11 @@ async fn seed_account(pool: &PgPool, tenant: TenantContext) -> Uuid {
 
 /// Read the forced-RLS credential row for the given secret inside a tenant
 /// transaction: (key_version, ciphertext, plaintext_digest).
-async fn read_row(pool: &PgPool, tenant: TenantContext, secret_ref: Uuid) -> (i32, Vec<u8>, Vec<u8>) {
+async fn read_row(
+    pool: &PgPool,
+    tenant: TenantContext,
+    secret_ref: Uuid,
+) -> (i32, Vec<u8>, Vec<u8>) {
     let mut transaction = TenantTransaction::begin(pool, tenant)
         .await
         .expect("begin tenant tx");
@@ -113,7 +117,8 @@ async fn rewrap_migrates_key_version_without_changing_the_credential() {
     let v1 = EncryptedPostgresSecretStore::new(pool.clone(), KEY_V1, 1);
     let stored = v1.put(&context, &credential).await.expect("put v1");
     let secret_ref = stored.secret_ref;
-    let (version_before, ciphertext_before, digest_before) = read_row(&pool, tenant, secret_ref).await;
+    let (version_before, ciphertext_before, digest_before) =
+        read_row(&pool, tenant, secret_ref).await;
     assert_eq!(version_before, 1);
 
     // Rewrap with a store whose current key is v2 but which can still decrypt v1.
@@ -128,11 +133,20 @@ async fn rewrap_migrates_key_version_without_changing_the_credential() {
 
     let (version_after, ciphertext_after, digest_after) = read_row(&pool, tenant, secret_ref).await;
     assert_eq!(version_after, 2, "key version must advance");
-    assert_ne!(ciphertext_after, ciphertext_before, "ciphertext must be re-encrypted");
-    assert_eq!(digest_after, digest_before, "the credential (and its digest) must be unchanged");
+    assert_ne!(
+        ciphertext_after, ciphertext_before,
+        "ciphertext must be re-encrypted"
+    );
+    assert_eq!(
+        digest_after, digest_before,
+        "the credential (and its digest) must be unchanged"
+    );
 
     // The credential still decrypts under the new key.
-    let loaded = v2.load(secret_ref, &context).await.expect("load after rewrap");
+    let loaded = v2
+        .load(secret_ref, &context)
+        .await
+        .expect("load after rewrap");
     assert_eq!(loaded.api_key, credential.api_key);
     assert_eq!(loaded.api_secret, credential.api_secret);
     assert_eq!(loaded.passphrase, credential.passphrase);
@@ -141,5 +155,8 @@ async fn rewrap_migrates_key_version_without_changing_the_credential() {
     let again = v2.rewrap(tenant, secret_ref).await.expect("second rewrap");
     assert_eq!(again.key_version, 2);
     let (_, ciphertext_final, _) = read_row(&pool, tenant, secret_ref).await;
-    assert_eq!(ciphertext_final, ciphertext_after, "a no-op rewrap must not rewrite the row");
+    assert_eq!(
+        ciphertext_final, ciphertext_after,
+        "a no-op rewrap must not rewrite the row"
+    );
 }

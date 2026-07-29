@@ -34,12 +34,14 @@ async fn prepare_tenants(pool: &PgPool) -> (TenantContext, TenantContext) {
     let first = tenant("10000000-0000-0000-0000-000000000001");
     let second = tenant("20000000-0000-0000-0000-000000000002");
     for (context, name) in [(first, "Test tenant A"), (second, "Test tenant B")] {
-        sqlx::query("INSERT INTO tenants (id, display_name) VALUES ($1, $2) ON CONFLICT (id) DO NOTHING")
-            .bind(context.tenant_id().as_uuid())
-            .bind(name)
-            .execute(pool)
-            .await
-            .expect("prepare tenant");
+        sqlx::query(
+            "INSERT INTO tenants (id, display_name) VALUES ($1, $2) ON CONFLICT (id) DO NOTHING",
+        )
+        .bind(context.tenant_id().as_uuid())
+        .bind(name)
+        .execute(pool)
+        .await
+        .expect("prepare tenant");
         let mut transaction = TenantTransaction::begin(pool, context)
             .await
             .expect("tenant transaction");

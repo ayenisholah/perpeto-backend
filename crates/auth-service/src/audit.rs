@@ -97,7 +97,10 @@ mod tests {
         let base = event_hash(None, &sample("{}", "2026-07-27T00:00:00.000000+00:00"));
         assert_ne!(
             base,
-            event_hash(None, &sample("{\"a\":\"b\"}", "2026-07-27T00:00:00.000000+00:00"))
+            event_hash(
+                None,
+                &sample("{\"a\":\"b\"}", "2026-07-27T00:00:00.000000+00:00")
+            )
         );
         assert_ne!(
             base,

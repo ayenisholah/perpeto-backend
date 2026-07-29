@@ -93,7 +93,8 @@ impl VaultConfig {
             encrypt_token: required("PERPETO_VAULT_ENCRYPT_TOKEN")?,
             decrypt_token: required("PERPETO_VAULT_DECRYPT_TOKEN")?,
             rewrap_token: non_empty("PERPETO_VAULT_REWRAP_TOKEN"),
-            key_prefix: non_empty("PERPETO_VAULT_KEY_PREFIX").unwrap_or_else(|| "perpeto-".to_owned()),
+            key_prefix: non_empty("PERPETO_VAULT_KEY_PREFIX")
+                .unwrap_or_else(|| "perpeto-".to_owned()),
             namespace: non_empty("PERPETO_VAULT_NAMESPACE"),
         }))
     }
@@ -126,7 +127,11 @@ impl VaultTransitSecretStore {
     /// Opaque per-tenant Transit key name — tenant UUID only, never email or
     /// exchange-account identifiers.
     fn key_name(&self, context: &SecretContext) -> String {
-        format!("{}tenant-{}", self.config.key_prefix, context.tenant.tenant_id())
+        format!(
+            "{}tenant-{}",
+            self.config.key_prefix,
+            context.tenant.tenant_id()
+        )
     }
 
     fn encrypt_url(&self, context: &SecretContext) -> String {
@@ -171,7 +176,11 @@ impl VaultTransitSecretStore {
             associated_data: STANDARD.encode(associated_data(context)),
         };
         let response = self
-            .send(&self.encrypt_url(context), &self.config.encrypt_token, &request)
+            .send(
+                &self.encrypt_url(context),
+                &self.config.encrypt_token,
+                &request,
+            )
             .await?;
         let parsed: TransitEncryptResponse =
             serde_json::from_str(&response).map_err(|_| SecretStoreError::EncryptionFailed)?;
@@ -189,7 +198,11 @@ impl VaultTransitSecretStore {
             associated_data: STANDARD.encode(associated_data(context)),
         };
         let response = self
-            .send(&self.decrypt_url(context), &self.config.decrypt_token, &request)
+            .send(
+                &self.decrypt_url(context),
+                &self.config.decrypt_token,
+                &request,
+            )
             .await?;
         let parsed: TransitDecryptResponse =
             serde_json::from_str(&response).map_err(|_| SecretStoreError::EncryptionFailed)?;
@@ -208,7 +221,11 @@ impl VaultTransitSecretStore {
         token: &str,
         body: &B,
     ) -> Result<String, SecretStoreError> {
-        let mut request = self.client.post(url).header("X-Vault-Token", token).json(body);
+        let mut request = self
+            .client
+            .post(url)
+            .header("X-Vault-Token", token)
+            .json(body);
         if let Some(namespace) = &self.config.namespace {
             request = request.header("X-Vault-Namespace", namespace);
         }
@@ -571,11 +588,20 @@ mod tests {
         let account = Uuid::new_v4();
         let base = associated_data(&context(account, "BYBIT", "LINEAR_PERPETUAL"));
         // A different account, venue or product yields a different binding.
-        assert_ne!(base, associated_data(&context(Uuid::new_v4(), "BYBIT", "LINEAR_PERPETUAL")));
-        assert_ne!(base, associated_data(&context(account, "BINANCE", "LINEAR_PERPETUAL")));
+        assert_ne!(
+            base,
+            associated_data(&context(Uuid::new_v4(), "BYBIT", "LINEAR_PERPETUAL"))
+        );
+        assert_ne!(
+            base,
+            associated_data(&context(account, "BINANCE", "LINEAR_PERPETUAL"))
+        );
         assert_ne!(base, associated_data(&context(account, "BYBIT", "SPOT")));
         // Stable for the same record.
-        assert_eq!(base, associated_data(&context(account, "BYBIT", "LINEAR_PERPETUAL")));
+        assert_eq!(
+            base,
+            associated_data(&context(account, "BYBIT", "LINEAR_PERPETUAL"))
+        );
     }
 
     #[test]
@@ -639,7 +665,10 @@ mod tests {
         let context = nil_context();
         let credential = sample_credential();
         let ciphertext = store.encrypt(&context, &credential).await.expect("encrypt");
-        assert!(ciphertext.starts_with("vault:"), "expected a vault ciphertext");
+        assert!(
+            ciphertext.starts_with("vault:"),
+            "expected a vault ciphertext"
+        );
         let recovered = store.decrypt(&context, &ciphertext).await.expect("decrypt");
         assert_eq!(recovered.api_key, credential.api_key);
         assert_eq!(recovered.api_secret, credential.api_secret);

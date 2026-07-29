@@ -126,7 +126,9 @@ impl AuthService {
         caller: &CallerContext,
         state: PilotState,
     ) -> AuthResult<()> {
-        self.repo.set_pilot_state(&caller.tenant_id, state.wire()).await
+        self.repo
+            .set_pilot_state(&caller.tenant_id, state.wire())
+            .await
     }
 
     /// Append a hash-chained audit event for a sensitive control-plane action,
@@ -586,7 +588,11 @@ impl AuthService {
                 subject_id: row.subject_id,
                 actor: row.pseudonym.to_string(),
                 details: serde_json::from_str(&row.details).unwrap_or(serde_json::Value::Null),
-                event_hash: row.event_hash.iter().map(|byte| format!("{byte:02x}")).collect(),
+                event_hash: row
+                    .event_hash
+                    .iter()
+                    .map(|byte| format!("{byte:02x}"))
+                    .collect(),
             })
             .collect();
         Ok(AuditLog { intact, events })

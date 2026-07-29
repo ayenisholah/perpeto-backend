@@ -255,7 +255,10 @@ mod tests {
         // Disarming returns to eligible and re-closes the gate.
         let back = armed.disarm().expect("disarm");
         assert_eq!(back, PilotState::PilotEligible);
-        assert_eq!(permit_live_risk(back, true, true), Err(LiveRiskDenied::NotArmed));
+        assert_eq!(
+            permit_live_risk(back, true, true),
+            Err(LiveRiskDenied::NotArmed)
+        );
     }
 
     #[test]

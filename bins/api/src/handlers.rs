@@ -437,9 +437,7 @@ fn map_enrollment(error: EnrollmentError) -> ApiError {
 fn map_preflight(error: PreflightError) -> ApiError {
     match error {
         PreflightError::NotFound => AuthError::NotFound.into(),
-        PreflightError::InvalidProduct => {
-            AuthError::BadRequest("invalid connector product").into()
-        }
+        PreflightError::InvalidProduct => AuthError::BadRequest("invalid connector product").into(),
         PreflightError::Registry(error) => ApiError(AuthError::Internal(error.to_string())),
         PreflightError::Enrollment(error) => map_enrollment(error),
     }
@@ -469,7 +467,9 @@ pub async fn enroll_credential_start(
         product: request.product,
         environment: request.environment,
     };
-    Ok(Json(passkeys(&state)?.start_action(&caller, &action).await?))
+    Ok(Json(
+        passkeys(&state)?.start_action(&caller, &action).await?,
+    ))
 }
 
 /// `POST /api/v1/venue-credentials/enroll/finish`
@@ -528,7 +528,9 @@ pub async fn rotate_credential_start(
         venue: account.venue,
         product: request.product,
     };
-    Ok(Json(passkeys(&state)?.start_action(&caller, &action).await?))
+    Ok(Json(
+        passkeys(&state)?.start_action(&caller, &action).await?,
+    ))
 }
 
 /// `POST /api/v1/venue-credentials/{id}/rotate/finish`
@@ -551,7 +553,12 @@ pub async fn rotate_credential_finish(
         .await?;
     let tenant = caller.tenant_context()?;
     let updated = enrollment
-        .rotate(tenant, &id, &request.product, &request.credential.into_bundle())
+        .rotate(
+            tenant,
+            &id,
+            &request.product,
+            &request.credential.into_bundle(),
+        )
         .await
         .map_err(map_enrollment)?;
     audit_action(
@@ -581,7 +588,9 @@ pub async fn revoke_credential_start(
         venue: account.venue,
         product: request.product,
     };
-    Ok(Json(passkeys(&state)?.start_action(&caller, &action).await?))
+    Ok(Json(
+        passkeys(&state)?.start_action(&caller, &action).await?,
+    ))
 }
 
 /// `POST /api/v1/venue-credentials/{id}/revoke/finish`
@@ -632,7 +641,9 @@ pub async fn delete_credential_start(
         venue_account_id: id,
         venue: account.venue,
     };
-    Ok(Json(passkeys(&state)?.start_action(&caller, &action).await?))
+    Ok(Json(
+        passkeys(&state)?.start_action(&caller, &action).await?,
+    ))
 }
 
 /// `POST /api/v1/venue-credentials/{id}/delete/finish`
@@ -659,7 +670,10 @@ pub async fn delete_credential_finish(
         .finish_action(&caller, &request.challenge_id, &action, request.assertion)
         .await?;
     let tenant = caller.tenant_context()?;
-    enrollment.delete(tenant, &id).await.map_err(map_enrollment)?;
+    enrollment
+        .delete(tenant, &id)
+        .await
+        .map_err(map_enrollment)?;
     audit_action(
         &state,
         &caller,
@@ -737,7 +751,9 @@ pub async fn certify_route_start(
         venue_account_id: id,
         target: request.target.wire().to_owned(),
     };
-    Ok(Json(passkeys(&state)?.start_action(&caller, &action).await?))
+    Ok(Json(
+        passkeys(&state)?.start_action(&caller, &action).await?,
+    ))
 }
 
 /// `POST /api/v1/venue-credentials/{id}/certify/finish`
@@ -840,13 +856,15 @@ pub async fn preflight_credential(
         product: request.product,
         status: outcome.status,
         checks: outcome.checks,
-        reconciliation: outcome.reconciliation.map(|summary| PreflightReconciliation {
-            status: summary.status,
-            balances_seen: summary.balances_seen as u32,
-            positions_seen: summary.positions_seen as u32,
-            open_orders_seen: summary.open_orders_seen as u32,
-            discrepancies: summary.discrepancies as u32,
-        }),
+        reconciliation: outcome
+            .reconciliation
+            .map(|summary| PreflightReconciliation {
+                status: summary.status,
+                balances_seen: summary.balances_seen as u32,
+                positions_seen: summary.positions_seen as u32,
+                open_orders_seen: summary.open_orders_seen as u32,
+                discrepancies: summary.discrepancies as u32,
+            }),
     }))
 }
 
@@ -905,7 +923,9 @@ fn map_live_risk(error: LiveRiskDenied) -> ApiError {
     match error {
         LiveRiskDenied::NotArmed => AuthError::Conflict("tenant is not armed for live risk"),
         LiveRiskDenied::RouteNotEligible => AuthError::Conflict("route is not preflight-eligible"),
-        LiveRiskDenied::RouteNotCertified => AuthError::Conflict("route is not certified for pilot"),
+        LiveRiskDenied::RouteNotCertified => {
+            AuthError::Conflict("route is not certified for pilot")
+        }
     }
     .into()
 }
@@ -1016,7 +1036,9 @@ pub async fn pilot_arm_start(
         venue_account_id: request.venue_account_id,
         product: request.product,
     };
-    Ok(Json(passkeys(&state)?.start_action(&caller, &action).await?))
+    Ok(Json(
+        passkeys(&state)?.start_action(&caller, &action).await?,
+    ))
 }
 
 /// `POST /api/v1/pilot/arm/finish`
@@ -1036,13 +1058,14 @@ pub async fn pilot_arm_finish(
         .await?;
 
     let account = require_enrollment_account(&state, &caller, &request.venue_account_id).await?;
-    let eligible = account
-        .connections
-        .iter()
-        .any(|connection| connection.product == request.product && connection.status == STATUS_ELIGIBLE);
+    let eligible = account.connections.iter().any(|connection| {
+        connection.product == request.product && connection.status == STATUS_ELIGIBLE
+    });
     let confirmation_ok = request.confirmation.trim() == account.alias;
     let current = state.service.pilot_state(&caller).await?;
-    let next = current.arm(eligible, confirmation_ok).map_err(map_pilot_error)?;
+    let next = current
+        .arm(eligible, confirmation_ok)
+        .map_err(map_pilot_error)?;
     state.service.set_pilot_state(&caller, next).await?;
     emit_pilot_event(&state, &caller, "PILOT_ARMED", next).await?;
     audit_action(
@@ -2177,11 +2200,9 @@ pub async fn submit_connector_order(
     // Testnet/sandbox is exempt. Fail-closed and inert while LIVE is locked.
     if !configured.environment.is_non_production() {
         let pilot = state.service.pilot_state(&caller).await?;
-        let eligible = configured
-            .account
-            .connections
-            .iter()
-            .any(|connection| connection.product == request.product && connection.status == "ELIGIBLE");
+        let eligible = configured.account.connections.iter().any(|connection| {
+            connection.product == request.product && connection.status == "ELIGIBLE"
+        });
         let certified = matches!(
             configured.account.certification_state,
             CertificationState::Pilot | CertificationState::CertifiedLive

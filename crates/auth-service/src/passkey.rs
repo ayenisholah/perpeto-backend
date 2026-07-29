@@ -41,7 +41,9 @@ const CEREMONY_AUTHENTICATE: &str = "AUTHENTICATE";
 /// # Errors
 /// Returns [`ConfigError`](crate::config::ConfigError) when an origin is not a
 /// valid URL or the builder rejects the relying-party parameters.
-pub fn build_webauthn(config: &crate::config::PasskeyConfig) -> Result<Webauthn, crate::config::ConfigError> {
+pub fn build_webauthn(
+    config: &crate::config::PasskeyConfig,
+) -> Result<Webauthn, crate::config::ConfigError> {
     use crate::config::ConfigError;
 
     let mut origins = config.origins.iter();
@@ -122,21 +124,28 @@ impl PasskeyService {
     // ----- Registration -----------------------------------------------------
 
     /// Begin registering a new authenticator for the caller.
-    pub async fn start_registration(&self, caller: &CallerContext) -> AuthResult<CeremonyChallenge> {
+    pub async fn start_registration(
+        &self,
+        caller: &CallerContext,
+    ) -> AuthResult<CeremonyChallenge> {
         let tenant = caller.tenant_context()?;
         let user_id = Self::user_uuid(caller)?;
         // Exclude already-registered credentials so the user cannot double-register
         // the same authenticator.
         let existing = self.load_active_passkeys(tenant, user_id).await?;
-        let exclude = existing.iter().map(|(_, passkey)| passkey.cred_id().clone()).collect();
+        let exclude = existing
+            .iter()
+            .map(|(_, passkey)| passkey.cred_id().clone())
+            .collect();
 
         let (options, state) = self
             .webauthn
             .start_passkey_registration(user_id, &caller.user_id, &caller.user_id, Some(exclude))
             .map_err(|error| AuthError::Internal(format!("passkey registration start: {error}")))?;
 
-        let state_bytes = serde_json::to_vec(&state)
-            .map_err(|error| AuthError::Internal(format!("serialize registration state: {error}")))?;
+        let state_bytes = serde_json::to_vec(&state).map_err(|error| {
+            AuthError::Internal(format!("serialize registration state: {error}"))
+        })?;
         let challenge_id = self
             .persist_challenge(tenant, user_id, CEREMONY_REGISTER, &state_bytes, None)
             .await?;
@@ -160,11 +169,17 @@ impl PasskeyService {
         let challenge_id = parse_uuid(challenge_id)?;
 
         let mut transaction = self.begin(tenant).await?;
-        let state_bytes =
-            consume_challenge(&mut transaction, tenant, user_id, challenge_id, CEREMONY_REGISTER)
-                .await?;
-        let state: PasskeyRegistration = serde_json::from_slice(&state_bytes)
-            .map_err(|error| AuthError::Internal(format!("deserialize registration state: {error}")))?;
+        let state_bytes = consume_challenge(
+            &mut transaction,
+            tenant,
+            user_id,
+            challenge_id,
+            CEREMONY_REGISTER,
+        )
+        .await?;
+        let state: PasskeyRegistration = serde_json::from_slice(&state_bytes).map_err(|error| {
+            AuthError::Internal(format!("deserialize registration state: {error}"))
+        })?;
         let register: RegisterPublicKeyCredential = serde_json::from_value(credential)
             .map_err(|_| AuthError::BadRequest("malformed registration credential"))?;
 
@@ -225,15 +240,11 @@ impl PasskeyService {
         let challenge_id = parse_uuid(challenge_id)?;
 
         let mut transaction = self.begin(tenant).await?;
-        let (state_bytes, _) = consume_assertion_challenge(
-            &mut transaction,
-            tenant,
-            user_id,
-            challenge_id,
-        )
-        .await?;
-        let credential_id =
-            self.verify_and_advance(&mut transaction, tenant, &state_bytes, credential).await?;
+        let (state_bytes, _) =
+            consume_assertion_challenge(&mut transaction, tenant, user_id, challenge_id).await?;
+        let credential_id = self
+            .verify_and_advance(&mut transaction, tenant, &state_bytes, credential)
+            .await?;
         transaction.commit().await?;
         Ok(AssertionOutcome {
             verified: true,
@@ -277,8 +288,9 @@ impl PasskeyService {
             Some(descriptor) if descriptor == action.canonical() => {}
             _ => return Err(AuthError::PasskeyProofInvalid),
         }
-        let credential_id =
-            self.verify_and_advance(&mut transaction, tenant, &state_bytes, credential).await?;
+        let credential_id = self
+            .verify_and_advance(&mut transaction, tenant, &state_bytes, credential)
+            .await?;
 
         let proof_id = Uuid::new_v4();
         let nonce = challenge_id; // the consumed challenge id is the unique replay key
@@ -409,8 +421,10 @@ impl PasskeyService {
         state_bytes: &[u8],
         credential: Value,
     ) -> AuthResult<Vec<u8>> {
-        let state: PasskeyAuthentication = serde_json::from_slice(state_bytes)
-            .map_err(|error| AuthError::Internal(format!("deserialize assertion state: {error}")))?;
+        let state: PasskeyAuthentication =
+            serde_json::from_slice(state_bytes).map_err(|error| {
+                AuthError::Internal(format!("deserialize assertion state: {error}"))
+            })?;
         let assertion: PublicKeyCredential = serde_json::from_value(credential)
             .map_err(|_| AuthError::BadRequest("malformed assertion credential"))?;
         let result = self
@@ -431,8 +445,10 @@ impl PasskeyService {
         .await?
         .ok_or(AuthError::PasskeyProofInvalid)?;
         let stored_count: i64 = row.get("sign_count");
-        let mut authenticator: Passkey = serde_json::from_slice(&row.get::<Vec<u8>, _>("authenticator"))
-            .map_err(|error| AuthError::Internal(format!("deserialize authenticator: {error}")))?;
+        let mut authenticator: Passkey =
+            serde_json::from_slice(&row.get::<Vec<u8>, _>("authenticator")).map_err(|error| {
+                AuthError::Internal(format!("deserialize authenticator: {error}"))
+            })?;
 
         let mut credential = PasskeyCredential::new(
             CredentialId::new(credential_id.clone()),
@@ -597,9 +613,12 @@ fn descriptor_json(action: &ActionDescriptor) -> String {
 }
 
 fn parse_action_canonical(raw: String) -> Option<String> {
-    serde_json::from_str::<Value>(&raw)
-        .ok()
-        .and_then(|value| value.get("action").and_then(Value::as_str).map(str::to_owned))
+    serde_json::from_str::<Value>(&raw).ok().and_then(|value| {
+        value
+            .get("action")
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+    })
 }
 
 fn to_json<T: Serialize>(value: &T) -> AuthResult<Value> {
@@ -610,7 +629,9 @@ fn to_json<T: Serialize>(value: &T) -> AuthResult<Value> {
 fn validate_label(label: &str) -> AuthResult<String> {
     let trimmed = label.trim();
     if trimmed.is_empty() || trimmed.chars().count() > 120 {
-        return Err(AuthError::BadRequest("passkey label must be 1-120 characters"));
+        return Err(AuthError::BadRequest(
+            "passkey label must be 1-120 characters",
+        ));
     }
     Ok(trimmed.to_owned())
 }

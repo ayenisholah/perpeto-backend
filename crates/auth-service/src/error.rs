@@ -108,7 +108,9 @@ impl AuthError {
             Self::Forbidden => "You do not have access to this resource.".to_owned(),
             Self::NotFound => "The requested resource was not found.".to_owned(),
             Self::BootstrapInvalid => "The deployment token was not accepted.".to_owned(),
-            Self::PasskeysUnavailable => "Passkeys are not available on this deployment.".to_owned(),
+            Self::PasskeysUnavailable => {
+                "Passkeys are not available on this deployment.".to_owned()
+            }
             Self::CredentialsUnavailable => "Credential enrollment is not available.".to_owned(),
             Self::PasskeyProofInvalid => "The passkey could not be verified.".to_owned(),
             Self::Internal(_) => "The request could not be completed.".to_owned(),

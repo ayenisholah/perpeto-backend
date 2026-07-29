@@ -81,8 +81,13 @@ async fn delete_destroys_secrets_tombstones_and_is_idempotent() {
         .await
         .expect("enroll");
     let account_id = account.id.clone();
-    let secret_ref = Uuid::parse_str(account.connections[0].secret_ref.as_ref().expect("secret_ref"))
-        .expect("secret uuid");
+    let secret_ref = Uuid::parse_str(
+        account.connections[0]
+            .secret_ref
+            .as_ref()
+            .expect("secret_ref"),
+    )
+    .expect("secret uuid");
     let ctx = SecretContext {
         tenant,
         venue_account_id: Uuid::parse_str(&account_id).expect("account uuid"),

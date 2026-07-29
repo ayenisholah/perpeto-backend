@@ -125,8 +125,16 @@ async fn passkeys_are_isolated_per_tenant() {
 
     // Tenant A sees its own passkey; tenant B sees nothing; a missing context
     // (NULL app.tenant_id) also matches no row.
-    assert_eq!(count_visible(&pool, TENANT_A).await, 1, "A must see its passkey");
-    assert_eq!(count_visible(&pool, TENANT_B).await, 0, "B must not see A's passkey");
+    assert_eq!(
+        count_visible(&pool, TENANT_A).await,
+        1,
+        "A must see its passkey"
+    );
+    assert_eq!(
+        count_visible(&pool, TENANT_B).await,
+        0,
+        "B must not see A's passkey"
+    );
 
     let mut anon = pool.begin().await.expect("begin");
     let anon_count: i64 = sqlx::query_scalar("SELECT count(*) FROM passkey_credentials")
@@ -164,5 +172,8 @@ async fn cross_tenant_insert_is_rejected() {
     .bind(b"{}".as_slice())
     .execute(&mut *transaction)
     .await;
-    assert!(result.is_err(), "writing another tenant's row must be rejected");
+    assert!(
+        result.is_err(),
+        "writing another tenant's row must be rejected"
+    );
 }
