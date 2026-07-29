@@ -3,8 +3,26 @@
 ## Snapshot
 
 - Milestone: M3 — CEX connector certification
-- Overall state: In progress (M2 feature implementation present but exit gates open; M3 code present through evidence tooling)
-- Last verified: 2026-07-21
+- Overall state: In progress. The workspace is build-verified for the first time: formatting, Clippy (`-D warnings`), all 18 migrations and the full test suite (136 tests, 0 failures) pass against PostgreSQL 18 under a non-`BYPASSRLS`, non-owning runtime role. What remains open needs infrastructure or elapsed time, not code.
+- Last verified: 2026-07-29
+
+## Verification baseline
+
+Established on Linux with the pinned Rust 1.97.0 toolchain and a PostgreSQL 18 container (`deploy/compose/docker-compose.dev.yml`). Reproduce with:
+
+```bash
+docker compose -f deploy/compose/docker-compose.dev.yml up -d
+cargo fmt --all -- --check
+cargo clippy --locked --workspace --all-targets -- -D warnings
+DATABASE_URL="$MIGRATE_DATABASE_URL" cargo run --locked --bin funding-arb-migrate
+cargo test --locked --workspace
+```
+
+All eleven database-backed integration binaries — `audit_chain`, `auth_flow`, `forced_rls`, `passkey_isolation`, `pilot_state`, `breakers_isolation`, `positions_repo`, `credential_deletion`, `credential_enrollment`, `credential_rewrap`, `preflight_worker` — execute rather than reporting `skipping: DATABASE_URL not set`.
+
+The isolation evidence is non-vacuous: run as the superuser instead of `perpeto_app`, `forced_rls` fails on `missing_tenant_context_reads_and_writes_nothing`, so a role that bypasses row-level security cannot make the suite pass.
+
+Defects this first execution exposed, all now fixed: migration `0016` referenced three unique constraints by names exceeding PostgreSQL's 63-byte identifier limit and could never have applied; `VenueAccountsRepo::update_connection` never wrote `secret_ref` to the `venue_accounts.payload` read model, so credential deletion skipped revocation and left the encrypted secret live, connector credential loading could not resolve a secret, and preflight's `SECRET_PRESENT` check could never pass — making `ELIGIBLE` unreachable and the pilot pipeline inoperable; `ConnectorRegistry::load` shadowed its tenant context with a secret context; and the engine's auto-entry used a stale `ExecutionService::open` signature.
 
 ## Completed or implemented
 
@@ -33,31 +51,32 @@
 - GitHub Backend CI for remote `main` at `6e59bad` is red: connector compilation reported 24 ownership/equality errors, so migrations and Rust tests did not run and the container/staging workflows were skipped. Local `main` contains the targeted borrow/equality repair, but it is not remotely compiled or CI-verified.
 - The latest successful staging deployment is `e82347b`, which predates the M2/M3 implementation. Current staging therefore must not be described as containing the connector runtime.
 - The M2 exact-decimal source/contract remediation is implemented locally: scanner, strategy, execution and monitoring DTOs use `Decimal`, OpenAPI/client `0.15.0` retains decimal strings, fixtures preserve exact numeric lexemes, and mobile performs numeric conversion only for display. The exit remains open until Rust and PostgreSQL round-trip tests run in a usable build environment.
-- Primary public/private WebSocket ingestion and connector-specific sequence recovery are implemented locally for Bybit, Binance and OKX, including bounded reconnecting transport and disconnect-to-reconciliation signaling. Linked Rust compilation and live venue evidence remain pending.
+- Primary public/private WebSocket ingestion and connector-specific sequence recovery are implemented and compile for Bybit, Binance and OKX, including bounded reconnecting transport and disconnect-to-reconciliation signaling. Their parser/transport unit tests pass. Live venue evidence remains pending, and `book_snapshot` is still unwired on the Bybit and OKX reconnect paths (Binance calls it to rebuild the book and re-anchor the sequence after a transport reset).
 - No venue has accepted certification evidence. Credentialed Bybit/Binance testnet, OKX demo, production read-only shadow, reconciliation and the required 72-hour/14-day windows remain outstanding.
 - M1A real-device, accessibility, security and full provider/replay integration evidence remains incomplete.
 - The first forced-RLS/private-runtime isolation slice is implemented locally. PostgreSQL execution under distinct migration/runtime roles, broader adversarial API/job evidence, tenant-scoped caches/WebSocket delivery/exports, Vault Transit, credential enrollment, account preflight and production CEX writes remain M4 work.
-- The credential preflight (synchronous endpoint) and the scheduled preflight worker are implemented locally but not build-run. Linked Rust compilation and the `record_preflight_result` transition + worker demotion tests remain; reaching `ELIGIBLE` through the live reconciliation path needs testnet credentials + a secret backend (deferred). The worker's demote-on-drift is covered by a config-drift test; a live re-reconciliation soak is still open. Credential deletion is now implemented (passkey-gated tombstone + secret destruction, `DATABASE_URL`-gated test) but likewise not build-run.
-- The acceptance evidence tests are authored locally but not build-run. Linked Rust compilation and a Postgres run under a non-`BYPASSRLS` role remain, along with the deferred infra/venue evidence: Vault policy/seal/restore, passkey lost-device/recovery and ceremony replay/origin/RP-ID, the limited-capital pilot, and the signed evidence that closes M4.
-- The live-risk gate is implemented locally but not build-verified. Linked Rust compilation and the `permit_live_risk` / `CertificationState::promote` unit tests remain. The gate is inert while LIVE is locked (no production submit path runs), and certification promotion records operator assertion without the venue soak/evidence that must justify it (deferred). Actual live execution, loss/drawdown containment, revocation ordering, and venue-authoritative recovery are Slice 8 remainders behind the LIVE unlock.
-- The pilot-arming control plane is implemented locally but not build-verified. Linked Rust compilation, the `PilotState` unit tests, and the `DATABASE_URL`-gated `pilot_state` round-trip test remain. Arming has no live effect while LIVE is locked; wiring `PILOT_ARMED` into execution (Slice 8) and platform route certification are deferred. Audit-chained arming records now exist (arm/disarm append to the hash-chained `audit_events` log alongside the other control-plane actions).
-- The credential-lifecycle API is implemented locally but not build-verified. Linked Rust compilation, the AES-backed `credential_enrollment` integration test (enroll/rotate/revoke + cross-tenant read isolation, `DATABASE_URL`-gated), and the deferred live preflight worker/deletion remain. No credential is enrolled through a live Vault until the Vault infrastructure exists.
-- The Vault Transit store is implemented locally but not build- or Vault-verified. The application code now includes the ciphertext-rewrap path (native Transit `rewrap`, gated on `PERPETO_VAULT_REWRAP_TOKEN`), but linked Rust compilation, the gated encrypt→decrypt round-trip, a live rewrap round-trip, the encrypt-token-cannot-decrypt policy check, and the whole operator infrastructure (Vault deploy, per-tenant keys, Shamir, policies, rewrap token/runbooks per `docs/KEY_MANAGEMENT.md`) remain. Paper/dev are unchanged (AES); the store is only reachable outside PAPER when `PERPETO_VAULT_ADDR` is configured.
-- The passkey slice is implemented locally but not build- or database-verified. Linked Rust compilation of `webauthn-rs` and `auth-service`, a credentialed registration→assertion round-trip, and the new `passkey_isolation` forced-RLS/cross-tenant tests (which require a non-`BYPASSRLS` runtime role) remain to run. Passkey proofs are recorded but not yet consumed by any credential or live-arming gate, and the native mobile device ceremony stays dark behind `EXPO_PUBLIC_PASSKEYS_ENABLED` until an EAS development build exists.
+- The credential preflight endpoint and the scheduled preflight worker are build-verified: `preflight_worker` passes, covering demote-on-drift. Credential deletion is build-verified by `credential_deletion`, which caught a real defect — deletion tombstoned the account without destroying the secret, because `secret_ref` never reached the account read model. Reaching `ELIGIBLE` through the live reconciliation path still needs testnet credentials and a secret backend, and a live re-reconciliation soak is still open.
+- The acceptance evidence tests now run under a non-`BYPASSRLS` role against PostgreSQL 18 and pass, and are demonstrably non-vacuous: as a superuser, `forced_rls` fails. Still deferred behind infrastructure and venues: Vault policy/seal/restore, passkey lost-device/recovery and ceremony replay/origin/RP-ID, the limited-capital pilot, and the signed evidence that closes M4.
+- The live-risk gate is build-verified: the `permit_live_risk` and `CertificationState::promote` unit tests pass. The gate is inert while LIVE is locked (no production submit path runs), and certification promotion records operator assertion without the venue soak/evidence that must justify it (deferred). Actual live execution, loss/drawdown containment, revocation ordering, and venue-authoritative recovery are Slice 8 remainders behind the LIVE unlock.
+- The pilot-arming control plane is build-verified: the `PilotState` unit tests and the `pilot_state` round-trip test pass against PostgreSQL. Arming has no live effect while LIVE is locked; wiring `PILOT_ARMED` into execution (Slice 8) and platform route certification are deferred. Audit-chained arming records now exist (arm/disarm append to the hash-chained `audit_events` log alongside the other control-plane actions).
+- The credential-lifecycle API is build-verified: the AES-backed `credential_enrollment` test (enroll/rotate/revoke plus cross-tenant read isolation) passes against PostgreSQL. No credential is enrolled through a live Vault until the Vault infrastructure exists.
+- The Vault Transit store compiles and its AES-backed rewrap path is verified by `credential_rewrap` (key version advances, ciphertext changes, digest stable, second rewrap a no-op), but it is not Vault-verified. The application code includes the ciphertext-rewrap path (native Transit `rewrap`, gated on `PERPETO_VAULT_REWRAP_TOKEN`); the gated encrypt→decrypt round-trip, a live rewrap round-trip, the encrypt-token-cannot-decrypt policy check, and the whole operator infrastructure (Vault deploy, per-tenant keys, Shamir, policies, rewrap token/runbooks per `docs/KEY_MANAGEMENT.md`) remain. Paper/dev are unchanged (AES); the store is only reachable outside PAPER when `PERPETO_VAULT_ADDR` is configured.
+- The passkey slice is build- and database-verified: `webauthn-rs` and `auth-service` compile (the crate pulls in native OpenSSL, so `pkg-config` and `libssl-dev` are build prerequisites), and `passkey_isolation` passes under a non-`BYPASSRLS` runtime role. A credentialed registration→assertion round-trip against a real authenticator still requires an EAS development build. Passkey proofs are recorded but not yet consumed by any credential or live-arming gate, and the native mobile device ceremony stays dark behind `EXPO_PUBLIC_PASSKEYS_ENABLED` until an EAS development build exists.
 - Live trading remains unavailable by design.
 
 ## Current blockers
 
-- This Windows environment has Rust 1.97.0 but no usable MSVC linker, Docker or WSL, so linked Rust compile, Clippy and test evidence must remain pending until a suitable environment or a future CI run is available.
 - Credentialed certification requires least-privilege operator test accounts and elapsed soak/shadow windows.
+- Vault Transit evidence requires a deployed Vault: the encrypt→decrypt round trip, the live rewrap, the encrypt-token-cannot-decrypt policy check, and Shamir/seal/restore exercises are all unrun.
+- Passkey device-ceremony evidence requires an EAS development build; the WebAuthn ceremony has not been exercised against a real authenticator.
 - API client `0.15.0` is locally verified but unpublished; `0.7.0` is the latest confirmed registry release.
+- The earlier "no usable MSVC linker, Docker or WSL" blocker is resolved and no longer applies; the build runs on Linux with the pinned 1.97.0 toolchain.
 
 ## Next verified tasks
 
-1. Restore a usable local Rust linker or use an approved verification environment; compile and execute the new WebSocket/parser and tenant-isolation tests before treating either slice as build-verified.
-2. Run the implemented lossless-decimal DTO/persistence and precision-regression tests before closing M2.
-3. Run the credentialed M3 sandbox/demo/shadow certification matrix and timed windows without production writes.
-4. Verify migration `0016` with distinct migrator/runtime roles and adversarial cross-tenant database/API/job tests.
-5. Compile the passkey slice (`webauthn-rs`, `auth-service`), run the passkey domain, isolation and assertion round-trip tests under a non-`BYPASSRLS` role.
-6. Provision a dev Vault, run the `venue-service` unit tests and the `PERPETO_VAULT_ADDR`-gated encrypt→decrypt round-trip plus the encrypt-token-cannot-decrypt policy check.
-7. Run the `credential_enrollment`, `credential_deletion`, `preflight_worker` and `pilot_state` integration tests, then build Slice 8 limited CEX execution — wiring `PILOT_ARMED` + `ELIGIBLE` into the registry/execution path with per-tenant/global breaker enforcement and disarm→flatten→revocation ordering.
+1. Run the credentialed M3 sandbox/demo/shadow certification matrix and timed windows without production writes.
+2. Wire `book_snapshot` into the Bybit and OKX WebSocket reconnect paths so all three connectors rebuild the book and re-anchor the sequence after a transport reset, as Binance already does. Both methods exist and are labelled; the gap needs venue evidence to close.
+3. Provision a dev Vault, then run the `PERPETO_VAULT_ADDR`-gated encrypt→decrypt round trip, the live rewrap, and the encrypt-token-cannot-decrypt policy check.
+4. Exercise the passkey registration→assertion round trip against a real authenticator from an EAS development build.
+5. Build Slice 8 limited CEX execution — wiring `PILOT_ARMED` + `ELIGIBLE` into the registry/execution path with per-tenant/global breaker enforcement and disarm→flatten→revocation ordering.
+6. Publish the API client so the vendored mobile tarball and the registry agree.
