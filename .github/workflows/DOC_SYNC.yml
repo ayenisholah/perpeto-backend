@@ -6,7 +6,7 @@ on:
     paths:
       - docs/PRODUCT_SPEC.md
       - docs/OVERVIEW.md
-      - AGENTS.md
+      - docs/ENGINEERING.md
       - docs/DECISION.md
       - docs/MILESTONE.md
       - docs/ARCHITECTURE.md
@@ -35,8 +35,7 @@ jobs:
       - name: Copy canonical shared documents
         run: |
           mkdir -p target/docs
-          cp source/docs/PRODUCT_SPEC.md source/docs/OVERVIEW.md source/docs/DECISION.md source/docs/MILESTONE.md source/docs/ARCHITECTURE.md source/docs/KEY_MANAGEMENT.md target/docs/
-          cp source/AGENTS.md target/AGENTS.md
+          cp source/docs/PRODUCT_SPEC.md source/docs/OVERVIEW.md source/docs/ENGINEERING.md source/docs/DECISION.md source/docs/MILESTONE.md source/docs/ARCHITECTURE.md source/docs/KEY_MANAGEMENT.md target/docs/
       - name: Open synchronization pull request
         working-directory: target
         run: |
@@ -48,7 +47,7 @@ jobs:
           git config user.name "perpeto-docs-bot"
           git config user.email "perpeto-docs-bot@users.noreply.github.com"
           git switch -c "$branch"
-          git add docs/PRODUCT_SPEC.md docs/OVERVIEW.md AGENTS.md docs/DECISION.md docs/MILESTONE.md docs/ARCHITECTURE.md docs/KEY_MANAGEMENT.md
+          git add docs/PRODUCT_SPEC.md docs/OVERVIEW.md docs/ENGINEERING.md docs/DECISION.md docs/MILESTONE.md docs/ARCHITECTURE.md docs/KEY_MANAGEMENT.md
           git commit -m "docs: synchronize shared project documents"
           git push --set-upstream origin "$branch"
           gh pr create --repo "$TARGET" --base main --head "$branch" --title "docs: synchronize shared project documents" --body "Automated synchronization from ${{ github.repository }}@${{ github.sha }}."

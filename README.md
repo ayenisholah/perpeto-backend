@@ -16,11 +16,11 @@ Read these before changing code:
 2. [DECISION.md](docs/DECISION.md)
 3. [TRACEABILITY.md](docs/TRACEABILITY.md)
 4. [IMPLEMENTATION.md](docs/IMPLEMENTATION.md)
-5. [AGENTS.md](AGENTS.md)
+5. [ENGINEERING.md](docs/ENGINEERING.md)
 
 API consumers should also read [API.md](docs/API.md) and the normative [OpenAPI 3.1 contract](schemas/openapi.yaml).
 
-If these disagree, stop and resolve the conflict using the precedence defined in `AGENTS.md`.
+If these disagree, stop and resolve the conflict using the precedence defined in `docs/ENGINEERING.md`.
 
 ## Repository shape
 

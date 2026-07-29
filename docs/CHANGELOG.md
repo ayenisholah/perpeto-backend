@@ -113,6 +113,8 @@ All notable repository changes are recorded here using Keep a Changelog categori
 
 ### Changed
 
+- Consolidated the contributor policy into `docs/ENGINEERING.md`, replacing the former root-level operating contract. Content is unchanged apart from framing: the source-precedence order, required workflow, non-negotiable invariants, evidence and sourcing rules, and completion standard all carry over. `scripts/check-docs.sh`, `README.md`, and the shared-document synchronization workflow now reference the new path, and the document is synchronized to the mobile repository alongside the other canonical documents rather than as a special-cased root-level copy.
+
 - Updated repository status and runtime examples to describe the implemented M2/M3 safety modes and the remaining WebSocket and credentialed certification gates without implying live readiness.
 
 - Rebranded Signex to **Perpeto**: renamed the `SIGNEX_*` runtime environment variables to `PERPETO_*`, the public API origin to `https://api.perpeto.xyz`, the Postgres role/database to `perpeto`, and the published contract package to `@ayenisholah/perpeto-api-client`. The Apple audience `com.signex.mobile` and the `signex://` OAuth redirect scheme are unchanged. Deployments must update `runtime.env` (new variable names, `DATABASE_URL`) and rename the database in lockstep — see `docs/DEPLOYMENT.md`.
