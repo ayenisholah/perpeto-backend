@@ -13,6 +13,11 @@ services:
     image: ${PERPETO_IMAGE:?PERPETO_IMAGE is required}
     entrypoint: ["funding-arb-migrate"]
     env_file: ["../../runtime.env"]
+    # Migrations run as the schema owner; every other service keeps the runtime
+    # role from runtime.env. This override must not be copied to any service
+    # that calls assert_safe_runtime_role.
+    environment:
+      DATABASE_URL: ${MIGRATE_DATABASE_URL:?MIGRATE_DATABASE_URL is required}
     restart: "no"
     depends_on:
       postgres:

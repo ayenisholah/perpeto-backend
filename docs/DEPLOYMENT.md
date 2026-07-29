@@ -16,8 +16,23 @@ The M2 paper engine defaults `PERPETO_SIM_START` to `2026-07-19T00:00:00Z` and a
 
 The M1 authentication runtime additionally requires the following in `runtime.env` (see `runtime.env.example`). Generate the signing key and deployment token with `scripts/dev-auth-env.sh`:
 
-- `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB` — consumed by the Postgres container.
-- `DATABASE_URL` — e.g. `postgres://perpeto:...@postgres:5432/perpeto` (the `postgres` host is the compose service).
+- `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB` — consumed by the Postgres container. This role is the superuser and owns every table, so no service may run as it.
+- `MIGRATE_DATABASE_URL` — the `perpeto_migrator` schema owner, used only by `funding-arb-migrate`.
+- `DATABASE_URL` — the `perpeto_app` runtime role for every service, e.g. `postgres://perpeto_app:...@postgres:5432/perpeto` (the `postgres` host is the compose service).
+
+### Database roles
+
+Run `scripts/bootstrap-db-roles.sql` as the superuser once against a new database, before the first migration:
+
+```bash
+psql "postgres://perpeto:...@postgres:5432/perpeto" -v ON_ERROR_STOP=1 -f scripts/bootstrap-db-roles.sql
+```
+
+It creates the `perpeto_migrator` schema owner and the `perpeto_app` runtime role, and sets default privileges so tables added by later migrations stay reachable by `perpeto_app`. Both are `NOSUPERUSER NOBYPASSRLS`. This separation is mandatory, not stylistic: `assert_safe_runtime_role` refuses to start `api`, `engine`, `worker` or `rewrap` under a role that can bypass row-level security or owns a tenant table, because either condition silently disables tenant isolation. The local development stack applies the same script automatically through the Postgres init hook:
+
+```bash
+docker compose -f deploy/compose/docker-compose.dev.yml up -d
+```
 - `PERPETO_ACCESS_TOKEN_KEY` — base64 of a 32-byte Ed25519 seed used to sign access tokens.
 - `PERPETO_TOKEN_ISSUER` — the public API origin (e.g. `https://api.perpeto.xyz`).
 - `PERPETO_APPLE_BUNDLE_ID` — `com.signex.mobile` (audience for Apple identity tokens).
