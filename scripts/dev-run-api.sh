@@ -27,6 +27,11 @@ MIGRATE_DATABASE_URL=postgres://perpeto_migrator:perpeto_migrator@127.0.0.1:5432
 PERPETO_ACCESS_TOKEN_KEY=$(openssl rand -base64 32)
 PERPETO_MFA_KEY=$(openssl rand -base64 32)
 PERPETO_TOKEN_ISSUER=http://localhost:8080
+# Identity-token audiences. These are public client identifiers, not secrets,
+# and must match what the mobile build sends or sign-in is rejected.
+PERPETO_APPLE_BUNDLE_ID=com.signex.mobile
+PERPETO_GOOGLE_IOS_CLIENT_ID=753776627523-j1p1q51ug9q88ara0gj0ce4m52gjcs5e.apps.googleusercontent.com
+PERPETO_GOOGLE_WEB_CLIENT_ID=753776627523-d5u5s1b1hna23gh8jo128fdo2357aap5.apps.googleusercontent.com
 PERPETO_BOOTSTRAP_TOKEN_HASH=$(printf '%s' "$token" | openssl dgst -sha256 -hex | awk '{print $NF}')
 PERPETO_BOOTSTRAP_TOKEN_EXPIRES_AT=$(date -u -d '+30 days' +%Y-%m-%dT%H:%M:%SZ)
 # Local development only. DEC-0012 forbids this authorization model for the M4
