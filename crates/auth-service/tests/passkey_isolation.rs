@@ -12,6 +12,13 @@
 
 use sqlx::PgPool;
 use sqlx::postgres::PgPoolOptions;
+use tokio::sync::Mutex;
+
+// Both tests seed the same fixed tenant/user identifiers, so running them
+// concurrently lets one re-insert a membership between the other's membership
+// and tenant deletes, which then fails the tenant delete on its foreign key.
+// Serialize them, as the other database-backed suites do.
+static TEST_LOCK: Mutex<()> = Mutex::const_new(());
 
 // Fixed identifiers so the test cleans up exactly its own rows and never
 // truncates tables other integration binaries may be using concurrently.
@@ -35,11 +42,25 @@ async fn pool() -> Option<PgPool> {
 /// Seed two independent personal tenants, their owners, and memberships.
 async fn seed(pool: &PgPool) {
     // Remove any residue from a prior run (children first).
-    sqlx::query("DELETE FROM passkey_credentials WHERE tenant_id = ANY($1::uuid[])")
-        .bind([TENANT_A, TENANT_B])
-        .execute(pool)
-        .await
-        .expect("cleanup credentials");
+    //
+    // `passkey_credentials` is forced-RLS, so this delete must run inside each
+    // tenant's context. Issued without one it silently matches no row — the
+    // policy is doing its job — and the membership delete below then fails on
+    // the surviving row's foreign key.
+    for tenant in [TENANT_A, TENANT_B] {
+        let mut transaction = pool.begin().await.expect("begin cleanup");
+        sqlx::query("SELECT set_config('app.tenant_id', $1, true)")
+            .bind(tenant)
+            .execute(&mut *transaction)
+            .await
+            .expect("set tenant context");
+        sqlx::query("DELETE FROM passkey_credentials WHERE tenant_id = $1::uuid")
+            .bind(tenant)
+            .execute(&mut *transaction)
+            .await
+            .expect("cleanup credentials");
+        transaction.commit().await.expect("commit cleanup");
+    }
     sqlx::query("DELETE FROM tenant_memberships WHERE user_id = ANY($1::uuid[])")
         .bind([USER_A, USER_B])
         .execute(pool)
@@ -100,6 +121,7 @@ async fn passkeys_are_isolated_per_tenant() {
         eprintln!("skipping: DATABASE_URL not set");
         return;
     };
+    let _guard = TEST_LOCK.lock().await;
     seed(&pool).await;
 
     // Register a passkey for tenant A within A's transaction-local context.
@@ -151,6 +173,7 @@ async fn cross_tenant_insert_is_rejected() {
         eprintln!("skipping: DATABASE_URL not set");
         return;
     };
+    let _guard = TEST_LOCK.lock().await;
     seed(&pool).await;
 
     // Under tenant B's context, attempting to write a row owned by tenant A must

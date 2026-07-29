@@ -156,7 +156,10 @@ pub enum MarketEvent {
         checksum: Option<String>,
     },
     Funding(FundingQuote),
-    InstrumentChanged(Instrument),
+    /// Boxed: an inline `Instrument` is ~352 bytes against ~144 for the next
+    /// largest variant, so every `MarketEvent` moved through the stream would
+    /// carry that width regardless of variant.
+    InstrumentChanged(Box<Instrument>),
     Heartbeat(DateTime<Utc>),
 }
 

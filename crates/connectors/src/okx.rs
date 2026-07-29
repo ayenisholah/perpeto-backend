@@ -232,6 +232,12 @@ impl OkxConnector {
         Ok(instruments)
     }
 
+    // Implemented but not yet wired into the WebSocket stream. Binance calls its
+    // equivalent on a transport reconnect to rebuild the book and re-anchor the
+    // sequence; OKX's reconnect path does not, so it currently recovers only
+    // through its own checksum/sequence handling. Wiring this needs credentialed
+    // venue evidence and belongs to the open M3 certification work.
+    #[expect(dead_code, reason = "pending M3 reconnect snapshot bridge")]
     async fn book_snapshot(
         &self,
         subscription: &MarketSubscription,

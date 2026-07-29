@@ -22,9 +22,8 @@ use serde_json::Value;
 use sqlx::{PgPool, Row};
 use uuid::Uuid;
 use webauthn_rs::prelude::{
-    CreationChallengeResponse, Passkey, PasskeyAuthentication, PasskeyRegistration,
-    PublicKeyCredential, RegisterPublicKeyCredential, RequestChallengeResponse, Url, Webauthn,
-    WebauthnBuilder,
+    Passkey, PasskeyAuthentication, PasskeyRegistration, PublicKeyCredential,
+    RegisterPublicKeyCredential, Url, Webauthn, WebauthnBuilder,
 };
 
 use crate::error::{AuthError, AuthResult};

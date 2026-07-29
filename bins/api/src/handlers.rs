@@ -1,5 +1,6 @@
 //! HTTP handlers translating requests into application-service calls.
 
+use std::cmp::Reverse;
 use std::str::FromStr;
 
 use axum::extract::{Path, Query, State};
@@ -1209,21 +1210,24 @@ pub async fn list_opportunities(
         });
     }
 
+    // `Reverse` keeps these descending, matching the previous `b.cmp(&a)` form.
+    // Every sort is stable, so equal keys retain persisted rank order.
     match filter.sort.as_deref() {
-        Some("net_apr") => scan.opportunities.sort_by(|a, b| b.net_apr.cmp(&a.net_apr)),
+        Some("net_apr") => scan.opportunities.sort_by_key(|row| Reverse(row.net_apr)),
+        // Sorted by reference: `next_funding_at` is an RFC 3339 `String`, so a
+        // `sort_by_key` would have to clone every key.
         Some("next_funding") => scan
             .opportunities
             .sort_by(|a, b| a.next_funding_at.cmp(&b.next_funding_at)),
-        Some("probability") => scan.opportunities.sort_by(|a, b| {
-            b.profitability_probability
-                .cmp(&a.profitability_probability)
-        }),
+        Some("probability") => scan
+            .opportunities
+            .sort_by_key(|row| Reverse(row.profitability_probability)),
         Some("capacity") => scan
             .opportunities
-            .sort_by(|a, b| b.available_capacity.cmp(&a.available_capacity)),
+            .sort_by_key(|row| Reverse(row.available_capacity)),
         Some("expected_pnl") => scan
             .opportunities
-            .sort_by(|a, b| b.expected_net_pnl.cmp(&a.expected_net_pnl)),
+            .sort_by_key(|row| Reverse(row.expected_net_pnl)),
         _ => {} // default: persisted rank order
     }
 
@@ -2280,16 +2284,20 @@ async fn connector_intent(
         .into_iter()
         .find(|configured| configured.account.id == account_id && configured.product == product)
         .ok_or(AuthError::NotFound)?;
-    let symbol_allowed = match (
-        configured.account.venue.as_str(),
-        product,
-        request.symbol.as_str(),
-    ) {
-        ("BINANCE" | "BYBIT", _, "BTCUSDT" | "ETHUSDT") => true,
-        ("OKX", ProductType::Spot, "BTC-USDT" | "ETH-USDT") => true,
-        ("OKX", ProductType::LinearPerpetual, "BTC-USDT-SWAP" | "ETH-USDT-SWAP") => true,
-        _ => false,
-    };
+    let symbol_allowed = matches!(
+        (
+            configured.account.venue.as_str(),
+            product,
+            request.symbol.as_str(),
+        ),
+        ("BINANCE" | "BYBIT", _, "BTCUSDT" | "ETHUSDT")
+            | ("OKX", ProductType::Spot, "BTC-USDT" | "ETH-USDT")
+            | (
+                "OKX",
+                ProductType::LinearPerpetual,
+                "BTC-USDT-SWAP" | "ETH-USDT-SWAP"
+            )
+    );
     if !symbol_allowed {
         return Err(AuthError::BadRequest("instrument is outside the M3 allowlist").into());
     }

@@ -123,6 +123,15 @@ pub trait SecretStore: Send + Sync {
     ) -> Result<SecretMetadata, SecretStoreError>;
 }
 
+/// One AES-256-GCM sealing: the random nonce, the ciphertext, and the digest of
+/// the plaintext credential (used to detect a no-op rotation and to verify a
+/// rewrap preserved the credential).
+struct SealedSecret {
+    nonce: [u8; 12],
+    ciphertext: Vec<u8>,
+    digest: [u8; 32],
+}
+
 /// AES-256-GCM encrypted Postgres secret store.
 pub struct EncryptedPostgresSecretStore {
     pool: PgPool,
@@ -224,7 +233,7 @@ impl EncryptedPostgresSecretStore {
         context: &SecretContext,
         credential: &CredentialBundle,
         key_version: i32,
-    ) -> Result<([u8; 12], Vec<u8>, [u8; 32]), SecretStoreError> {
+    ) -> Result<SealedSecret, SecretStoreError> {
         Self::validate(credential)?;
         let mut plaintext =
             serde_json::to_vec(credential).map_err(|_| SecretStoreError::EncryptionFailed)?;
@@ -242,7 +251,11 @@ impl EncryptedPostgresSecretStore {
         );
         plaintext.zeroize();
         let ciphertext = encrypted.map_err(|_| SecretStoreError::EncryptionFailed)?;
-        Ok((nonce, ciphertext, digest))
+        Ok(SealedSecret {
+            nonce,
+            ciphertext,
+            digest,
+        })
     }
 }
 
@@ -254,7 +267,11 @@ impl SecretStore for EncryptedPostgresSecretStore {
         credential: &CredentialBundle,
     ) -> Result<SecretMetadata, SecretStoreError> {
         let secret_ref = Uuid::new_v4();
-        let (nonce, ciphertext, digest) = self.seal(context, credential, self.key_version)?;
+        let SealedSecret {
+            nonce,
+            ciphertext,
+            digest,
+        } = self.seal(context, credential, self.key_version)?;
         let mut transaction = TenantTransaction::begin(&self.pool, context.tenant)
             .await
             .map_err(|_| SecretStoreError::PersistenceFailed)?;
@@ -326,7 +343,11 @@ impl SecretStore for EncryptedPostgresSecretStore {
         context: &SecretContext,
         credential: &CredentialBundle,
     ) -> Result<SecretMetadata, SecretStoreError> {
-        let (nonce, ciphertext, digest) = self.seal(context, credential, self.key_version)?;
+        let SealedSecret {
+            nonce,
+            ciphertext,
+            digest,
+        } = self.seal(context, credential, self.key_version)?;
         let mut transaction = TenantTransaction::begin(&self.pool, context.tenant)
             .await
             .map_err(|_| SecretStoreError::PersistenceFailed)?;
@@ -441,8 +462,11 @@ impl SecretStore for EncryptedPostgresSecretStore {
         };
         let key = self.decrypt_key(current_version)?;
         let credential = Self::open_with(key, &context, current_version, &nonce, &ciphertext)?;
-        let (new_nonce, new_ciphertext, digest) =
-            self.seal(&context, &credential, self.key_version)?;
+        let SealedSecret {
+            nonce: new_nonce,
+            ciphertext: new_ciphertext,
+            digest,
+        } = self.seal(&context, &credential, self.key_version)?;
         // The credential is unchanged, so plaintext_digest stays identical.
         sqlx::query(
             "UPDATE encrypted_credentials
@@ -541,7 +565,9 @@ mod tests {
             api_secret: "secret".into(),
             passphrase: None,
         };
-        let (nonce, ciphertext, _) = store.seal(&first, &credential, 1).expect("seal");
+        let SealedSecret {
+            nonce, ciphertext, ..
+        } = store.seal(&first, &credential, 1).expect("seal");
         assert!(
             EncryptedPostgresSecretStore::open_with(
                 &store.master_key,

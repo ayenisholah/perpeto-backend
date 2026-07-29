@@ -57,16 +57,32 @@ fn test_config(database_url: String, bootstrap_token: &str, open_registration: b
     }
 }
 
-async fn reset(pool: &PgPool) {
+/// Truncating is a fixture concern, not behavior under test, and it needs rights
+/// the runtime role must never hold: `TRUNCATE` is destructive, and row-level
+/// security does not gate it. So the reset runs as the schema owner
+/// (`MIGRATE_DATABASE_URL`) while every assertion below still exercises the
+/// service through the restricted runtime role in `DATABASE_URL`. A plain
+/// `DELETE` as the runtime role would silently remove nothing, because most of
+/// these tables are forced-RLS and the reset holds no tenant context.
+async fn reset(_pool: &PgPool) {
+    let admin_url = std::env::var("MIGRATE_DATABASE_URL")
+        .or_else(|_| std::env::var("DATABASE_URL"))
+        .expect("MIGRATE_DATABASE_URL or DATABASE_URL");
+    let admin = PgPoolOptions::new()
+        .max_connections(1)
+        .connect(&admin_url)
+        .await
+        .expect("connect as schema owner");
     sqlx::query(
         "TRUNCATE tenants, tenant_memberships, users, provider_identities, user_roles, social_challenges, devices, \
          sessions, refresh_token_history, mfa_methods, recovery_codes, \
          recovery_code_acknowledgements, bootstrap_state, step_up_proofs, \
          audit_actors, audit_events RESTART IDENTITY CASCADE",
     )
-    .execute(pool)
+    .execute(&admin)
     .await
     .expect("truncate");
+    admin.close().await;
 }
 
 async fn setup(subject: &str, bootstrap_token: &str) -> Option<(AuthService, PgPool)> {
@@ -84,10 +100,11 @@ async fn setup_with(
         .connect(&database_url)
         .await
         .expect("connect");
-    sqlx::migrate!("../../migrations")
-        .run(&pool)
-        .await
-        .expect("migrate");
+    // Migrations are applied by the harness as the schema owner before the suite
+    // runs (see the CI workflow and docs/DEPLOYMENT.md). `DATABASE_URL` is the
+    // runtime role, which deliberately holds no DDL rights, so migrating here
+    // would fail with "permission denied for schema public" — and granting it
+    // that permission would defeat the isolation the other tests assert.
     reset(&pool).await;
 
     let config = test_config(database_url, bootstrap_token, open_registration);

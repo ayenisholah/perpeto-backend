@@ -193,10 +193,20 @@ async fn run(mode: TradingMode) -> ExitCode {
                 } else {
                     println!("scan complete at {now}: {count} eligible opportunities");
                     if mode.is_paper() {
+                        // Strategy evaluation consumes bare opportunities. The
+                        // scanner already ranks behind its risk gates, so
+                        // re-checking `within_limits` can only narrow the set,
+                        // and entries must fail closed.
+                        let entry_candidates: Vec<_> = result
+                            .opportunities
+                            .iter()
+                            .filter(|ranked| ranked.assessment.within_limits)
+                            .map(|ranked| ranked.opportunity.clone())
+                            .collect();
                         for tenant in &tenant_contexts {
                             auto_enter(
                                 *tenant,
-                                &result.opportunities,
+                                &entry_candidates,
                                 &strategies,
                                 &positions,
                                 &breakers,
@@ -460,7 +470,7 @@ async fn auto_enter(
             {
                 continue;
             }
-            match execution.open(&intent.route_id, intent.notional, now) {
+            match execution.open(&intent.route_id, Some(intent.notional), key.clone(), now) {
                 Ok(mut position) => {
                     position.strategy_id = Some(intent.strategy_id);
                     let dto = PositionDto::from_domain(&position);

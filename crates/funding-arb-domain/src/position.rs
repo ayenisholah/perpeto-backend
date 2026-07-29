@@ -1048,8 +1048,10 @@ mod tests {
             funding_rate: Decimal::new(30, 4),
             funding_interval_hours: 8,
         };
-        let mut cost = CostModel::default();
-        cost.slippage = Decimal::new(2, 2);
+        let cost = CostModel {
+            slippage: Decimal::new(2, 2),
+            ..CostModel::default()
+        };
         let position = open_paper_with_scenario(
             "0190abcd-5555-7000-8000-000000000005".into(),
             "recover-flatten".into(),

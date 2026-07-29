@@ -8,7 +8,7 @@ use funding_arb_tenant_context::{TenantContext, TenantTransaction};
 use sqlx::{PgPool, Row};
 use uuid::Uuid;
 
-use crate::audit::{canonical, event_hash};
+use crate::audit::{AuditFields, canonical, event_hash};
 use crate::error::{AuthError, AuthResult};
 
 const SESSION_TTL_DAYS: i64 = 30;
@@ -994,16 +994,16 @@ impl Repo {
         // Truncate to microseconds so the value hashed here equals the timestamptz
         // read back during verification.
         let occurred_at = Utc::now().trunc_subsecs(6);
-        let canonical_form = canonical(
+        let canonical_form = canonical(&AuditFields {
             event_type,
             subject_type,
             subject_id,
-            &actor_pseudonym.to_string(),
-            &request_id.to_string(),
-            &session_id.map(|id| id.to_string()).unwrap_or_default(),
-            details_json,
-            &format_audit_ts(occurred_at),
-        );
+            actor_pseudonym: &actor_pseudonym.to_string(),
+            request_id: &request_id.to_string(),
+            session_id: &session_id.map(|id| id.to_string()).unwrap_or_default(),
+            details: details_json,
+            occurred_at: &format_audit_ts(occurred_at),
+        });
         let hash = event_hash(previous_array.as_ref(), &canonical_form);
 
         sqlx::query(
@@ -1072,16 +1072,16 @@ impl Repo {
             let request_id: Uuid = row.get("request_id");
             let pseudonym: Uuid = row.get("pseudonym");
             let occurred_at: DateTime<Utc> = row.get("occurred_at");
-            let canonical_form = canonical(
-                &row.get::<String, _>("event_type"),
-                &row.get::<String, _>("subject_type"),
-                &row.get::<String, _>("subject_id"),
-                &pseudonym.to_string(),
-                &request_id.to_string(),
-                &session.map(|id| id.to_string()).unwrap_or_default(),
-                &normalized,
-                &format_audit_ts(occurred_at),
-            );
+            let canonical_form = canonical(&AuditFields {
+                event_type: &row.get::<String, _>("event_type"),
+                subject_type: &row.get::<String, _>("subject_type"),
+                subject_id: &row.get::<String, _>("subject_id"),
+                actor_pseudonym: &pseudonym.to_string(),
+                request_id: &request_id.to_string(),
+                session_id: &session.map(|id| id.to_string()).unwrap_or_default(),
+                details: &normalized,
+                occurred_at: &format_audit_ts(occurred_at),
+            });
             let computed = event_hash(previous.as_ref(), &canonical_form);
             let stored_hash: Vec<u8> = row.get("event_hash");
             if computed.as_slice() != stored_hash.as_slice() {

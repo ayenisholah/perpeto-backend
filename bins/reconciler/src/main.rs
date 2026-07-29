@@ -37,6 +37,14 @@ async fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
+    // Reject an unsafe role before building the registry or announcing startup,
+    // matching the api and engine binaries: the registry resolves credential
+    // backend configuration, which must not run under a role that can bypass
+    // tenant isolation.
+    if let Err(error) = assert_safe_runtime_role(&pool).await {
+        eprintln!("unsafe reconciler database role: {error}");
+        return ExitCode::FAILURE;
+    }
     let interval = env::var("PERPETO_RECONCILE_INTERVAL_SECS")
         .ok()
         .and_then(|value| value.parse::<u64>().ok())
@@ -50,12 +58,8 @@ async fn main() -> ExitCode {
         }
     };
     let service = ReconciliationService::new(pool.clone());
-    let accounts = VenueAccountsRepo::new(pool);
+    let accounts = VenueAccountsRepo::new(pool.clone());
     println!("Perpeto connector reconciler started in {mode} mode");
-    if let Err(error) = assert_safe_runtime_role(&pool).await {
-        eprintln!("unsafe reconciler database role: {error}");
-        return ExitCode::FAILURE;
-    }
     loop {
         let tenants = match active_tenants(&pool).await {
             Ok(value) => value,

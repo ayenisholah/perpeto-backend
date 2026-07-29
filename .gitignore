@@ -5,6 +5,7 @@ packages/api-client/dist/
 packages/api-client/schemas/
 .env
 runtime.env
+deploy/dev.env
 *.pem
 *.key
 *.log

@@ -43,6 +43,26 @@ impl fmt::Display for ReconciliationError {
 
 impl Error for ReconciliationError {}
 
+/// The venue-authoritative reads captured by one reconciliation run. Grouped so
+/// the four same-shaped slices cannot be passed in the wrong order.
+#[derive(Clone, Copy)]
+struct AccountSnapshot<'a> {
+    balances: &'a [Balance],
+    positions: &'a [VenuePosition],
+    fills: &'a [Fill],
+    funding: &'a [FundingLedgerEntry],
+}
+
+/// How many records a run observed. Grouped for the same reason: four bare
+/// `usize` arguments are trivially transposable.
+#[derive(Clone, Copy)]
+struct RunCounts {
+    balances: usize,
+    positions: usize,
+    open_orders: usize,
+    fills: usize,
+}
+
 #[derive(Clone)]
 pub struct ReconciliationService {
     pool: PgPool,
@@ -92,7 +112,16 @@ impl ReconciliationService {
             .find_discrepancies(context, run_id, connector, account, &open_orders)
             .await?;
         self.persist_snapshot(
-            context, run_id, venue, account, &balances, &positions, &fills, &funding,
+            context,
+            run_id,
+            venue,
+            account,
+            AccountSnapshot {
+                balances: &balances,
+                positions: &positions,
+                fills: &fills,
+                funding: &funding,
+            },
         )
         .await?;
         let status = if discrepancies == 0 {
@@ -104,10 +133,12 @@ impl ReconciliationService {
             context,
             run_id,
             status,
-            balances.len(),
-            positions.len(),
-            open_orders.len(),
-            fills.len(),
+            RunCounts {
+                balances: balances.len(),
+                positions: positions.len(),
+                open_orders: open_orders.len(),
+                fills: fills.len(),
+            },
         )
         .await?;
         Ok(ReconciliationReport {
@@ -244,11 +275,14 @@ impl ReconciliationService {
         context: TenantContext,
         run_id: Uuid,
         status: &str,
-        balances: usize,
-        positions: usize,
-        open_orders: usize,
-        fills: usize,
+        counts: RunCounts,
     ) -> Result<(), ReconciliationError> {
+        let RunCounts {
+            balances,
+            positions,
+            open_orders,
+            fills,
+        } = counts;
         let mut transaction = TenantTransaction::begin(&self.pool, context)
             .await
             .map_err(|_| ReconciliationError::Persistence)?;
@@ -313,11 +347,14 @@ impl ReconciliationService {
         run_id: Uuid,
         venue: &str,
         account: &AccountId,
-        balances: &[Balance],
-        positions: &[VenuePosition],
-        fills: &[Fill],
-        funding: &[FundingLedgerEntry],
+        snapshot: AccountSnapshot<'_>,
     ) -> Result<(), ReconciliationError> {
+        let AccountSnapshot {
+            balances,
+            positions,
+            fills,
+            funding,
+        } = snapshot;
         let mut transaction = TenantTransaction::begin(&self.pool, context)
             .await
             .map_err(|_| ReconciliationError::Persistence)?;

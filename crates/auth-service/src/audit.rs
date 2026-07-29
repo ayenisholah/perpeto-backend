@@ -11,30 +11,41 @@ use crate::tokens::sha256;
 /// Encoding version tag, mixed in so a future format change is unambiguous.
 const CHAIN_TAG: &str = "perpeto-audit-v1";
 
+/// The hashable fields of one audit event.
+///
+/// These are named rather than passed positionally because they are all strings:
+/// transposing two adjacent arguments would still compile and would silently
+/// produce a different, unverifiable chain.
+#[derive(Clone, Copy, Debug)]
+pub struct AuditFields<'a> {
+    pub event_type: &'a str,
+    pub subject_type: &'a str,
+    pub subject_id: &'a str,
+    pub actor_pseudonym: &'a str,
+    pub request_id: &'a str,
+    pub session_id: &'a str,
+    pub details: &'a str,
+    pub occurred_at: &'a str,
+}
+
 /// Injective, length-prefixed canonical form of an event's hashable fields. The
 /// `details` field must already be a stable serialization (we use
 /// `serde_json::Value::to_string()`, which is sorted-key and compact).
+///
+/// The field order below is part of the on-disk format: changing it invalidates
+/// every stored `event_hash`.
 #[must_use]
-pub fn canonical(
-    event_type: &str,
-    subject_type: &str,
-    subject_id: &str,
-    actor_pseudonym: &str,
-    request_id: &str,
-    session_id: &str,
-    details: &str,
-    occurred_at: &str,
-) -> String {
+pub fn canonical(fields: &AuditFields<'_>) -> String {
     length_prefixed(&[
         CHAIN_TAG,
-        event_type,
-        subject_type,
-        subject_id,
-        actor_pseudonym,
-        request_id,
-        session_id,
-        details,
-        occurred_at,
+        fields.event_type,
+        fields.subject_type,
+        fields.subject_id,
+        fields.actor_pseudonym,
+        fields.request_id,
+        fields.session_id,
+        fields.details,
+        fields.occurred_at,
     ])
 }
 
@@ -66,16 +77,30 @@ mod tests {
     use super::*;
 
     fn sample(details: &str, occurred: &str) -> String {
-        canonical(
-            "CREDENTIAL_ENROLLED",
-            "venue_account",
-            "acct-1",
-            "pseudo-1",
-            "req-1",
-            "sess-1",
+        canonical(&AuditFields {
+            event_type: "CREDENTIAL_ENROLLED",
+            subject_type: "venue_account",
+            subject_id: "acct-1",
+            actor_pseudonym: "pseudo-1",
+            request_id: "req-1",
+            session_id: "sess-1",
             details,
-            occurred,
-        )
+            occurred_at: occurred,
+        })
+    }
+
+    /// Build fields from the eight positional values, for tests that vary them.
+    fn fields<'a>(values: [&'a str; 8]) -> AuditFields<'a> {
+        AuditFields {
+            event_type: values[0],
+            subject_type: values[1],
+            subject_id: values[2],
+            actor_pseudonym: values[3],
+            request_id: values[4],
+            session_id: values[5],
+            details: values[6],
+            occurred_at: values[7],
+        }
     }
 
     #[test]
@@ -111,8 +136,8 @@ mod tests {
     #[test]
     fn encoding_is_injective_across_delimiter_containing_fields() {
         // Moving a ':' across a field boundary must not produce the same canonical.
-        let a = canonical("A", "b:c", "d", "e", "f", "g", "{}", "t");
-        let b = canonical("A", "b", "c:d", "e", "f", "g", "{}", "t");
+        let a = canonical(&fields(["A", "b:c", "d", "e", "f", "g", "{}", "t"]));
+        let b = canonical(&fields(["A", "b", "c:d", "e", "f", "g", "{}", "t"]));
         assert_ne!(a, b);
     }
 }
