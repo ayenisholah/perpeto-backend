@@ -4,12 +4,14 @@ mod problem;
 mod routes;
 mod state;
 
+use axum::http::HeaderValue;
 use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::process::ExitCode;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::{env, thread, time::Duration};
+use tower_http::cors::{Any, CorsLayer};
 
 use funding_arb_auth_service::{
     AuthConfig, AuthService, DevIdentityVerifier, IdentityTokenVerifier, LiveIdentityVerifier,
@@ -194,6 +196,55 @@ async fn run() -> ExitCode {
         connector_execution,
         reconciliation,
     });
+
+    // Browsers refuse cross-origin calls without CORS, and `expo start --web`
+    // serves the app from a different origin than this API. Devices are
+    // unaffected, so this exists purely for the local web development page.
+    //
+    // Gated separately from PERPETO_DEV_AUTH so each affordance can be audited on
+    // its own, and PAPER-only: the deployed staging backend also runs in PAPER,
+    // so mode alone would not be a sufficient gate — an explicit origin list is
+    // required, and it is never set outside local development.
+    let router = match env::var("PERPETO_DEV_CORS_ORIGINS") {
+        Err(_) => router,
+        Ok(raw) => {
+            if !mode.is_paper() {
+                eprintln!(
+                    "PERPETO_DEV_CORS_ORIGINS is only permitted in PAPER mode (current mode is \
+                     {mode}); refusing to start"
+                );
+                return ExitCode::FAILURE;
+            }
+            let mut origins = Vec::new();
+            for value in raw
+                .split(',')
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+            {
+                match value.parse::<HeaderValue>() {
+                    Ok(origin) => origins.push(origin),
+                    Err(_) => {
+                        eprintln!("invalid origin in PERPETO_DEV_CORS_ORIGINS: {value}");
+                        return ExitCode::FAILURE;
+                    }
+                }
+            }
+            if origins.is_empty() {
+                eprintln!("PERPETO_DEV_CORS_ORIGINS was set but lists no origin");
+                return ExitCode::FAILURE;
+            }
+            println!("development CORS enabled for: {raw}");
+            // Explicit origins rather than `Any`, and credentials are not allowed:
+            // the client sends its access token in an Authorization header, which
+            // `allow_headers` covers, so cookie-style credentials are unnecessary.
+            router.layer(
+                CorsLayer::new()
+                    .allow_origin(origins)
+                    .allow_methods(Any)
+                    .allow_headers(Any),
+            )
+        }
+    };
 
     let listener = match tokio::net::TcpListener::bind(&config.bind_address).await {
         Ok(listener) => listener,

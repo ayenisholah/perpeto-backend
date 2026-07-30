@@ -44,6 +44,10 @@ sqlx = { version = "0.8", default-features = false, features = ["postgres", "run
 subtle = "2"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "signal"] }
 tokio-tungstenite = { version = "0.28", default-features = false, features = ["connect", "handshake", "rustls-tls-webpki-roots"] }
+# Already in the tree via reqwest; the `cors` feature adds no new crate. Used only
+# by the development CORS layer, because a browser needs preflight handling that
+# would otherwise have to be hand-written per route.
+tower-http = { version = "0.6", default-features = false, features = ["cors"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 uuid = { version = "1", features = ["v4", "serde"] }

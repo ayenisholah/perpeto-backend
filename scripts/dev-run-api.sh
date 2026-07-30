@@ -45,6 +45,10 @@ PERPETO_OPEN_REGISTRATION=true
 # verification, so the API permits it in PAPER mode only and refuses to start
 # with it set in any other mode. See DEC-0014.
 PERPETO_DEV_AUTH=true
+# Browsers need CORS and \`expo start --web\` serves from another origin. Devices
+# do not need this. PAPER-only and refuses to start elsewhere; the deployed
+# staging backend also runs PAPER, so this list must never be set there.
+PERPETO_DEV_CORS_ORIGINS=http://localhost:8081,http://127.0.0.1:8081
 # Keep offline; enter once in the app to seat the first Owner.
 DEPLOYMENT_TOKEN=$token
 ENV
