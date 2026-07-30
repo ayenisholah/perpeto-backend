@@ -40,6 +40,11 @@ PERPETO_BOOTSTRAP_TOKEN_EXPIRES_AT=$(date -u -d '+30 days' +%Y-%m-%dT%H:%M:%SZ)
 # Local development only. DEC-0012 forbids this authorization model for the M4
 # pilot, so it must never be set on a shared or deployed environment.
 PERPETO_OPEN_REGISTRATION=true
+# Development sign-in so Expo Go, which cannot run the native Google/Apple
+# modules, can reach the authenticated screens. Substitutes provider identity
+# verification, so the API permits it in PAPER mode only and refuses to start
+# with it set in any other mode. See DEC-0014.
+PERPETO_DEV_AUTH=true
 # Keep offline; enter once in the app to seat the first Owner.
 DEPLOYMENT_TOKEN=$token
 ENV

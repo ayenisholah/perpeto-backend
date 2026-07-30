@@ -12,7 +12,8 @@ use std::sync::Arc;
 use std::{env, thread, time::Duration};
 
 use funding_arb_auth_service::{
-    AuthConfig, AuthService, LiveIdentityVerifier, PasskeyService, Repo, build_webauthn,
+    AuthConfig, AuthService, DevIdentityVerifier, IdentityTokenVerifier, LiveIdentityVerifier,
+    PasskeyService, Repo, build_webauthn,
 };
 use funding_arb_domain::TradingMode;
 use funding_arb_execution_service::{
@@ -146,10 +147,34 @@ async fn run() -> ExitCode {
         return ExitCode::FAILURE;
     }
 
-    let verifier = Arc::new(LiveIdentityVerifier::new(
-        config.apple_bundle_id.clone(),
-        config.google_client_ids.clone(),
-    ));
+    // Development sign-in for Expo Go, which cannot run the native Google or
+    // Apple modules. This substitutes provider signature verification, so it is
+    // an authentication bypass and is gated twice: PAPER mode *and* an explicit
+    // opt-in. Setting the flag in any other mode aborts startup rather than
+    // silently falling back to the live verifier, so it cannot be enabled by
+    // accident on a deployment. See DEC-0014.
+    let dev_auth = env::var("PERPETO_DEV_AUTH")
+        .map(|value| value.trim().eq_ignore_ascii_case("true"))
+        .unwrap_or(false);
+    if dev_auth && !mode.is_paper() {
+        eprintln!(
+            "PERPETO_DEV_AUTH is only permitted in PAPER mode (current mode is {mode}); \
+             refusing to start with provider verification disabled"
+        );
+        return ExitCode::FAILURE;
+    }
+    let verifier: Arc<dyn IdentityTokenVerifier> = if dev_auth {
+        eprintln!(
+            "WARNING: PERPETO_DEV_AUTH is enabled. Provider identity tokens are NOT verified \
+             and any caller can sign in as any subject. Local development only."
+        );
+        Arc::new(DevIdentityVerifier)
+    } else {
+        Arc::new(LiveIdentityVerifier::new(
+            config.apple_bundle_id.clone(),
+            config.google_client_ids.clone(),
+        ))
+    };
     let service = AuthService::new(repo, &config, verifier);
     let router = build_router(AppState {
         mode,

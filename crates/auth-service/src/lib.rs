@@ -22,6 +22,8 @@ pub use passkey::{
     ActionProofReceipt, AssertionOutcome, CeremonyChallenge, PasskeyService, PasskeyView,
     build_webauthn,
 };
-pub use providers::{IdentityTokenVerifier, LiveIdentityVerifier, VerifiedIdentity};
+pub use providers::{
+    IdentityTokenVerifier, LiveIdentityVerifier, VerifiedIdentity, dev::DevIdentityVerifier,
+};
 pub use repo::Repo;
 pub use service::{AuthService, CallerContext};

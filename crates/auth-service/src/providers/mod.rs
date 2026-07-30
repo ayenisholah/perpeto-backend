@@ -5,6 +5,7 @@
 //! production uses live Apple and Google JWKS.
 
 pub mod apple;
+pub mod dev;
 pub mod google;
 pub mod jwks;
 
