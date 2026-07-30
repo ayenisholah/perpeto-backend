@@ -16,7 +16,11 @@ if "${compose[@]}" ps --status running postgres --quiet | grep -q .; then
 fi
 
 "${compose[@]}" up -d postgres redis --wait --wait-timeout 60
-"${compose[@]}" run --rm --entrypoint funding-arb-migrate api
+# Must be the `migrate` service, not `api` with a swapped entrypoint: the api
+# service carries the runtime `DATABASE_URL` (`perpeto_app`), which owns nothing
+# and cannot create tables, so migrating through it fails with "permission denied
+# for schema public". Only `migrate` overrides the URL to the schema owner.
+"${compose[@]}" run --rm migrate
 "${compose[@]}" up -d --remove-orphans --wait --wait-timeout 60
 
 for _ in $(seq 1 30); do
