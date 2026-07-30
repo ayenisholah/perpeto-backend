@@ -20,19 +20,6 @@ The M1 authentication runtime additionally requires the following in `runtime.en
 - `MIGRATE_DATABASE_URL` — the `perpeto_migrator` schema owner, used only by `funding-arb-migrate`.
 - `DATABASE_URL` — the `perpeto_app` runtime role for every service, e.g. `postgres://perpeto_app:...@postgres:5432/perpeto` (the `postgres` host is the compose service).
 
-### Database roles
-
-Run `scripts/bootstrap-db-roles.sql` as the superuser once against a new database, before the first migration:
-
-```bash
-psql "postgres://perpeto:...@postgres:5432/perpeto" -v ON_ERROR_STOP=1 -f scripts/bootstrap-db-roles.sql
-```
-
-It creates the `perpeto_migrator` schema owner and the `perpeto_app` runtime role, and sets default privileges so tables added by later migrations stay reachable by `perpeto_app`. Both are `NOSUPERUSER NOBYPASSRLS`. This separation is mandatory, not stylistic: `assert_safe_runtime_role` refuses to start `api`, `engine`, `worker` or `rewrap` under a role that can bypass row-level security or owns a tenant table, because either condition silently disables tenant isolation. The local development stack applies the same script automatically through the Postgres init hook:
-
-```bash
-docker compose -f deploy/compose/docker-compose.dev.yml up -d
-```
 - `PERPETO_ACCESS_TOKEN_KEY` — base64 of a 32-byte Ed25519 seed used to sign access tokens.
 - `PERPETO_TOKEN_ISSUER` — the public API origin (e.g. `https://api.perpeto.xyz`).
 - `PERPETO_APPLE_BUNDLE_ID` — `com.signex.mobile` (audience for Apple identity tokens).
@@ -42,6 +29,34 @@ docker compose -f deploy/compose/docker-compose.dev.yml up -d
 - `PERPETO_OPEN_REGISTRATION` — optional (default `false`). Set `true` only on the legacy shared v1 dev/TestFlight backend so each new social sign-in is admitted immediately to full access without pending approval or MFA (DEC-0009). Leave unset/`false` for production and all M4 environments.
 
 `PERPETO_OPEN_REGISTRATION` and its universal privilege waiver are transitional only. DEC-0012 forbids that authorization model for the M4 pilot.
+
+## Database roles
+
+Run `scripts/bootstrap-db-roles.sql` as the superuser once against a new database, before the first migration:
+
+```bash
+psql "postgres://perpeto:...@postgres:5432/perpeto" -v ON_ERROR_STOP=1 -f scripts/bootstrap-db-roles.sql
+```
+
+It creates the `perpeto_migrator` schema owner and the `perpeto_app` runtime role, and sets default privileges so tables added by later migrations stay reachable by `perpeto_app`. Both are `NOSUPERUSER NOBYPASSRLS`. This separation is mandatory, not stylistic: `assert_safe_runtime_role` refuses to start `api`, `engine`, `worker` or `rewrap` under a role that can bypass row-level security or owns a tenant table, because either condition silently disables tenant isolation.
+
+## Local development
+
+The development stack applies the same role script automatically through the Postgres init hook, then the API and workers run natively:
+
+```bash
+docker compose -f deploy/compose/docker-compose.dev.yml up -d
+bash scripts/dev-run-api.sh
+```
+
+PostgreSQL 18 and Redis publish to `127.0.0.1` only; override the host ports with `PERPETO_DEV_DB_PORT` and `PERPETO_DEV_REDIS_PORT` if they collide. `dev-run-api.sh` generates `deploy/dev.env` (gitignored) on first run, migrates as the schema owner, and binds the API to `0.0.0.0:8080` so a phone on the same network can reach it. It prints a one-use deployment token that seats the first Owner account.
+
+Building the API natively requires `pkg-config` and `libssl-dev`, because `webauthn-rs` links native OpenSSL. GitHub's runners already provide both, so CI needs no extra step.
+
+Two things account for most local failures:
+
+- **`address already in use` on 5432 usually means a second Docker daemon.** `docker context ls` shows which daemon plain `docker` commands target; containers on one daemon are invisible to the other while still holding the host port. Compose acts on the *active* context, so a stack started with an explicit `--context` will not be found without it.
+- **The role bootstrap runs only on a fresh volume.** If `perpeto_migrator` or `perpeto_app` is missing, migrations fail with `permission denied for schema public`. Confirm with `docker compose -f deploy/compose/docker-compose.dev.yml exec postgres psql -U perpeto -d perpeto -c '\du'` and recreate with `down -v` rather than `up -d`.
 
 ## M4 shared-VPS target
 

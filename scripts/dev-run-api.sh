@@ -4,6 +4,9 @@
 #   docker compose -f deploy/compose/docker-compose.dev.yml up -d
 #   bash scripts/dev-run-api.sh
 #
+# Requires pkg-config and libssl-dev on the host: webauthn-rs links native
+# OpenSSL, so auth-service and this binary will not build without them.
+#
 # Secrets are generated once into deploy/dev.env (gitignored) and reused, so the
 # access tokens minted across restarts stay valid. Delete that file to rotate.
 #

@@ -8,10 +8,11 @@
 
 ## Verification baseline
 
-Established on Linux with the pinned Rust 1.97.0 toolchain and a PostgreSQL 18 container (`deploy/compose/docker-compose.dev.yml`). Reproduce with:
+Established on Linux with the pinned Rust 1.97.0 toolchain and a PostgreSQL 18 container (`deploy/compose/docker-compose.dev.yml`). Building requires `pkg-config` and `libssl-dev`, because `webauthn-rs` links native OpenSSL. Reproduce with:
 
 ```bash
 docker compose -f deploy/compose/docker-compose.dev.yml up -d
+set -a; . ./deploy/dev.env; set +a
 cargo fmt --all -- --check
 cargo clippy --locked --workspace --all-targets -- -D warnings
 DATABASE_URL="$MIGRATE_DATABASE_URL" cargo run --locked --bin funding-arb-migrate

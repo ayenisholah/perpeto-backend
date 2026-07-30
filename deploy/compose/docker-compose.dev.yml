@@ -3,20 +3,31 @@ name: perpeto-dev
 # Local development backing services only.
 #
 # This stack deliberately runs no Perpeto service images. The API, engine and
-# workers are meant to run from `cargo run` on the host so the local edit/build
-# loop stays fast and the mobile client can reach the API over the LAN. Compose
-# supplies just the stateful dependencies.
-#
-# Ports are published on 0.0.0.0 rather than 127.0.0.1 (unlike the staging
-# stack) so a phone running Expo Go can reach the host. This stack is for a
-# trusted local network and uses well-known development passwords; never expose
-# it to an untrusted network or reuse these values anywhere real.
+# workers run from `cargo run` on the host so the edit/build loop stays fast and
+# the API can bind 0.0.0.0 itself for a phone on the LAN. Compose supplies just
+# the stateful dependencies.
 #
 #   docker compose -f deploy/compose/docker-compose.dev.yml up -d
 #
+# Both services publish to 127.0.0.1 only. Nothing outside this host needs them:
+# a phone talks to the API, never to PostgreSQL, and these are well-known
+# development passwords that must not be reachable from any network.
+#
+# The host ports are overridable, because a machine running several Docker
+# projects will eventually collide:
+#
+#   PERPETO_DEV_DB_PORT=15432 PERPETO_DEV_REDIS_PORT=16379 \
+#     docker compose -f deploy/compose/docker-compose.dev.yml up -d
+#
+# Note that "address already in use" more often means a *second Docker daemon*
+# already holds the port than a genuine clash: `docker context ls` shows which
+# daemon plain `docker` commands target, and containers on one daemon are
+# invisible to the other while still owning the host port.
+#
 # `scripts/bootstrap-db-roles.sql` is mounted into the Postgres init hook, so
 # `perpeto_migrator` and `perpeto_app` exist the first time the volume is
-# created. Changing that file afterwards requires `down -v` to re-run it.
+# created. That hook runs only on a *fresh* volume: after changing the script,
+# or if the roles are missing, `down -v` first — `up -d` alone will not re-run it.
 
 services:
   postgres:
@@ -26,7 +37,7 @@ services:
       POSTGRES_USER: perpeto
       POSTGRES_PASSWORD: perpeto
       POSTGRES_DB: perpeto
-    ports: ["5432:5432"]
+    ports: ["127.0.0.1:${PERPETO_DEV_DB_PORT:-5432}:5432"]
     volumes:
       - perpeto-dev-postgres:/var/lib/postgresql
       - ../../scripts/bootstrap-db-roles.sql:/docker-entrypoint-initdb.d/10-bootstrap-db-roles.sql:ro
@@ -40,7 +51,7 @@ services:
     image: redis:7.4.5-bookworm
     restart: unless-stopped
     command: ["redis-server", "--appendonly", "no", "--save", ""]
-    ports: ["6379:6379"]
+    ports: ["127.0.0.1:${PERPETO_DEV_REDIS_PORT:-6379}:6379"]
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
