@@ -130,10 +130,28 @@ async fn missing_tenant_context_reads_and_writes_nothing() {
         .execute(&mut *seeded)
         .await
         .expect("set context");
+    // The payload must deserialize into `CircuitBreakerDto`: this row outlives the
+    // test in a shared development database, and `BreakersRepo::controls` returns
+    // an error for the whole tenant if any row fails to decode — which halts the
+    // engine's auto-entry. `active` is false for the same reason; the row exists
+    // only to exercise the policy and must not read as a live risk control.
     sqlx::query(
         "INSERT INTO circuit_breakers
-             (id, tenant_id, scope, action, source, created_at, payload)
-         VALUES (gen_random_uuid(), $1::uuid, 'GLOBAL', 'HALT_NEW_RISK', 'TEST', now(), '{}')",
+             (id, tenant_id, scope, action, source, active, created_at, payload)
+         SELECT generated.id, $1::uuid, 'GLOBAL', 'HALT_NEW_RISK', 'TEST', false, now(),
+                json_build_object(
+                    'id', generated.id::text,
+                    'scope', 'GLOBAL',
+                    'scope_key', NULL,
+                    'action', 'HALT_NEW_RISK',
+                    'source', 'TEST',
+                    'reason', 'forced-RLS acceptance evidence',
+                    'created_by', NULL,
+                    'active', false,
+                    'created_at', now(),
+                    'resolved_at', NULL
+                )::text
+         FROM (SELECT gen_random_uuid() AS id) AS generated",
     )
     .bind(tenant.as_str())
     .execute(&mut *seeded)
