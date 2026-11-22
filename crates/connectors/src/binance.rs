@@ -168,8 +168,14 @@ impl BinanceConnector {
     }
 
     async fn spot_instruments(&self) -> ConnectorResult<Vec<Instrument>> {
+        // Ask for the supported symbols only. The unfiltered response is about
+        // 18 MB and can take over a minute on a slow link.
         let response = self
-            .public_get(ProductType::Spot, "/api/v3/exchangeInfo", &[])
+            .public_get(
+                ProductType::Spot,
+                "/api/v3/exchangeInfo",
+                &[("symbols", SPOT_SYMBOLS_QUERY.to_owned())],
+            )
             .await?;
         let mut instruments = Vec::new();
         for item in array(&response, "symbols")? {
@@ -1047,6 +1053,9 @@ fn reconciliation(code: &str) -> ConnectorError {
     }
 }
 
+/// The spot symbols this connector supports, in Binance's JSON-array query form.
+const SPOT_SYMBOLS_QUERY: &str = r#"["BTCUSDT","ETHUSDT"]"#;
+
 fn parse_instrument(item: &Value, product: ProductType) -> ConnectorResult<Instrument> {
     let symbol = text(item, "symbol")?;
     let price = filter(item, "PRICE_FILTER")?;
@@ -1320,6 +1329,13 @@ mod tests {
                 notional,
             ],
         })
+    }
+
+    #[test]
+    fn spot_exchange_info_requests_only_the_supported_symbols() {
+        // Must stay in step with the symbol filter in `spot_instruments`.
+        let symbols: Vec<String> = serde_json::from_str(SPOT_SYMBOLS_QUERY).unwrap_or_default();
+        assert_eq!(symbols, ["BTCUSDT", "ETHUSDT"]);
     }
 
     #[test]
