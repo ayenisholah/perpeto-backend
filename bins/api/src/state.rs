@@ -28,6 +28,8 @@ pub struct AppState {
     pub scanner: ScannerRepo,
     /// The paper execution service (opens positions from ranked opportunities).
     pub execution: ExecutionService,
+    /// Oldest persisted market snapshot a paper open may use (DEC-0016).
+    pub max_snapshot_age: chrono::Duration,
     /// Persistence for opened paper positions.
     pub positions: PositionsRepo,
     /// Durable emergency controls.

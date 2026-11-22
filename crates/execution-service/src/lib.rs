@@ -21,4 +21,4 @@ pub use dto::{
 };
 pub use monitoring::{AlertDto, HealthDto, MonitoringRepo, PortfolioDto};
 pub use repo::PositionsRepo;
-pub use service::{ExecutionService, OpenError, SuperviseError};
+pub use service::{ExecutionService, OpenError, SuperviseError, book_fill_price, fixture_snapshot};

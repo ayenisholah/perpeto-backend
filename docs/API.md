@@ -30,7 +30,10 @@ The credential, certification and pilot groups are implemented hardening (DEC-00
 
 ## Planned changes
 
-- **M2:** no new paths. Opportunity, health and venue reads gain live public-data freshness, and scanner output comes from live books in PAPER.
+- **M2:** no new paths.
+  - `POST /positions` now opens against the market snapshot stored with the latest scan and fills from its captured books.
+  - It returns 409 with `STALE_MARKET_DATA`, `VENUE_DEGRADED` or `INSUFFICIENT_DEPTH` in addition to `RISK_HALTED`.
+  - Health and opportunity reads gain feed freshness in client `0.23.0`.
 - **M3:** a read-only demo viewer (DEC-0017). Additive authentication for the viewer, and a role every mutating endpoint rejects, proven by an authorization test.
 - **M4:** no new paths. SANDBOX evidence uses the existing venue-account, connector-order and reconciliation endpoints.
 

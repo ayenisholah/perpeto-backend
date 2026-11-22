@@ -6,6 +6,11 @@ All notable repository changes are recorded here using Keep a Changelog categori
 
 ### Added
 
+- M2 step 3: paper trading runs on the market snapshot.
+  - **Engine:** takes one snapshot per tick and uses it for venue breakers, supervision, ranking, persistence and auto-entry. `PERPETO_PAPER_SOURCE=live` (the default) uses keyless public data on wall-clock time; `fixtures` keeps the deterministic replay. Unhealthy venue feeds are logged every scan.
+  - **`ExecutionService::open_from` / `supervise_with`:** take a snapshot. Each leg fills at the VWAP of its captured book (`book_fill_price`, contract-multiplier aware), and books too thin for the size are refused with `InsufficientDepth`. The fixture `open` and `supervise` wrap them unchanged, and a test proves identical fills.
+  - **API:** `POST /positions` opens against the stored snapshot and refuses it once it is older than `PERPETO_MAX_SNAPSHOT_AGE_SECS` (default 90). New 409 codes: `STALE_MARKET_DATA`, `VENUE_DEGRADED` and `INSUFFICIENT_DEPTH`.
+
 - M2 step 2: persist the market snapshot behind each scan.
   - **Schema:** migration `0019_market_snapshots.sql` adds a nullable `scan_runs.market_snapshot` column. `scan_runs` stays platform-scoped because it holds public market data only.
   - **Repository:** `ScannerRepo::record_scan_with_snapshot` writes the scan, its opportunities and the snapshot in one transaction. `ScannerRepo::latest_snapshot` returns the newest stored snapshot with its wall-clock `created_at`, which is the staleness basis because `scanned_at` is simulated in fixture mode. Scans stored without a snapshot are skipped.
@@ -119,6 +124,8 @@ All notable repository changes are recorded here using Keep a Changelog categori
 - Provider identity is keyed by immutable subject rather than email; access is pending by default, refresh credentials are device-bound/rotating, and retained deletion evidence uses an audit pseudonym.
 
 ### Fixed
+
+- Paper entries no longer open on a degraded venue leg. The scanner ranks legs regardless of health, and degraded venues were only blocked indirectly through a per-tenant `DisableVenue` breaker set on the engine's next tick, so the API could open a degraded leg in between. `open_from` now refuses it with `LegDegraded`.
 
 - Binance USDⓈ-M perpetual instruments now parse against the live API. Futures publish their minimum notional as `MIN_NOTIONAL { notional }`, but the connector read the spot field `minNotional`, so every futures `exchangeInfo` load failed with `BINANCE_TEXT_MISSING`. The contract fixtures only covered spot. Unit tests now pin both shapes from live responses taken on 2026-11-22.
 - Binance spot instrument loading now requests `exchangeInfo?symbols=["BTCUSDT","ETHUSDT"]`, which is about 10 KB, instead of the unfiltered response of about 18 MB, which took over a minute on a slow link and timed out.

@@ -1,8 +1,13 @@
-//! Paper scanner supervisor (M2 slice 1).
+//! The scan, supervision and paper-entry loop.
 //!
-//! Refuses any non-paper mode, then runs the deterministic funding-arbitrage
-//! scanner on an interval, persisting each ranked snapshot for the API to
-//! serve. No venue connectivity, credentials, or order placement exist.
+//! PAPER reads a market snapshot every tick, either keyless live public data
+//! from Binance, Bybit and OKX (`PERPETO_PAPER_SOURCE=live`, the default,
+//! DEC-0016) or the deterministic fixtures on simulated time
+//! (`PERPETO_PAPER_SOURCE=fixtures`). It supervises open paper positions,
+//! ranks the snapshot, persists the scan with the snapshot, and lets enabled
+//! strategies enter, all against that one snapshot. PAPER never loads
+//! credentials. SANDBOX and SHADOW scan configured connector accounts; LIVE
+//! is refused.
 
 use std::env;
 use std::process::ExitCode;
@@ -11,18 +16,18 @@ use std::time::Duration;
 
 use chrono::{DateTime, Utc};
 use funding_arb_domain::TradingMode;
-use funding_arb_domain::position::ExitReason;
+use funding_arb_domain::position::{ExitReason, PaperFillScenario};
 use funding_arb_execution_service::{
     BreakerAction, BreakerScope, BreakersRepo, ExecutionService, OutboxRepo, PositionDto,
-    PositionsRepo,
+    PositionsRepo, fixture_snapshot,
 };
-use funding_arb_scanner_service::fixtures::{self, MarketStatus};
-use funding_arb_scanner_service::{Scanner, ScannerRepo};
+use funding_arb_scanner_service::fixtures::MarketStatus;
+use funding_arb_scanner_service::{FeedStatus, MarketSnapshot, Scanner, ScannerRepo};
 use funding_arb_strategy_service::{PositionSummary, StrategiesRepo, StrategyService};
 use funding_arb_tenant_context::{TenantContext, TenantId, assert_safe_runtime_role};
 use funding_arb_venue_service::{
     ConfiguredConnector, ConnectorRegistry, DEFAULT_DEPTH, DEFAULT_VENUE_TIMEOUT, InstrumentDto,
-    VenueAccountsRepo, measure_leg,
+    PublicMarketConfig, PublicMarketSource, VenueAccountsRepo, measure_leg,
 };
 use rust_decimal::Decimal;
 use sqlx::Row;
@@ -31,6 +36,33 @@ use sqlx::postgres::PgPoolOptions;
 const DEFAULT_INTERVAL_SECS: u64 = 30;
 const DEFAULT_SIM_TICK_SECS: u64 = 14_400;
 const DEFAULT_SIM_START: &str = "2026-07-19T00:00:00Z";
+
+/// Where PAPER reads its market data (DEC-0016).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum PaperSource {
+    /// Keyless live public data from the venues, on wall-clock time.
+    Live,
+    /// The embedded deterministic fixtures, on simulated time.
+    Fixtures,
+}
+
+/// The market state one engine tick acts on.
+#[derive(Clone, Copy)]
+struct Tick<'a> {
+    snapshot: &'a MarketSnapshot,
+    now: DateTime<Utc>,
+}
+
+/// Parse `PERPETO_PAPER_SOURCE`; unset means `live`.
+fn parse_paper_source(value: Option<&str>) -> Result<PaperSource, String> {
+    match value.map(|raw| raw.trim().to_ascii_lowercase()).as_deref() {
+        None | Some("live") => Ok(PaperSource::Live),
+        Some("fixtures") => Ok(PaperSource::Fixtures),
+        Some(other) => Err(format!(
+            "PERPETO_PAPER_SOURCE must be `live` or `fixtures`, got {other:?}"
+        )),
+    }
+}
 
 fn main() -> ExitCode {
     let mode = env::var("PERPETO_MODE").unwrap_or_else(|_| String::from("PAPER"));
@@ -103,6 +135,26 @@ async fn run(mode: TradingMode) -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
+    let paper_source = match parse_paper_source(env::var("PERPETO_PAPER_SOURCE").ok().as_deref()) {
+        Ok(value) => value,
+        Err(error) => {
+            eprintln!("{error}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let public_source = if mode.is_paper() && paper_source == PaperSource::Live {
+        match PublicMarketConfig::default()
+            .with_underlyings(env::var("PERPETO_PAPER_UNDERLYINGS").ok().as_deref())
+        {
+            Ok(config) => Some(PublicMarketSource::production(config)),
+            Err(error) => {
+                eprintln!("{error}");
+                return ExitCode::FAILURE;
+            }
+        }
+    } else {
+        None
+    };
     let scanner = Scanner::default();
     let scan_repo = ScannerRepo::new(pool.clone());
     let positions = PositionsRepo::new(pool.clone());
@@ -148,12 +200,19 @@ async fn run(mode: TradingMode) -> ExitCode {
         ..ExecutionService::default()
     };
 
-    println!(
-        "Perpeto engine started in {mode} mode (sleep {interval_secs}s, simulation step {sim_tick_secs}s)",
-    );
+    match (mode.is_paper(), &public_source) {
+        (true, Some(source)) => println!(
+            "Perpeto engine started in {mode} mode on live public data for {} (sleep {interval_secs}s)",
+            source.config().underlyings.join(","),
+        ),
+        (true, None) => println!(
+            "Perpeto engine started in {mode} mode on fixtures (sleep {interval_secs}s, simulation step {sim_tick_secs}s)",
+        ),
+        (false, _) => println!("Perpeto engine started in {mode} mode (sleep {interval_secs}s)"),
+    }
     let mut tick = 0_u64;
     loop {
-        let now = if mode.is_paper() {
+        let now = if mode.is_paper() && public_source.is_none() {
             let Some(now) = simulated_now(sim_start, tick, sim_tick_secs) else {
                 eprintln!("paper simulation clock overflowed");
                 return ExitCode::FAILURE;
@@ -162,6 +221,18 @@ async fn run(mode: TradingMode) -> ExitCode {
         } else {
             Utc::now()
         };
+        // PAPER works from one snapshot per tick; SANDBOX/SHADOW scan accounts.
+        let snapshot = if mode.is_paper() {
+            match paper_snapshot(public_source.as_ref(), now).await {
+                Ok(snapshot) => Some(snapshot),
+                Err(error) => {
+                    eprintln!("scan failed: {error}");
+                    None
+                }
+            }
+        } else {
+            None
+        };
         let tenant_contexts = match active_tenant_contexts(&pool).await {
             Ok(value) => value,
             Err(error) => {
@@ -169,28 +240,34 @@ async fn run(mode: TradingMode) -> ExitCode {
                 return ExitCode::FAILURE;
             }
         };
-        if mode.is_paper() {
+        if let Some(snapshot) = &snapshot {
             for tenant in &tenant_contexts {
                 activate_automatic_breakers(
-                    *tenant, &positions, &breakers, &outbox, &execution, now,
+                    *tenant, &positions, &breakers, &outbox, &execution, snapshot, now,
                 )
                 .await;
-                supervise_open_positions(*tenant, &positions, &breakers, &execution, now).await;
+                supervise_open_positions(*tenant, &positions, &breakers, &execution, snapshot, now)
+                    .await;
             }
         }
-        let scan = if mode.is_paper() {
-            scanner.scan(now).map_err(|error| error.to_string())
-        } else {
-            live_scan(&scanner, &configured, &venues, now).await
+        let scan = match &snapshot {
+            Some(snapshot) => Some(Ok(scanner.scan_legs(now, &snapshot.legs))),
+            None if mode.is_paper() => None,
+            None => Some(live_scan(&scanner, &configured, &venues, now).await),
         };
         match scan {
-            Ok(result) => {
+            None => {}
+            Some(Ok(result)) => {
                 let count = result.opportunities.len();
-                if let Err(error) = scan_repo.record_scan(&result).await {
+                if let Err(error) = scan_repo
+                    .record_scan_with_snapshot(&result, snapshot.as_ref())
+                    .await
+                {
                     eprintln!("failed to persist scan: {error}");
                 } else {
                     println!("scan complete at {now}: {count} eligible opportunities");
-                    if mode.is_paper() {
+                    if let Some(snapshot) = &snapshot {
+                        report_feeds(snapshot);
                         // Strategy evaluation consumes bare opportunities. The
                         // scanner already ranks behind its risk gates, so
                         // re-checking `within_limits` can only narrow the set,
@@ -209,14 +286,14 @@ async fn run(mode: TradingMode) -> ExitCode {
                                 &positions,
                                 &breakers,
                                 &execution,
-                                now,
+                                Tick { snapshot, now },
                             )
                             .await;
                         }
                     }
                 }
             }
-            Err(error) => eprintln!("scan failed: {error}"),
+            Some(Err(error)) => eprintln!("scan failed: {error}"),
         }
         tick = match tick.checked_add(1) {
             Some(value) => value,
@@ -226,6 +303,36 @@ async fn run(mode: TradingMode) -> ExitCode {
             }
         };
         tokio::time::sleep(Duration::from_secs(interval_secs)).await;
+    }
+}
+
+/// One PAPER snapshot: live public data, or the fixtures at `now`.
+async fn paper_snapshot(
+    public_source: Option<&PublicMarketSource>,
+    now: DateTime<Utc>,
+) -> Result<MarketSnapshot, String> {
+    match public_source {
+        Some(source) => Ok(source.snapshot(now).await),
+        None => fixture_snapshot(now).map_err(|error| error.to_string()),
+    }
+}
+
+/// Log every venue whose public feed is not healthy, so a silent venue is
+/// visible in the engine log as well as in the stored snapshot.
+fn report_feeds(snapshot: &MarketSnapshot) {
+    for feed in snapshot
+        .venues
+        .iter()
+        .filter(|feed| feed.status != FeedStatus::Healthy)
+    {
+        eprintln!(
+            "venue feed {} is {}: {}",
+            feed.venue,
+            feed.status.as_str(),
+            feed.error
+                .as_deref()
+                .unwrap_or("venue reported degraded health"),
+        );
     }
 }
 
@@ -312,7 +419,7 @@ async fn auto_enter(
     positions: &PositionsRepo,
     breakers: &BreakersRepo,
     execution: &ExecutionService,
-    now: DateTime<Utc>,
+    tick: Tick<'_>,
 ) {
     let controls = match breakers.controls(tenant).await {
         Ok(value) => value,
@@ -367,7 +474,7 @@ async fn auto_enter(
             &summaries,
             &execution.scanner.risk_limits,
             free_equity,
-            now,
+            tick.now,
         ) {
             let key = format!(
                 "strategy:{}:{}:{}",
@@ -382,7 +489,14 @@ async fn auto_enter(
             {
                 continue;
             }
-            match execution.open(&intent.route_id, Some(intent.notional), key.clone(), now) {
+            match execution.open_from(
+                tick.snapshot,
+                &intent.route_id,
+                Some(intent.notional),
+                key.clone(),
+                PaperFillScenario::default(),
+                tick.now,
+            ) {
                 Ok(mut position) => {
                     position.strategy_id = Some(intent.strategy_id);
                     let dto = PositionDto::from_domain(&position);
@@ -401,6 +515,7 @@ async fn supervise_open_positions(
     positions: &PositionsRepo,
     breakers: &BreakersRepo,
     execution: &ExecutionService,
+    snapshot: &MarketSnapshot,
     now: DateTime<Utc>,
 ) {
     let stored = match positions.list(tenant).await {
@@ -445,7 +560,7 @@ async fn supervise_open_positions(
             };
             Ok(execution.close_with_reason(dto.to_domain(), now, reason))
         } else {
-            execution.supervise(dto.to_domain(), now)
+            execution.supervise_with(snapshot, dto.to_domain(), now)
         };
         match result {
             Ok(position) => {
@@ -467,10 +582,12 @@ async fn activate_automatic_breakers(
     breakers: &BreakersRepo,
     outbox: &OutboxRepo,
     execution: &ExecutionService,
+    snapshot: &MarketSnapshot,
     now: DateTime<Utc>,
 ) {
-    if let Ok(legs) = fixtures::load_at(now) {
-        for leg in legs
+    {
+        for leg in snapshot
+            .legs
             .iter()
             .filter(|leg| leg.status == MarketStatus::Degraded)
         {
@@ -482,7 +599,7 @@ async fn activate_automatic_breakers(
                 Some(leg.observation.instrument.venue.as_str().to_owned()),
                 BreakerAction::DisableVenue,
                 "VENUE_HEALTH",
-                "Fixture venue health is degraded",
+                "Venue feed health is degraded",
                 now,
             )
             .await;
@@ -648,8 +765,33 @@ fn simulated_now(start: DateTime<Utc>, tick: u64, step_secs: u64) -> Option<Date
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_sim_start, positive_seconds, simulated_now};
+    use super::{
+        PaperSource, paper_snapshot, parse_paper_source, parse_sim_start, positive_seconds,
+        simulated_now,
+    };
     use chrono::{TimeZone, Utc};
+
+    #[test]
+    fn paper_source_defaults_to_live_and_rejects_unknown_values() {
+        assert_eq!(parse_paper_source(None), Ok(PaperSource::Live));
+        assert_eq!(parse_paper_source(Some(" LIVE ")), Ok(PaperSource::Live));
+        assert_eq!(
+            parse_paper_source(Some("fixtures")),
+            Ok(PaperSource::Fixtures)
+        );
+        assert!(parse_paper_source(Some("replay")).is_err());
+        assert!(parse_paper_source(Some("")).is_err());
+    }
+
+    #[tokio::test]
+    async fn fixture_mode_snapshots_carry_the_fixture_legs_and_no_books() {
+        let now = Utc.with_ymd_and_hms(2026, 7, 19, 0, 0, 0).unwrap();
+        let snapshot = paper_snapshot(None, now).await.expect("fixture snapshot");
+        assert_eq!(snapshot.taken_at, now);
+        assert!(!snapshot.legs.is_empty());
+        assert!(snapshot.books.is_empty());
+        assert!(snapshot.venues.is_empty());
+    }
 
     #[test]
     fn simulation_defaults_to_t0_and_advances_four_hours_per_tick() {

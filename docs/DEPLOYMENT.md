@@ -12,7 +12,15 @@ Create a `staging` environment with `STAGING_SSH_PRIVATE_KEY` and the variables 
 
 The deployment directory must already contain `runtime.env` with `PERPETO_MODE=PAPER`, database and Redis values, and any test-only runtime secret references. Runtime trading secrets never enter GitHub. Public GHCR images require no registry login.
 
-Until M2 lands, the paper engine replays fixtures. It defaults `PERPETO_SIM_START` to `2026-07-19T00:00:00Z` and advances simulated market time by `PERPETO_SIM_TICK_SECS=14400` on every loop, independently of the real `PERPETO_SCAN_INTERVAL_SECS` sleep. Override the start with a valid RFC 3339 timestamp or the tick with a positive integer; invalid values fail engine startup. M2 adds live public-data paper mode on wall-clock time (DEC-0016). Fixture replay then becomes an explicit selection, used for deterministic tests.
+### PAPER market data
+
+- **`PERPETO_PAPER_SOURCE`:** selects where PAPER reads market data (DEC-0016).
+  - `live` (the default) takes a snapshot of keyless public Binance, Bybit and OKX data every scan, on wall-clock time. Each venue host must be reachable from the VPS; an unreachable venue is reported `UNAVAILABLE` and the engine scans the rest. Check reachability with `funding-arb-connector-evidence snapshot` before relying on a venue.
+  - `fixtures` replays the deterministic fixtures, described below.
+- **`PERPETO_PAPER_UNDERLYINGS`:** limits the live universe. The default is `BTC,ETH`.
+- **`PERPETO_MAX_SNAPSHOT_AGE_SECS`:** the newest snapshot age the API accepts for a paper open. The default is 90. Older snapshots are refused with 409 `STALE_MARKET_DATA`, so a stalled engine cannot leave the API filling against old books.
+
+In fixture mode, the engine defaults `PERPETO_SIM_START` to `2026-07-19T00:00:00Z` and advances simulated market time by `PERPETO_SIM_TICK_SECS=14400` on every loop, independently of the real `PERPETO_SCAN_INTERVAL_SECS` sleep. Override the start with a valid RFC 3339 timestamp or the tick with a positive integer; invalid values fail engine startup. M2 adds live public-data paper mode on wall-clock time (DEC-0016). Fixture replay then becomes an explicit selection, used for deterministic tests.
 
 The M1 authentication runtime additionally requires the following in `runtime.env` (see `runtime.env.example`). Generate the signing key and deployment token with `scripts/dev-auth-env.sh`:
 
