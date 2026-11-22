@@ -41,7 +41,7 @@ Pre-1.0.0 (`0.y.z`), treat **MINOR** as the breaking-change lever and **PATCH** 
 
 ## Releasing the API client
 
-For M4, tenant identity is session-derived and never introduced as a caller-selectable header. Additive passkey, credential-preflight and live-eligibility resources receive a minor client version. Any release that changes authorization meaning, tenant visibility, secret handling or idempotency scope requires an explicit compatibility/security review and may require a major version even if its JSON shape appears additive.
+Tenant identity is session-derived and never introduced as a caller-selectable header. Additive passkey, credential-preflight and live-eligibility resources receive a minor client version. Any release that changes authorization meaning, tenant visibility, secret handling or idempotency scope requires an explicit compatibility/security review and may require a major version even if its JSON shape appears additive.
 
 Never publish generated credential endpoints ahead of the backend's forced-RLS, passkey and Vault boundary. Mobile must pin the exact client version and fail closed when its live-control contract is incompatible.
 

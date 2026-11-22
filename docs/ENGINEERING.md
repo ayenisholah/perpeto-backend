@@ -10,7 +10,7 @@ Resolve project truth in this order:
 
 1. `docs/PRODUCT_SPEC.md`
 2. accepted entries in `docs/DECISION.md`
-3. `docs/ARCHITECTURE.md` and `docs/KEY_MANAGEMENT.md` for their declared target milestone and security boundaries
+3. `docs/ARCHITECTURE.md` and `docs/KEY_MANAGEMENT.md` for the implemented architecture and security boundaries
 4. published OpenAPI and event schemas for implemented wire behavior
 5. `docs/IMPLEMENTATION.md` and `docs/MILESTONE.md`
 6. `docs/TRACEABILITY.md`, `docs/PROGRESS.md`, and `README.md`

@@ -1,8 +1,8 @@
 # Staging Deployment
 
-This file first documents the implemented paper/M3 staging deployment, then the accepted M4 production target. The target section is not yet implemented.
+This file documents the implemented paper staging deployment, then the M3 public-demo target (not yet implemented). There is no production deployment: LIVE is permanently fail-closed (DEC-0015).
 
-GitHub deploys only to a pre-existing Docker-ready staging VPS in paper mode. It does not create users, install packages, modify the firewall, configure DNS, or provision TLS. That single operator-managed VPS runs one shared control plane serving many personal tenants via PostgreSQL row-level security and per-tenant Vault encryption; deployment does not stand up separate infrastructure per trader.
+GitHub deploys only to a pre-existing Docker-ready staging VPS in paper mode. It does not create users, install packages, modify the firewall, configure DNS, or provision TLS. The single operator-managed VPS runs one control plane. The application is tenant-aware (forced row-level security), and the deployment serves one operator tenant plus, from M3, one read-only demo tenant.
 
 ## GitHub environment
 
@@ -12,7 +12,7 @@ Create a `staging` environment with `STAGING_SSH_PRIVATE_KEY` and the variables 
 
 The deployment directory must already contain `runtime.env` with `PERPETO_MODE=PAPER`, database and Redis values, and any test-only runtime secret references. Runtime trading secrets never enter GitHub. Public GHCR images require no registry login.
 
-The M2 paper engine defaults `PERPETO_SIM_START` to `2026-07-19T00:00:00Z` and advances simulated market time by `PERPETO_SIM_TICK_SECS=14400` on every loop, independently of the real `PERPETO_SCAN_INTERVAL_SECS` sleep. Override the start with a valid RFC 3339 timestamp or the tick with a positive integer; invalid values fail engine startup.
+Until M2 lands, the paper engine replays fixtures. It defaults `PERPETO_SIM_START` to `2026-07-19T00:00:00Z` and advances simulated market time by `PERPETO_SIM_TICK_SECS=14400` on every loop, independently of the real `PERPETO_SCAN_INTERVAL_SECS` sleep. Override the start with a valid RFC 3339 timestamp or the tick with a positive integer; invalid values fail engine startup. M2 adds live public-data paper mode on wall-clock time (DEC-0016). Fixture replay then becomes an explicit selection, used for deterministic tests.
 
 The M1 authentication runtime additionally requires the following in `runtime.env` (see `runtime.env.example`). Generate the signing key and deployment token with `scripts/dev-auth-env.sh`:
 
@@ -26,9 +26,9 @@ The M1 authentication runtime additionally requires the following in `runtime.en
 - `PERPETO_GOOGLE_IOS_CLIENT_ID`, `PERPETO_GOOGLE_WEB_CLIENT_ID` — accepted audiences for Google identity tokens (either may appear as `aud`).
 - `PERPETO_BOOTSTRAP_TOKEN_HASH`, `PERPETO_BOOTSTRAP_TOKEN_EXPIRES_AT` — SHA-256 hex of the one-use deployment token and its RFC 3339 expiry; the first social sign-in exchanges the plaintext token to become Owner.
 - `PERPETO_MFA_KEY` — base64 of a 32-byte AES-256-GCM key that encrypts stored TOTP secrets.
-- `PERPETO_OPEN_REGISTRATION` — optional (default `false`). Set `true` only on the legacy shared v1 dev/TestFlight backend so each new social sign-in is admitted immediately to full access without pending approval or MFA (DEC-0009). Leave unset/`false` for production and all M4 environments.
+- `PERPETO_OPEN_REGISTRATION` — optional (default `false`). Set `true` only on the legacy shared v1 dev/TestFlight backend so each new social sign-in is admitted immediately to full access without pending approval or MFA (DEC-0009). Leave unset/`false` on any publicly reachable deployment. The public demo uses the read-only viewer (DEC-0017) instead.
 
-`PERPETO_OPEN_REGISTRATION` and its universal privilege waiver are transitional only. DEC-0012 forbids that authorization model for the M4 pilot.
+`PERPETO_OPEN_REGISTRATION` and its universal privilege waiver are transitional, development-only behaviour.
 
 ## Database roles
 
@@ -58,20 +58,27 @@ Two things account for most local failures:
 - **`address already in use` on 5432 usually means a second Docker daemon.** `docker context ls` shows which daemon plain `docker` commands target; containers on one daemon are invisible to the other while still holding the host port. Compose acts on the *active* context, so a stack started with an explicit `--context` will not be found without it.
 - **The role bootstrap runs only on a fresh volume.** If `perpeto_migrator` or `perpeto_app` is missing, migrations fail with `permission denied for schema public`. Confirm with `docker compose -f deploy/compose/docker-compose.dev.yml exec postgres psql -U perpeto -d perpeto -c '\du'` and recreate with `down -v` rather than `up -d`.
 
-## M4 shared-VPS target
+## M3 public demo target
 
-The production Compose topology adds one TLS-protected HashiCorp Vault node with integrated durable storage. It serves Transit only to private application networks. PostgreSQL remains shared but all tenant tables use forced row-level security and non-bypass application roles. The public API domain serves the app; PostgreSQL, Redis, Vault, observability and operator endpoints expose no public ports.
+Not yet implemented. The demo is the staging deployment, made reviewable:
 
-Vault bootstrap is an operator procedure: initialize once with a 2-of-3 Shamir quorum, distribute shares to separate custodians/recovery locations, revoke the initial root token after policies/auth are configured, and test sealed restart and recovery. Unseal shares, root/recovery tokens and trader credentials must never appear in `runtime.env`, Compose, GitHub, container images, database backups or app configuration.
+- **Staging tracks `main`.** The last successful staging deploy was `07cb3cc` (2026-07-30, fixture PAPER). On 2026-11-22 `https://api.perpeto.xyz/livez` returned 502 from the host proxy, so the first M3 task is to restore the stack and redeploy current `main`.
+- **Live-data PAPER** (DEC-0016) with no venue credential anywhere in `runtime.env`.
+- **A read-only demo viewer** into one seeded demo tenant (DEC-0017). `PERPETO_OPEN_REGISTRATION` and `PERPETO_DEV_AUTH` stay unset.
+- **A hosted web build of the Expo client** pointed at `https://api.perpeto.xyz`, plus a TestFlight build from the existing iOS workflow.
+- **One-command local start:** a Compose profile that brings up PostgreSQL, Redis, migrations, API and engine in live-data PAPER, documented as the README's 5-minute tour.
 
-API receives encrypt-only Transit policy. Engine and reconciler receive purpose-limited decrypt policies and short renewable leases. Exchange credentials are enrolled by traders through the passkey-authorized API; they are not environment variables or routine CLI input after M4.
+## Optional Vault backend
 
-The initial M4 pilot accepts one VPS and therefore one host compromise/availability domain. A restart leaves Vault sealed and new live risk blocked until two custodians unseal it. M6 owns Vault HA or managed auto-unseal, stronger workload isolation, tested DR and static exchange egress where IP allowlisting is supported; M7 owns `CERTIFIED_LIVE` rollout.
+The Vault Transit store is implemented hardening and is not required for any milestone (DEC-0015). If it is deployed, its intended shape is:
+- one TLS-protected node with integrated storage, private networks only;
+- a 2-of-3 Shamir initialization;
+- encrypt-only policy for the API and purpose-limited decrypt for the engine and reconciler.
 
-Production readiness must prove: tenant RLS is forced; missing tenant context fails closed; backups contain ciphertext but no shares; Vault policy tests pass; live mode cannot arm without account preflight and passkey proof; and the sealed-state alert/runbook works.
+Unseal shares and root tokens never appear in `runtime.env`, Compose, GitHub, images or backups. Without Vault, the transitional AES store holds the operator's testnet keys only (M4). Vault HA, auto-unseal and stronger host isolation are deferred (DEC-0018).
 
 The `funding-arb-migrate` container runs `migrations/` before the API starts; the compose file gates the API on its successful completion.
 
-Deployments are serialized, digest-addressed, migration-first, health-checked, and fail closed. Rollback restores the previous compatible image and never arms entries. Production deployment is intentionally absent.
+Deployments are serialized, digest-addressed, migration-first, health-checked, and fail closed. Rollback restores the previous compatible image and never arms entries. Production deployment is intentionally absent and not planned.
 
 The staging API container listens on port `8080` internally and is bound only to `127.0.0.1:8081` on the VPS so it cannot conflict with existing services or bypass the host TLS reverse proxy. PostgreSQL uses the specification-pinned PostgreSQL 18.4 multi-platform image digest and its major-version-aware data layout. Deployment waits for PostgreSQL, Redis, and API health before reporting success.

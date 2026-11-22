@@ -2,9 +2,11 @@
 
 ## Snapshot
 
-- Milestone: M3 — CEX connector certification
-- Overall state: In progress. The workspace is build-verified for the first time: formatting, Clippy (`-D warnings`), all 18 migrations and the full test suite (136 tests, 0 failures) pass against PostgreSQL 18 under a non-`BYPASSRLS`, non-owning runtime role. What remains open needs infrastructure or elapsed time, not code.
-- Last verified: 2026-07-29
+- **Roadmap:** re-baselined by DEC-0015 on 2026-11-22. Perpeto is a public reference implementation, and LIVE is permanently fail-closed.
+- **Milestone:** M1 done. M2, live-data paper trading, is next.
+- **CI:** Backend CI, container and staging deploy were green on `main` at `07cb3cc` (2026-07-30).
+- **Staging:** `https://api.perpeto.xyz/livez` returned 502 from the host proxy on 2026-11-22. Restoring it is the first M3 task.
+- **Last full local verification:** 2026-07-29.
 
 ## Verification baseline
 
@@ -19,65 +21,58 @@ DATABASE_URL="$MIGRATE_DATABASE_URL" cargo run --locked --bin funding-arb-migrat
 cargo test --locked --workspace
 ```
 
-All eleven database-backed integration binaries — `audit_chain`, `auth_flow`, `forced_rls`, `passkey_isolation`, `pilot_state`, `breakers_isolation`, `positions_repo`, `credential_deletion`, `credential_enrollment`, `credential_rewrap`, `preflight_worker` — execute rather than reporting `skipping: DATABASE_URL not set`.
+All 18 migrations apply and 136 tests pass with 0 failures. All eleven database-backed integration binaries execute rather than skipping:
+- `audit_chain`
+- `auth_flow`
+- `forced_rls`
+- `passkey_isolation`
+- `pilot_state`
+- `breakers_isolation`
+- `positions_repo`
+- `credential_deletion`
+- `credential_enrollment`
+- `credential_rewrap`
+- `preflight_worker`
 
-The isolation evidence is non-vacuous: run as the superuser instead of `perpeto_app`, `forced_rls` fails on `missing_tenant_context_reads_and_writes_nothing`, so a role that bypasses row-level security cannot make the suite pass.
+The isolation evidence is non-vacuous: run as the superuser instead of `perpeto_app`, `forced_rls` fails.
 
-Defects this first execution exposed, all now fixed: migration `0016` referenced three unique constraints by names exceeding PostgreSQL's 63-byte identifier limit and could never have applied; `VenueAccountsRepo::update_connection` never wrote `secret_ref` to the `venue_accounts.payload` read model, so credential deletion skipped revocation and left the encrypted secret live, connector credential loading could not resolve a secret, and preflight's `SECRET_PRESENT` check could never pass — making `ELIGIBLE` unreachable and the pilot pipeline inoperable; `ConnectorRegistry::load` shadowed its tenant context with a secret context; and the engine's auto-entry used a stale `ExecutionService::open` signature.
+The first execution of this baseline exposed several defects, all now fixed:
+- Migration `0016` named constraints beyond PostgreSQL's 63-byte limit.
+- `VenueAccountsRepo::update_connection` never wrote `secret_ref`. That made deletion skip revocation and made `ELIGIBLE` unreachable.
+- `ConnectorRegistry::load` shadowed its tenant context.
+- The engine used a stale `ExecutionService::open` signature.
 
-## Completed or implemented
+## M1 — Foundations (done)
 
-- Established the Rust workspace, PostgreSQL migrations, OpenAPI/event contracts, CI, container, staging, package-release and cross-repository documentation automation.
-- Implemented the M1A Google/Apple authentication domain, PostgreSQL repositories, runtime provider adapters, HTTP endpoints, rotating sessions, TOTP/recovery flows and mobile authentication surfaces. The last verified staging deployment contains this pre-M2 baseline.
-- Implemented the M2 paper scanner, opportunity/risk model, coordinated open/close/re-hedge/recovery lifecycle, circuit breakers, strategies, portfolio/PnL, health, alerts and corresponding mobile monitoring surfaces.
-- Added M3 Slices 1–21: fail-closed runtime modes, exact-decimal connector models/books, transitional encrypted administration, durable execution/reconciliation/accounting, Bybit/Binance/OKX REST and primary WebSocket adapters, sequence recovery, masked APIs, runtime wiring, observability and evidence tooling.
-- Advanced the local OpenAPI/client contract through `@ayenisholah/perpeto-api-client@0.15.0`; the lossless-decimal contract introduced in `0.14.0` remains intact, local typecheck and 21 contract tests pass, and the mobile app consumes the matching `0.15.0` vendored tarball.
-- Verified that documentation synchronization and mobile API-update automation are configured; `0.7.0` is the latest API-client version confirmed published to GitHub Packages.
-- Added the first M4 isolation slices: personal tenants and session-derived context plus a quarantine-only legacy backfill, tenant columns/composite constraints, forced RLS on private trading aggregates, tenant-bound repository transactions, tenant-dispatched background work, and unsafe runtime-role rejection. No caller-selectable tenant input or secret endpoint was added.
-- Added the M4 credential preflight locally, closing the pilot pipeline: an owner/trader `POST /venue-credentials/{id}/preflight` (`bins/api` `preflight_credential`) composes the connection config checks (reused from `test_venue_account`) with a live `ReconciliationService.run` (via `ConnectorRegistry::load`, as the `reconciler` bin does) and calls the previously-orphaned `record_preflight_result`, so a connection can finally reach `ELIGIBLE`. `record_preflight_result` was relaxed to be re-runnable. Fail-closed (503 in PAPER; `PREFLIGHT_FAILED` unless both config and reconciliation pass). OpenAPI/client `0.20.0` (vendored into mobile) + a flagged post-enroll "Run preflight" button. A `DATABASE_URL`-gated transition test covers PENDING→FAILED→ELIGIBLE re-runs and the disabled-route rejection; client/mobile typecheck+tests pass.
-- Added the M4 audit review endpoint locally, completing the audit feature (write → read/verify): an owner-only `GET /api/v1/audit` (`bins/api` `get_audit_log` → `AuthService::audit_log` → `Repo::list_audit` + `verify_audit_chain`) returns the tenant's hash-chained events (pseudonymized actor, non-secret details, hex `event_hash`) plus an `intact` integrity flag. Display-safe only (no `previous_hash`/session/request internals). OpenAPI/client `0.22.0` (vendored into mobile) + a flag-gated read-only "Recent activity" card; client typecheck + 21 tests and mobile typecheck/14 tests pass. The `DATABASE_URL`-gated audit test now also covers `list_audit` (newest-first, safe fields).
-- Added the M4 hash-chained audit log locally: every sensitive control-plane action (credential enroll/rotate/revoke/delete, pilot arm/disarm, route certify) appends a tamper-evident row to the pre-existing `audit_events` table (`event_hash = SHA-256(previous ‖ canonical(fields))`, `crates/auth-service/src/audit.rs` + `Repo::append_audit`/`verify_audit_chain` + `AuthService::record_audit`). Appends serialize per tenant via `pg_advisory_xact_lock` so the chain cannot fork; actors are pseudonymized; a `verify` walk detects any mutation. No migration (the `audit_events`/`audit_actors` schema and forced RLS already exist) and contract-neutral. A `DATABASE_URL`-gated test proves linkage, cross-tenant isolation, and tamper detection; audit append is best-effort-after-commit (logged, never fails the action).
-- Added the M4 ciphertext-rewrap job locally, closing the last credential/Vault machinery gap: a new `bins/rewrap` (`funding-arb-rewrap`) worker re-encrypts every non-revoked stored credential to the backend's current key version on an interval (idempotent no-op when already current). A new `SecretStore::rewrap` primitive (`crates/venue-service/src/secret.rs`, `vault.rs`) backs it — Vault uses Transit's native `rewrap` endpoint (ciphertext-only, gated on `PERPETO_VAULT_REWRAP_TOKEN`), and the transitional AES store gains a decrypt-only keyring (`with_previous_keys`) so it can migrate rows across versions without exposing plaintext. The credential and its `plaintext_digest` are unchanged. Contract-neutral (no API/client/mobile change). A `DATABASE_URL`-gated test proves the AES v1→v2 migration; the worker is wired into the container/compose/staging manifests next to the reconciler/preflight bins.
-- Added the M4 credential deletion locally, completing the credential lifecycle: a passkey-gated `POST /venue-credentials/{id}/delete/start`+`/finish` (new `DeleteCredential` `ActionDescriptor`) → `CredentialEnrollmentService::delete` (`crates/venue-service/src/enrollment.rs`) destroys every connection's secret via the encrypt-only `SecretStore`, disables the connections, and sets `tombstoned_at`. `VenueAccountsRepo::get` now filters `tombstoned_at IS NULL` like `list`, so a deleted account 404s everywhere and delete is idempotent. Fail-closed (503 in PAPER; 409 while `PILOT_ARMED`; passkey proof required before any secret is destroyed). Finish returns 204. OpenAPI/client `0.21.0` (vendored into mobile) + a flagged mobile "Delete credential" button; client typecheck + 21 tests and mobile typecheck/14 tests pass. A `DATABASE_URL`-gated deletion test asserts secret destruction, account invisibility, and idempotent `NotFound`.
-- Added the M4 scheduled preflight worker locally: a new `bins/preflight` (`funding-arb-preflight`) worker that, like the reconciler, requires SANDBOX/SHADOW and loops per active tenant re-running preflight against every `ELIGIBLE` connection, fail-closed demoting drifted routes to `PREFLIGHT_FAILED`. The endpoint's inline compose was extracted into a shared `crates/venue-service/src/preflight.rs` (`PreflightService::run` + a pure, unit-tested `evaluate_config`) that both the API handler (`preflight_credential`, unchanged `PreflightReport` contract) and the worker call, so validation cannot diverge. Contract-neutral — no API/OpenAPI/client/mobile change. A `DATABASE_URL`-gated test proves an `ELIGIBLE` route is demoted on withdrawal-permission drift without touching reconciliation; the worker is wired into the container/compose/staging manifests next to the reconciler.
-- Added the M4 acceptance evidence (buildable subset) locally: a forced-RLS configuration guard (`crates/auth-service/tests/forced_rls.rs`) that asserts every `0016`+`0017` private table forces RLS with an `app_current_tenant_id()` policy and that a missing tenant context reads/writes nothing; adversarial cross-tenant behavioral tests for breakers (`execution-service/tests/breakers_isolation.rs`) and venue accounts (in `credential_enrollment`), complementing the existing positions/credential/passkey/tenant-state isolation tests; a domain pipeline test proving `PilotState`→`permit_live_risk` compose fail-closed; and a masked-account non-leakage assertion. Contract-neutral (tests + docs only). These are `DATABASE_URL`-gated and run under a non-`BYPASSRLS` role.
-- Added the M4 live-risk gate locally: `permit_live_risk` (`crates/funding-arb-domain/src/pilot.rs`) requires `PILOT_ARMED` + connection `ELIGIBLE` + certification `Pilot`/`CertifiedLive`, wired fail-closed into `submit_connector_order` for production routes (inert while LIVE is locked; testnet exempt). Disarm now escalates to `FLATTEN`, closing positions via the engine. Added owner + passkey-gated per-route certification promotion (`CertifyRoute` action, forward-only `CertificationState::promote`, `set_certification`) that records operator assertion. OpenAPI/client `0.19.0` (vendored into mobile; certify mobile UI deferred). Client typecheck + 21 tests and mobile typecheck/14 tests pass.
-- Added the M4 pilot-arming control plane locally: a pure `PilotState` machine (`crates/funding-arb-domain/src/pilot.rs`) and the first `tenants.state` write path (`auth-service` `pilot_state`/`set_pilot_state`). Owner-only `pilot` endpoints grant eligibility, arm a preflight-`ELIGIBLE` route with a one-use passkey `ActionProof` (`ArmPilot`) plus a typed alias confirmation, and disarm (always available; halts new risk). Transitions emit outbox events. Arming is control-plane only — LIVE stays fail-closed, so it changes no execution. OpenAPI/client `0.18.0` (vendored into mobile) and a flag-gated mobile Pilot card were added. Client typecheck + tests and mobile typecheck/lint/14 tests pass.
-- Added the M4 credential-lifecycle API locally: passkey-gated enroll/rotate/revoke. New `ActionDescriptor` variants (`EnrollCredential`/`RotateCredential`/`RevokeCredential`) bind each one-use proof; `CredentialEnrollmentService` (`crates/venue-service/src/enrollment.rs`) creates the account and writes through the encrypt-only `SecretStore`, attaching only `secret_ref` and setting `PENDING_PREFLIGHT`. The `venue-credentials` API pairs (start/finish) verify the passkey proof before any secret operation, accept write-only credentials that are never logged or returned, and are 503 in PAPER. OpenAPI/client `0.17.0` (vendored into mobile) and a flag-gated mobile enrollment form were added. Client typecheck + 21 tests and mobile typecheck/lint/14 tests pass.
-- Added the M4 Vault foundation code locally: a `VaultTransitSecretStore` (`crates/venue-service/src/vault.rs`) implementing the existing `SecretStore` trait against the Vault Transit HTTP API — per-tenant opaque keys, record-binding `associated_data`, and separate encrypt-only/decrypt-only tokens. Migration `0018` adds the `VAULT` credential row shape to the already forced-RLS `encrypted_credentials` table; `ConnectorRegistry::from_env`/`secret_store_from_env` select Vault when `PERPETO_VAULT_ADDR` is set and otherwise the transitional AES store, fail-closed outside PAPER, and all connector bins plus the `venue-admin` CLI route through it. No new API endpoint, contract or mobile change.
-- Added the M4 passkey slice locally: WebAuthn registration/assertion and one-use action-authorization proofs. Migration `0017` adds `passkey_credentials`, `webauthn_challenges` and `passkey_action_proofs`, each forced-RLS under the same policy as `0016`; `funding_arb_domain::auth` owns the monotonic sign-count clone check and one-use `ActionProof`; `auth-service/src/passkey.rs` delegates verification to `webauthn-rs` and persists only through tenant transactions. Additive endpoints, OpenAPI/client `0.16.0` (vendored into mobile) and a flag-gated mobile passkey surface were added. The TypeScript client typechecks and its 21 contract tests plus the mobile typecheck/lint/tests pass; no secret-exposing endpoint was introduced.
+- **Platform:** Rust workspace, PostgreSQL migrations, OpenAPI and event contracts, CI, container, staging, package release and cross-repository documentation automation.
+- **Authentication:** Google and Apple social auth with rotating sessions, TOTP and recovery codes, plus the mobile authentication surfaces.
+- **Paper trading:** deterministic paper scanner, the opportunity and risk model, and the coordinated open, close, re-hedge and recovery lifecycle. Also circuit breakers, strategies, portfolio and PnL, health, alerts, and the matching mobile monitoring.
+- **Connectors:** Bybit, Binance and OKX REST adapters, primary public and private WebSocket streams with sequence recovery, exact-decimal books, the durable sandbox execution coordinator, reconciliation and accounting, and the evidence CLI.
+- **Contracts:** an exact-decimal wire and persistence contract through API client `0.22.0`, which mobile vendors.
 
-## Exit gates and unverified work
+## Implemented hardening (kept, not a gate)
 
-- GitHub Backend CI for remote `main` at `6e59bad` is red: connector compilation reported 24 ownership/equality errors, so migrations and Rust tests did not run and the container/staging workflows were skipped. Local `main` contains the targeted borrow/equality repair, but it is not remotely compiled or CI-verified.
-- The latest successful staging deployment is `e82347b`, which predates the M2/M3 implementation. Current staging therefore must not be described as containing the connector runtime.
-- The M2 exact-decimal source/contract remediation is implemented locally: scanner, strategy, execution and monitoring DTOs use `Decimal`, OpenAPI/client `0.15.0` retains decimal strings, fixtures preserve exact numeric lexemes, and mobile performs numeric conversion only for display. The exit remains open until Rust and PostgreSQL round-trip tests run in a usable build environment.
-- Primary public/private WebSocket ingestion and connector-specific sequence recovery are implemented and compile for Bybit, Binance and OKX, including bounded reconnecting transport and disconnect-to-reconciliation signaling. Their parser/transport unit tests pass. Live venue evidence remains pending, and `book_snapshot` is still unwired on the Bybit and OKX reconnect paths (Binance calls it to rebuild the book and re-anchor the sequence after a transport reset).
-- No venue has accepted certification evidence. Credentialed Bybit/Binance testnet, OKX demo, production read-only shadow, reconciliation and the required 72-hour/14-day windows remain outstanding.
-- M1A real-device, accessibility, security and full provider/replay integration evidence remains incomplete.
-- The first forced-RLS/private-runtime isolation slice is implemented locally. PostgreSQL execution under distinct migration/runtime roles, broader adversarial API/job evidence, tenant-scoped caches/WebSocket delivery/exports, Vault Transit, credential enrollment, account preflight and production CEX writes remain M4 work.
-- The credential preflight endpoint and the scheduled preflight worker are build-verified: `preflight_worker` passes, covering demote-on-drift. Credential deletion is build-verified by `credential_deletion`, which caught a real defect — deletion tombstoned the account without destroying the secret, because `secret_ref` never reached the account read model. Reaching `ELIGIBLE` through the live reconciliation path still needs testnet credentials and a secret backend, and a live re-reconciliation soak is still open.
-- The acceptance evidence tests now run under a non-`BYPASSRLS` role against PostgreSQL 18 and pass, and are demonstrably non-vacuous: as a superuser, `forced_rls` fails. Still deferred behind infrastructure and venues: Vault policy/seal/restore, passkey lost-device/recovery and ceremony replay/origin/RP-ID, the limited-capital pilot, and the signed evidence that closes M4.
-- The live-risk gate is build-verified: the `permit_live_risk` and `CertificationState::promote` unit tests pass. The gate is inert while LIVE is locked (no production submit path runs), and certification promotion records operator assertion without the venue soak/evidence that must justify it (deferred). Actual live execution, loss/drawdown containment, revocation ordering, and venue-authoritative recovery are Slice 8 remainders behind the LIVE unlock.
-- The pilot-arming control plane is build-verified: the `PilotState` unit tests and the `pilot_state` round-trip test pass against PostgreSQL. Arming has no live effect while LIVE is locked; wiring `PILOT_ARMED` into execution (Slice 8) and platform route certification are deferred. Audit-chained arming records now exist (arm/disarm append to the hash-chained `audit_events` log alongside the other control-plane actions).
-- The credential-lifecycle API is build-verified: the AES-backed `credential_enrollment` test (enroll/rotate/revoke plus cross-tenant read isolation) passes against PostgreSQL. No credential is enrolled through a live Vault until the Vault infrastructure exists.
-- The Vault Transit store compiles and its AES-backed rewrap path is verified by `credential_rewrap` (key version advances, ciphertext changes, digest stable, second rewrap a no-op), but it is not Vault-verified. The application code includes the ciphertext-rewrap path (native Transit `rewrap`, gated on `PERPETO_VAULT_REWRAP_TOKEN`); the gated encrypt→decrypt round-trip, a live rewrap round-trip, the encrypt-token-cannot-decrypt policy check, and the whole operator infrastructure (Vault deploy, per-tenant keys, Shamir, policies, rewrap token/runbooks per `docs/KEY_MANAGEMENT.md`) remain. Paper/dev are unchanged (AES); the store is only reachable outside PAPER when `PERPETO_VAULT_ADDR` is configured.
-- The passkey slice is build- and database-verified: `webauthn-rs` and `auth-service` compile (the crate pulls in native OpenSSL, so `pkg-config` and `libssl-dev` are build prerequisites), and `passkey_isolation` passes under a non-`BYPASSRLS` runtime role. A credentialed registration→assertion round-trip against a real authenticator still requires an EAS development build. Passkey proofs are recorded but not yet consumed by any credential or live-arming gate, and the native mobile device ceremony stays dark behind `EXPO_PUBLIC_PASSKEYS_ENABLED` until an EAS development build exists.
-- Live trading remains unavailable by design.
+- **Isolation:** personal tenants, session-derived tenant context and forced RLS on private aggregates. Tenant-bound repository transactions, tenant-dispatched background work, and rejection of unsafe runtime roles.
+- **Passkeys:** WebAuthn registration and assertion, with one-use action proofs bound to an exact `ActionDescriptor`.
+- **Credentials:**
+  - `VaultTransitSecretStore` (optional) beside the transitional AES store, plus a ciphertext-rewrap worker.
+  - Passkey-gated enroll, rotate, revoke and delete.
+  - A preflight endpoint and a scheduled preflight worker that demotes drifted routes.
+- **Live gate:** `PilotState` arming and `permit_live_risk`, with disarm escalating to flatten. These are inert by design.
+- **Audit:** a hash-chained audit log and an owner-only `GET /audit` with an integrity flag.
 
-## Current blockers
+## Open items by milestone
 
-- Credentialed certification requires least-privilege operator test accounts and elapsed soak/shadow windows.
-- Vault Transit evidence requires a deployed Vault: the encrypt→decrypt round trip, the live rewrap, the encrypt-token-cannot-decrypt policy check, and Shamir/seal/restore exercises are all unrun.
-- Passkey device-ceremony evidence requires an EAS development build; the WebAuthn ceremony has not been exercised against a real authenticator.
-- API client `0.15.0` is locally verified but unpublished; `0.7.0` is the latest confirmed registry release.
-- The earlier "no usable MSVC linker, Docker or WSL" blocker is resolved and no longer applies; the build runs on Linux with the pinned 1.97.0 toolchain.
+- **M2:**
+  - No PAPER path consumes live public data yet; the engine replays fixtures on simulated time.
+  - `book_snapshot` is unwired on the Bybit and OKX reconnect paths.
+  - The public probe (`funding-arb-connector-evidence public`) has not been recorded.
+- **M3:** staging is down (502); no demo viewer; no hosted web build; no one-command local start; the API client registry (`0.7.0`) lags the vendored `0.22.0`.
+- **M4:** no testnet or demo credentials are enrolled and no execution evidence is committed.
 
-## Next verified tasks
+## Next tasks
 
-1. Run the credentialed M3 sandbox/demo/shadow certification matrix and timed windows without production writes.
-2. Wire `book_snapshot` into the Bybit and OKX WebSocket reconnect paths so all three connectors rebuild the book and re-anchor the sequence after a transport reset, as Binance already does. Both methods exist and are labelled; the gap needs venue evidence to close.
-3. Provision a dev Vault, then run the `PERPETO_VAULT_ADDR`-gated encrypt→decrypt round trip, the live rewrap, and the encrypt-token-cannot-decrypt policy check.
-4. Exercise the passkey registration→assertion round trip against a real authenticator from an EAS development build.
-5. Build Slice 8 limited CEX execution — wiring `PILOT_ARMED` + `ELIGIBLE` into the registry/execution path with per-tenant/global breaker enforcement and disarm→flatten→revocation ordering.
-6. Publish the API client so the vendored mobile tarball and the registry agree.
+1. M2: build the credential-free `PublicMarketSource` and wire it into the engine's PAPER path (`docs/IMPLEMENTATION.md`).
+2. M2: simulate paper fills against live depth, and add stale-feed blocking with its tests.
+3. M2: wire `book_snapshot` into the Bybit and OKX reconnect paths.
+4. M3: restore staging and redeploy `main`.
