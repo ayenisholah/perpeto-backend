@@ -45,10 +45,16 @@ fn snapshot(now: DateTime<Utc>, marker: &str) -> MarketSnapshot {
         symbol: leg.symbol.clone(),
         contract_multiplier: Decimal::ONE,
         bids: BookSide {
-            levels: vec![("97120.123456789012345".parse().expect("decimal"), Decimal::TWO)],
+            levels: vec![(
+                "97120.123456789012345".parse().expect("decimal"),
+                Decimal::TWO,
+            )],
         },
         asks: BookSide {
-            levels: vec![("97120.223456789012345".parse().expect("decimal"), Decimal::ONE)],
+            levels: vec![(
+                "97120.223456789012345".parse().expect("decimal"),
+                Decimal::ONE,
+            )],
         },
     });
     snapshot.venues.push(VenueFeedStatus {
