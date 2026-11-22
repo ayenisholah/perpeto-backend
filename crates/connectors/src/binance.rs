@@ -1051,7 +1051,12 @@ fn parse_instrument(item: &Value, product: ProductType) -> ConnectorResult<Instr
     let symbol = text(item, "symbol")?;
     let price = filter(item, "PRICE_FILTER")?;
     let lot = filter(item, "LOT_SIZE")?;
-    let notional = filter(item, "NOTIONAL").or_else(|_| filter(item, "MIN_NOTIONAL"))?;
+    // Spot publishes `NOTIONAL { minNotional }`; USD-M futures publish
+    // `MIN_NOTIONAL { notional }` (Binance USD-M Futures exchangeInfo).
+    let minimum_notional = match filter(item, "NOTIONAL") {
+        Ok(spot) => decimal(spot, "minNotional")?,
+        Err(_) => decimal(filter(item, "MIN_NOTIONAL")?, "notional")?,
+    };
     Ok(Instrument {
         id: instrument_id(symbol, product),
         canonical_underlying: text(item, "baseAsset")?.into(),
@@ -1063,7 +1068,7 @@ fn parse_instrument(item: &Value, product: ProductType) -> ConnectorResult<Instr
         quantity_step: decimal(lot, "stepSize")?,
         minimum_quantity: decimal(lot, "minQty")?,
         maximum_quantity: optional_decimal(lot, "maxQty")?,
-        minimum_notional: decimal(notional, "minNotional")?,
+        minimum_notional,
         funding_interval_hours: (product == ProductType::LinearPerpetual).then_some(8),
         funding_cap: None,
         funding_floor: None,
@@ -1293,6 +1298,64 @@ fn unsupported(code: &str) -> ConnectorError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Shapes taken from live `exchangeInfo` responses on 2026-11-22: spot
+    /// carries `NOTIONAL { minNotional }`, USD-M futures carry
+    /// `MIN_NOTIONAL { notional }`.
+    fn exchange_symbol(product: ProductType) -> Value {
+        let notional = if product == ProductType::Spot {
+            serde_json::json!({"filterType": "NOTIONAL", "minNotional": "5.00000000", "maxNotional": "9000000.00000000"})
+        } else {
+            serde_json::json!({"filterType": "MIN_NOTIONAL", "notional": "100"})
+        };
+        serde_json::json!({
+            "symbol": "BTCUSDT",
+            "status": "TRADING",
+            "baseAsset": "BTC",
+            "quoteAsset": "USDT",
+            "contractType": "PERPETUAL",
+            "filters": [
+                {"filterType": "PRICE_FILTER", "minPrice": "0.01", "maxPrice": "1000000", "tickSize": "0.10"},
+                {"filterType": "LOT_SIZE", "minQty": "0.001", "maxQty": "1000", "stepSize": "0.001"},
+                notional,
+            ],
+        })
+    }
+
+    #[test]
+    fn spot_minimum_notional_comes_from_the_notional_filter() {
+        let instrument = parse_instrument(&exchange_symbol(ProductType::Spot), ProductType::Spot);
+        assert_eq!(
+            instrument.map(|value| value.minimum_notional),
+            Ok(Decimal::from_str("5").unwrap_or_default())
+        );
+    }
+
+    #[test]
+    fn futures_minimum_notional_comes_from_the_min_notional_filter() {
+        let instrument = parse_instrument(
+            &exchange_symbol(ProductType::LinearPerpetual),
+            ProductType::LinearPerpetual,
+        );
+        let instrument = instrument.ok();
+        assert_eq!(
+            instrument.as_ref().map(|value| value.minimum_notional),
+            Some(Decimal::from(100))
+        );
+        assert_eq!(
+            instrument.and_then(|value| value.funding_interval_hours),
+            Some(8)
+        );
+    }
+
+    #[test]
+    fn a_symbol_without_any_notional_filter_is_rejected() {
+        let mut item = exchange_symbol(ProductType::LinearPerpetual);
+        if let Some(filters) = item.get_mut("filters").and_then(Value::as_array_mut) {
+            filters.pop();
+        }
+        assert!(parse_instrument(&item, ProductType::LinearPerpetual).is_err());
+    }
 
     #[test]
     fn unknown_timeout_code_requires_reconciliation() {
