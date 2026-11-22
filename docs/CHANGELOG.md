@@ -125,6 +125,13 @@ All notable repository changes are recorded here using Keep a Changelog categori
 
 ### Changed
 
+- Hardened CI. The `rust` job now:
+  - builds documentation with `RUSTDOCFLAGS=-D warnings`;
+  - runs the whole test suite once under `cargo llvm-cov` with `RUSTFLAGS=-D warnings`;
+  - fails below a 26% line-coverage floor, the measured baseline without the database suites.
+
+  Fixed the broken intra-doc link to `SecretStore::rewrap` in `bins/rewrap` that the doc gate exposed.
+
 - Made `main` PR-only for every account (DEC-0019, superseding DEC-0006). Branch protection now enforces admins, requires zero approving reviews and no code-owner review, keeps the required checks, linear history and conversation resolution, and blocks force-push and deletion. Added `.githooks/pre-push`, which refuses pushes to `main`, and rewrote `.github/CONTRIBUTING.md` and the `docs/ENGINEERING.md` workflow around branches, PRs and warnings-as-errors.
 
 - Re-baselined the product direction (DEC-0015 to DEC-0018).
