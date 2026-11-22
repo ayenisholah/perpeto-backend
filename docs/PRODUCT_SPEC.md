@@ -1331,9 +1331,9 @@ The interface should feel calm, exact, and operational—not casino-like. It sha
 
 The product name is written **Perpeto** in title case in normal copy. An uppercase `PERPETO` treatment is permitted only in the approved wordmark. The identity should express perpetual continuity, market-neutral balance and controlled execution without making the interface resemble a casino or implying that execution is risk-free:
 
-- Build the primary mark around a continuous perpetual loop: two interlocking rings (a mint and a sky ring) form an infinity/figure-eight that reads as the two balanced hedge legs and the recurring funding cycle. It must remain readable rather than decorative.
+- Build the primary mark as a squared perpetual loop: two interlocking square rings, woven over-under, read as the two balanced hedge legs and the recurring funding cycle. Square stroke ends follow the radius-0 system. It must remain readable rather than decorative. The mark and the outlined Space Grotesk Bold `PERPETO` wordmark are generated from code (`perpeto-mobile/scripts/render-brand.mjs`).
 - Use restrained geometry and a subtle 10–14 degree upward lean to suggest forward momentum. Do not use racing stripes, motion blur or an aggressive italic wordmark that harms legibility.
-- Design the symbol in one color first. It must remain recognizable from a 16 px status icon through a 1024 px store asset and work on both light and dark surfaces.
+- Design the symbol in one color first, using only palette colours: lime `#CBFE42` on paper `#0F0F0F` for dark surfaces, paper on a lime tile for the app icon, and ink `#F1EFE6` for monochrome icons. It must remain recognizable from a 16 px status icon through a 1024 px store asset and work on both light and dark surfaces.
 - Keep signal, execution, long and short states visually distinct, but never rely on color alone. Preserve the same label, icon and status-shape rules used by the trading interface.
 - Avoid coins, currency symbols, bull/bear mascots, rockets, lightning bolts, speedometers, shields, locks, flames, neon glow and imagery that implies guaranteed speed, yield or safety.
 - Use *The perpetual edge* as the short brand line and *Automated funding-rate arbitrage* as the plain-language descriptor. The compact app header and icon use the name or mark alone.
