@@ -125,6 +125,8 @@ All notable repository changes are recorded here using Keep a Changelog categori
 
 ### Changed
 
+- Made `main` PR-only for every account (DEC-0019, superseding DEC-0006). Branch protection now enforces admins, requires zero approving reviews and no code-owner review, keeps the required checks, linear history and conversation resolution, and blocks force-push and deletion. Added `.githooks/pre-push`, which refuses pushes to `main`, and rewrote `.github/CONTRIBUTING.md` and the `docs/ENGINEERING.md` workflow around branches, PRs and warnings-as-errors.
+
 - Re-baselined the product direction (DEC-0015 to DEC-0018).
   - **Goal:** Perpeto is now a public, self-hostable reference implementation run by one operator, not a multi-user consumer trading service. Real-money LIVE trading is a non-goal and stays permanently fail-closed.
   - **Roadmap:** M0–M7 is replaced by four milestones, each closable by one maintainer without real capital: M1 foundations (closed on the verified 136-test baseline), M2 live-data paper trading, M3 public demo, and M4 testnet execution.
