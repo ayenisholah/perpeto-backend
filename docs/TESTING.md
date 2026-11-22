@@ -13,7 +13,7 @@ Testing follows the release gates in `PRODUCT_SPEC.md`.
 ## Gates
 
 - CI's `rust` job runs `cargo llvm-cov` over the whole workspace with `RUSTFLAGS="-D warnings"`. That runs every test once, instrumented, fails on any compiler warning, and fails below the line-coverage floor (`COVERAGE_FLOOR` in `.github/workflows/CI.yml`).
-- The floor is a ratchet: raise it as coverage grows, never lower it. It starts at 26%, the measured baseline without the database suites (26.82% of lines on 2026-11-22). Raise it to the full figure CI reports with the database suites enabled.
+- The floor is a ratchet: raise it as coverage grows, never lower it. It is 38%, from CI's first full run with the database suites on 2026-11-22 (38.27% of lines; 26.82% without them).
 - `cargo doc` runs with `RUSTDOCFLAGS="-D warnings"`, so broken intra-doc links fail the build. Clippy already denies every lint.
 
 ## Milestone evidence

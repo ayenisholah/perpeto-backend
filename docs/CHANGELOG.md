@@ -128,7 +128,7 @@ All notable repository changes are recorded here using Keep a Changelog categori
 - Hardened CI. The `rust` job now:
   - builds documentation with `RUSTDOCFLAGS=-D warnings`;
   - runs the whole test suite once under `cargo llvm-cov` with `RUSTFLAGS=-D warnings`;
-  - fails below a 26% line-coverage floor, the measured baseline without the database suites.
+  - fails below a 38% line-coverage floor, the measured baseline with the database suites (38.27% on CI).
 
   Fixed the broken intra-doc link to `SecretStore::rewrap` in `bins/rewrap` that the doc gate exposed.
 

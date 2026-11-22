@@ -20,7 +20,7 @@ Before opening a PR, run what CI runs:
 cargo fmt --all -- --check
 cargo clippy --locked --workspace --all-targets -- -D warnings
 RUSTDOCFLAGS="-D warnings" cargo doc --locked --no-deps --workspace
-RUSTFLAGS="-D warnings" cargo llvm-cov --locked --workspace --summary-only --fail-under-lines 26
+RUSTFLAGS="-D warnings" cargo llvm-cov --locked --workspace --summary-only --fail-under-lines 38
                                          # runs the tests; set DATABASE_URL for the database suites
 bash scripts/check-docs.sh
 ```

@@ -81,7 +81,7 @@ jobs:
         run: cargo llvm-cov --locked --workspace --summary-only --fail-under-lines "$COVERAGE_FLOOR"
         env:
           RUSTFLAGS: -D warnings
-          COVERAGE_FLOOR: "26"
+          COVERAGE_FLOOR: "38"
 
   contracts:
     runs-on: ubuntu-latest
