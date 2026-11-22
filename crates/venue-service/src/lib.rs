@@ -4,6 +4,7 @@ mod coordinator;
 mod dto;
 mod enrollment;
 mod preflight;
+mod public_market;
 mod reconcile;
 mod registry;
 mod repo;
@@ -22,6 +23,11 @@ pub use enrollment::{CredentialEnrollmentService, EnrollRequest, EnrollmentError
 pub use preflight::{
     PreflightError, PreflightOutcome, PreflightReconciliationSummary, PreflightService,
     evaluate_config,
+};
+pub use public_market::{
+    BookSide, DEFAULT_DEPTH, DEFAULT_UNDERLYINGS, DEFAULT_VENUE_TIMEOUT, FeedStatus, LegBook,
+    MarketSnapshot, PublicMarketConfig, PublicMarketSource, VenueFeedStatus, book_measurement,
+    measure_leg,
 };
 pub use reconcile::{ReconciliationError, ReconciliationReport, ReconciliationService};
 pub use registry::{

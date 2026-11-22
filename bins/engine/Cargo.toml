@@ -14,7 +14,6 @@ funding-arb-connectors = { path = "../../crates/connectors" }
 funding-arb-venue-service = { path = "../../crates/venue-service" }
 funding-arb-tenant-context = { path = "../../crates/tenant-context" }
 chrono.workspace = true
-futures-util.workspace = true
 rust_decimal.workspace = true
 serde_json.workspace = true
 sqlx.workspace = true

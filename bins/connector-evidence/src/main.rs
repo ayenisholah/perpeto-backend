@@ -8,7 +8,10 @@ use funding_arb_connectors::{
 };
 use funding_arb_domain::{TradingMode, market::Venue};
 use funding_arb_tenant_context::{TenantContext, TenantId};
-use funding_arb_venue_service::{ConfiguredConnector, ConnectorRegistry, ReconciliationService};
+use funding_arb_venue_service::{
+    ConfiguredConnector, ConnectorRegistry, FeedStatus, PublicMarketConfig, PublicMarketSource,
+    ReconciliationService,
+};
 use futures_util::StreamExt;
 use serde_json::{Value, json};
 use sqlx::{PgPool, postgres::PgPoolOptions};
@@ -19,6 +22,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     match env::args().nth(1).as_deref() {
         Some("fixtures") => fixture_evidence(),
         Some("public") => public_evidence().await,
+        Some("snapshot") => snapshot_evidence().await,
         Some("credentialed") => credentialed_evidence().await,
         _ => Err(usage().into()),
     }
@@ -55,6 +59,47 @@ async fn public_evidence() -> Result<(), Box<dyn Error>> {
         evidence.push(probe_public(connector.as_ref()).await?);
     }
     println!("{}", serde_json::to_string_pretty(&evidence)?);
+    Ok(())
+}
+
+/// One live-data PAPER snapshot (DEC-0016) from the keyless public source, as
+/// the engine would take it. Reports per-venue feed health and leg counts.
+async fn snapshot_evidence() -> Result<(), Box<dyn Error>> {
+    let config = PublicMarketConfig::default()
+        .with_underlyings(env::var("PERPETO_PAPER_UNDERLYINGS").ok().as_deref())?;
+    let snapshot = PublicMarketSource::production(config)
+        .snapshot(Utc::now())
+        .await;
+    let venues: Vec<Value> = snapshot
+        .venues
+        .iter()
+        .map(|feed| {
+            let legs = snapshot
+                .legs
+                .iter()
+                .filter(|leg| leg.observation.instrument.venue == feed.venue)
+                .count();
+            json!({
+                "venue": feed.venue.as_str(),
+                "status": match feed.status {
+                    FeedStatus::Healthy => "HEALTHY",
+                    FeedStatus::Degraded => "DEGRADED",
+                    FeedStatus::Unavailable => "UNAVAILABLE",
+                },
+                "legs": legs,
+                "observed_at": feed.observed_at.map(|value| value.to_rfc3339()),
+                "error": feed.error,
+            })
+        })
+        .collect();
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&json!({
+            "taken_at": snapshot.taken_at.to_rfc3339(),
+            "legs": snapshot.legs.len(),
+            "venues": venues,
+        }))?
+    );
     Ok(())
 }
 
@@ -280,5 +325,5 @@ const fn private_event_kind(event: &PrivateEvent) -> &'static str {
 }
 
 const fn usage() -> &'static str {
-    "usage: funding-arb-connector-evidence fixtures | public | credentialed"
+    "usage: funding-arb-connector-evidence fixtures | public | snapshot | credentialed"
 }
