@@ -10,6 +10,7 @@ use sqlx::{PgPool, Row};
 use uuid::Uuid;
 
 use crate::dto::{OpportunityDto, OpportunityScanDto};
+use crate::market::{MarketSnapshot, MarketSnapshotDto};
 use crate::service::ScanResult;
 
 fn encode(dto: &OpportunityDto) -> Result<String, sqlx::Error> {
@@ -18,6 +19,16 @@ fn encode(dto: &OpportunityDto) -> Result<String, sqlx::Error> {
 
 fn decode(payload: &str) -> Result<OpportunityDto, sqlx::Error> {
     serde_json::from_str(payload).map_err(|error| sqlx::Error::Protocol(error.to_string()))
+}
+
+/// The most recent persisted market snapshot and when it was written.
+#[derive(Clone, Debug)]
+pub struct StoredSnapshot {
+    /// The decoded snapshot.
+    pub snapshot: MarketSnapshot,
+    /// Wall-clock time the scan was written (`scan_runs.created_at`); the
+    /// basis for staleness checks.
+    pub recorded_at: DateTime<Utc>,
 }
 
 /// Cloneable Postgres adapter for scans and opportunities.
@@ -49,14 +60,35 @@ impl ScannerRepo {
     /// # Errors
     /// Returns the underlying [`sqlx::Error`] if any statement fails.
     pub async fn record_scan(&self, result: &ScanResult) -> Result<(), sqlx::Error> {
+        self.record_scan_with_snapshot(result, None).await
+    }
+
+    /// Persist a scan, its ranked opportunities and, when given, the market
+    /// snapshot it was ranked from, in one transaction.
+    ///
+    /// # Errors
+    /// Returns the underlying [`sqlx::Error`] if any statement fails.
+    pub async fn record_scan_with_snapshot(
+        &self,
+        result: &ScanResult,
+        snapshot: Option<&MarketSnapshot>,
+    ) -> Result<(), sqlx::Error> {
         let scan_id = Uuid::new_v4();
+        let payload = snapshot
+            .map(|snapshot| serde_json::to_string(&MarketSnapshotDto::from_domain(snapshot)))
+            .transpose()
+            .map_err(|error| sqlx::Error::Protocol(error.to_string()))?;
         let mut tx = self.pool.begin().await?;
-        sqlx::query("INSERT INTO scan_runs (id, scanned_at, model_version) VALUES ($1, $2, $3)")
-            .bind(scan_id)
-            .bind(result.scanned_at)
-            .bind(result.model_version)
-            .execute(&mut *tx)
-            .await?;
+        sqlx::query(
+            "INSERT INTO scan_runs (id, scanned_at, model_version, market_snapshot) \
+             VALUES ($1, $2, $3, $4)",
+        )
+        .bind(scan_id)
+        .bind(result.scanned_at)
+        .bind(result.model_version)
+        .bind(payload)
+        .execute(&mut *tx)
+        .await?;
 
         for (position, ranked) in result.opportunities.iter().enumerate() {
             let dto = OpportunityDto::from_domain(&ranked.opportunity, &ranked.assessment);
@@ -73,6 +105,34 @@ impl ScannerRepo {
             .await?;
         }
         tx.commit().await
+    }
+
+    /// The most recently written market snapshot, or `None` if no scan has
+    /// stored one.
+    ///
+    /// # Errors
+    /// Returns [`sqlx::Error`] if the query fails or the payload cannot be
+    /// decoded.
+    pub async fn latest_snapshot(&self) -> Result<Option<StoredSnapshot>, sqlx::Error> {
+        let row = sqlx::query(
+            "SELECT market_snapshot, created_at FROM scan_runs \
+             WHERE market_snapshot IS NOT NULL ORDER BY created_at DESC, id DESC LIMIT 1",
+        )
+        .fetch_optional(&self.pool)
+        .await?;
+        let Some(row) = row else {
+            return Ok(None);
+        };
+        let payload: String = row.get("market_snapshot");
+        let dto: MarketSnapshotDto = serde_json::from_str(&payload)
+            .map_err(|error| sqlx::Error::Protocol(error.to_string()))?;
+        let snapshot = dto
+            .to_domain()
+            .map_err(|error| sqlx::Error::Protocol(error.to_string()))?;
+        Ok(Some(StoredSnapshot {
+            snapshot,
+            recorded_at: row.get("created_at"),
+        }))
     }
 
     async fn latest_scan_id(&self) -> Result<Option<(Uuid, DateTime<Utc>, String)>, sqlx::Error> {

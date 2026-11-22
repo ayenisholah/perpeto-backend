@@ -20,6 +20,9 @@ use funding_arb_connectors::{
 };
 use funding_arb_domain::market::{FundingObservation, InstrumentRef, Venue};
 use funding_arb_scanner_service::fixtures::{InstrumentKind, MarketLeg, MarketStatus};
+pub use funding_arb_scanner_service::market::{
+    BookSide, FeedStatus, LegBook, MarketSnapshot, VenueFeedStatus,
+};
 use futures_util::StreamExt;
 use rust_decimal::Decimal;
 
@@ -97,65 +100,6 @@ impl PublicMarketConfig {
         self.underlyings = underlyings;
         Ok(self)
     }
-}
-
-/// One side of a stored order book, best level first.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct BookSide {
-    /// Price levels as (price, quantity in contracts), best first.
-    pub levels: Vec<(Decimal, Decimal)>,
-}
-
-/// The order book captured for one leg, used to simulate paper fills.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct LegBook {
-    /// The venue of the leg.
-    pub venue: Venue,
-    /// The venue symbol of the leg.
-    pub symbol: String,
-    /// Contract multiplier that converts quantity to base units.
-    pub contract_multiplier: Decimal,
-    /// Bids, best (highest) first.
-    pub bids: BookSide,
-    /// Asks, best (lowest) first.
-    pub asks: BookSide,
-}
-
-/// Health of one venue's public feed in a snapshot.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum FeedStatus {
-    /// Every requested call succeeded and the venue reported healthy.
-    Healthy,
-    /// Data arrived but the venue reported degraded health.
-    Degraded,
-    /// The venue could not be read; it contributed no legs.
-    Unavailable,
-}
-
-/// Per-venue feed report.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct VenueFeedStatus {
-    /// The venue.
-    pub venue: Venue,
-    /// Feed health.
-    pub status: FeedStatus,
-    /// The newest observation time from this venue, if any.
-    pub observed_at: Option<DateTime<Utc>>,
-    /// Why the venue is unavailable, when it is.
-    pub error: Option<String>,
-}
-
-/// One scan's worth of public market data.
-#[derive(Clone, Debug)]
-pub struct MarketSnapshot {
-    /// When the snapshot was taken.
-    pub taken_at: DateTime<Utc>,
-    /// Normalized legs for the scanner.
-    pub legs: Vec<MarketLeg>,
-    /// The book behind each leg, for paper fills.
-    pub books: Vec<LegBook>,
-    /// Per-venue feed health.
-    pub venues: Vec<VenueFeedStatus>,
 }
 
 /// Instrument metadata for one venue, already filtered to the universe.

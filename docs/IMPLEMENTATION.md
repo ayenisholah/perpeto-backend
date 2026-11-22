@@ -9,11 +9,12 @@ Deliver M2: live-data paper trading. Then deliver M3, the public demo, and M4, t
 Most of the plumbing exists. The engine already builds each `MarketLeg` from `connector.market_stream` and `connector.current_funding` (`bins/engine/src/main.rs`), but only for configured accounts in SANDBOX/SHADOW. PAPER still replays `crates/scanner-service/src/fixtures.rs` on simulated time.
 
 1. **Public market source — implemented (`crates/venue-service/src/public_market.rs`):** a credential-free `PublicMarketSource` over the existing Binance, Bybit and OKX adapters in `crates/connectors/src/{binance,bybit,okx}.rs`, using only their public REST and WebSocket endpoints. It returns instruments, funding (rate, interval, next settlement, mark and index), and order-book snapshots and deltas. It must not depend on `ConnectorRegistry::load` or any `SecretStore`.
-2. **Engine wiring:** in PAPER, feed public legs into `scanner.scan_legs`. Fixture replay (`PERPETO_SIM_START`, `PERPETO_SIM_TICK_SECS`) becomes an explicit selection, `PERPETO_PAPER_SOURCE=fixtures`, and stays the default under test.
-3. **Paper fills against live depth:** simulate each leg's fill by walking the live book with the existing `BookState::executable_price` (`crates/connectors/src/book.rs`), and apply configured fees. Funding accrues at real settlement times.
-4. **Freshness and failure:** stale or failed feeds mark the affected legs stale. They block paper entries and surface in `/health` and the opportunity freshness fields. There is no silent fallback to fixtures.
-5. **Reconnect integrity:** wire `book_snapshot` into the Bybit and OKX reconnect paths, as Binance already does.
-6. **Evidence:**
+2. **Snapshot persistence — implemented (migration `0019`, `ScannerRepo::record_scan_with_snapshot` / `latest_snapshot`).**
+3. **Engine wiring:** in PAPER, feed public legs into `scanner.scan_legs`. Fixture replay (`PERPETO_SIM_START`, `PERPETO_SIM_TICK_SECS`) becomes an explicit selection, `PERPETO_PAPER_SOURCE=fixtures`, and stays the default under test.
+4. **Paper fills against live depth:** simulate each leg's fill by walking the live book with the existing `BookState::executable_price` (`crates/connectors/src/book.rs`), and apply configured fees. Funding accrues at real settlement times.
+5. **Freshness and failure:** stale or failed feeds mark the affected legs stale. They block paper entries and surface in `/health` and the opportunity freshness fields. There is no silent fallback to fixtures.
+6. **Reconnect integrity:** wire `book_snapshot` into the Bybit and OKX reconnect paths, as Binance already does.
+7. **Evidence:**
    - parser tests on recorded public payloads;
    - a stale-feed blocking test;
    - a test proving PAPER constructs no credential read path;

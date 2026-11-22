@@ -6,6 +6,13 @@ All notable repository changes are recorded here using Keep a Changelog categori
 
 ### Added
 
+- M2 step 2: persist the market snapshot behind each scan.
+  - **Schema:** migration `0019_market_snapshots.sql` adds a nullable `scan_runs.market_snapshot` column. `scan_runs` stays platform-scoped because it holds public market data only.
+  - **Repository:** `ScannerRepo::record_scan_with_snapshot` writes the scan, its opportunities and the snapshot in one transaction. `ScannerRepo::latest_snapshot` returns the newest stored snapshot with its wall-clock `created_at`, which is the staleness basis because `scanned_at` is simulated in fixture mode. Scans stored without a snapshot are skipped.
+  - **Types:** the snapshot types (`MarketSnapshot`, `LegBook`, `BookSide`, `FeedStatus`, `VenueFeedStatus`) moved to `scanner-service::market`, which owns the market data model. `venue-service` re-exports them unchanged.
+  - **Persisted form:** `MarketSnapshotDto` serializes decimals as strings, so the round trip is exact.
+  - **Tests:** 4 unit tests (exact JSON round trip beyond f64 precision, rejection of unknown enumerations, book lookup, fixture snapshots) and 2 `DATABASE_URL`-gated PostgreSQL tests (exact round trip, and latest-wins ignoring snapshot-less scans).
+
 - M2 step 1: a keyless public market source (DEC-0016).
   - **Source:** `crates/venue-service/src/public_market.rs` adds `PublicMarketSource`. It builds Binance, Bybit and OKX connectors with no credentials and reads health, instruments, order books and funding for the configured underlyings (`BTC,ETH` by default).
   - **Failure handling:** a venue that errors, times out or returns a crossed book is reported `UNAVAILABLE` and contributes no legs. Other venues continue, and there is no fixture fallback.
