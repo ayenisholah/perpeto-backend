@@ -19,6 +19,8 @@ pub use dto::{
     FillOutcomeDto, OpenPositionRequest, PaperFillScenarioDto, PositionDto, PositionLegDto,
     PositionListDto,
 };
-pub use monitoring::{AlertDto, HealthDto, MonitoringRepo, PortfolioDto};
+pub use monitoring::{
+    AlertDto, HealthDto, MonitoringRepo, PortfolioDto, VenueHealthDto, venue_health,
+};
 pub use repo::PositionsRepo;
 pub use service::{ExecutionService, OpenError, SuperviseError, book_fill_price, fixture_snapshot};

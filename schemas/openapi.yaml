@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Perpeto Control API
-  version: 0.22.0
+  version: 0.23.0
   description: >-
     Social identity, MFA, and secure sessions plus the M2 deterministic paper
     scanner and coordinated simulated positions. Live execution remains unavailable.
@@ -1613,6 +1613,12 @@ components:
         p90_rate: { $ref: "#/components/schemas/DecimalString" }
         direction_probability: { $ref: "#/components/schemas/DecimalString" }
         next_funding_at: { type: string, format: date-time }
+        observed_at:
+          type: string
+          format: date-time
+          description: >-
+            When the market data this leg was ranked from was observed. Absent
+            on scans stored before 0.23.0.
     RiskLimits:
       type: object
       additionalProperties: false
@@ -1871,13 +1877,43 @@ components:
         as_of: { type: string, format: date-time }
     VenueHealth:
       type: object
-      required: [venue, status, connected, market_data_age_seconds, clock_drift_ms]
+      description: >-
+        One venue's health, combining the tenant's venue breakers with the
+        public feed report in the latest stored market snapshot (DEC-0016).
+      required:
+        - venue
+        - status
+        - connected
+        - market_data_age_seconds
+        - clock_drift_ms
+        - feed_status
+        - last_observed_at
+        - feed_error
       properties:
         venue: { $ref: "#/components/schemas/Venue" }
-        status: { type: string, enum: [HEALTHY, DEGRADED] }
-        connected: { type: boolean }
-        market_data_age_seconds: { type: integer }
+        status:
+          type: string
+          enum: [HEALTHY, DEGRADED]
+          description: DEGRADED when a venue breaker is active or the feed is not HEALTHY.
+        connected:
+          type: boolean
+          description: Whether the latest snapshot reached the venue.
+        market_data_age_seconds:
+          type: integer
+          description: >-
+            Seconds since the venue's newest observation; when it has none,
+            seconds since the snapshot that tried to read it; 0 with no snapshot.
         clock_drift_ms: { type: integer }
+        feed_status:
+          type: string
+          enum: [HEALTHY, DEGRADED, UNAVAILABLE, UNKNOWN]
+          description: UNKNOWN when no stored snapshot covers the venue.
+        last_observed_at:
+          type: [string, "null"]
+          format: date-time
+        feed_error:
+          type: [string, "null"]
+          description: Why the feed is unavailable, when it is.
     ServiceHeartbeat:
       type: object
       required: [service, status, observed_at]

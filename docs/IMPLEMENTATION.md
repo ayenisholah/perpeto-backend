@@ -12,7 +12,7 @@ Most of the plumbing exists. The engine already builds each `MarketLeg` from `co
 2. **Snapshot persistence — implemented (migration `0019`, `ScannerRepo::record_scan_with_snapshot` / `latest_snapshot`).**
 3. **Engine wiring — implemented (`PERPETO_PAPER_SOURCE`, one snapshot per tick):** in PAPER, feed public legs into `scanner.scan_legs`. Fixture replay (`PERPETO_SIM_START`, `PERPETO_SIM_TICK_SECS`) becomes an explicit selection, `PERPETO_PAPER_SOURCE=fixtures`, and stays the default under test.
 4. **Paper fills against live depth — implemented (`ExecutionService::open_from`, `book_fill_price`; API opens from the stored snapshot with a freshness limit):** simulate each leg's fill by walking the live book with the existing `BookState::executable_price` (`crates/connectors/src/book.rs`), and apply configured fees. Funding accrues at real settlement times.
-5. **Freshness and failure — entries implemented (degraded legs and stale snapshots are refused); the `/health` feed contract is step 2.4:** stale or failed feeds mark the affected legs stale. They block paper entries and surface in `/health` and the opportunity freshness fields. There is no silent fallback to fixtures.
+5. **Freshness and failure — implemented (entries refuse degraded legs and stale snapshots; `/health` reports per-venue feed status, client 0.23.0):** stale or failed feeds mark the affected legs stale. They block paper entries and surface in `/health` and the opportunity freshness fields. There is no silent fallback to fixtures.
 6. **Reconnect integrity:** wire `book_snapshot` into the Bybit and OKX reconnect paths, as Binance already does.
 7. **Evidence:**
    - parser tests on recorded public payloads;

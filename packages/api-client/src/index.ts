@@ -338,6 +338,8 @@ export interface OpportunityLeg {
   readonly p90_rate: DecimalString;
   readonly direction_probability: DecimalString;
   readonly next_funding_at: string;
+  /** When the leg's market data was observed; absent on scans before 0.23.0. */
+  readonly observed_at?: string;
 }
 
 export interface Opportunity {
@@ -537,7 +539,18 @@ export interface Strategy { readonly id: string; readonly name: string; readonly
 
 export interface PortfolioAllocation { readonly key: string; readonly deployed_capital: DecimalString; readonly fraction: DecimalString }
 export interface Portfolio { readonly equity: DecimalString; readonly deployable_equity: DecimalString; readonly deployed_capital: DecimalString; readonly by_venue: readonly PortfolioAllocation[]; readonly by_underlying: readonly PortfolioAllocation[]; readonly pnl: { readonly realized_funding: DecimalString; readonly realized_trading: DecimalString; readonly unrealized_leg: DecimalString; readonly fees: DecimalString; readonly net: DecimalString; readonly return_on_deployed_capital: DecimalString }; readonly as_of: string }
-export interface VenueHealth { readonly venue: Venue; readonly status: "HEALTHY" | "DEGRADED"; readonly connected: boolean; readonly market_data_age_seconds: number; readonly clock_drift_ms: number }
+export type FeedStatus = "HEALTHY" | "DEGRADED" | "UNAVAILABLE" | "UNKNOWN";
+export interface VenueHealth {
+  readonly venue: Venue;
+  readonly status: "HEALTHY" | "DEGRADED";
+  readonly connected: boolean;
+  readonly market_data_age_seconds: number;
+  readonly clock_drift_ms: number;
+  /** Public feed health from the latest stored market snapshot (0.23.0). */
+  readonly feed_status: FeedStatus;
+  readonly last_observed_at: string | null;
+  readonly feed_error: string | null;
+}
 export interface ServiceHeartbeat { readonly service: string; readonly status: string; readonly observed_at: string }
 export interface SystemHealth { readonly venues: readonly VenueHealth[]; readonly services: readonly ServiceHeartbeat[]; readonly as_of: string }
 export interface Alert { readonly id: string; readonly dedup_key: string; readonly severity: "INFORMATIONAL" | "WARNING" | "CRITICAL"; readonly title: string; readonly message: string; readonly created_at: string; readonly acknowledged_at: string | null; readonly acknowledged_by: string | null }
