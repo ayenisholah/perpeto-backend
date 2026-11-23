@@ -5,7 +5,7 @@
 - **Roadmap:** re-baselined by DEC-0015 on 2026-11-22. Perpeto is a public reference implementation, and LIVE is permanently fail-closed.
 - **Milestone:** M1 done. M2, live-data paper trading, is next.
 - **CI:** Backend CI, container and staging deploy were green on `main` at `07cb3cc` (2026-07-30).
-- **Staging:** `https://api.perpeto.xyz/livez` returned 502 from the host proxy on 2026-11-22. Restoring it is the first M3 task.
+- **Staging:** moved to AWS `eu-north-1` (DEC-0020) and live since 2026-11-23 at `https://13.48.32.219.sslip.io` (`/readyz` 200, Let's Encrypt TLS). `api.perpeto.xyz` still points at the retired VPS until its DNS record moves to `13.48.32.219`.
 - **Last full local verification:** 2026-07-29.
 
 ## Verification baseline

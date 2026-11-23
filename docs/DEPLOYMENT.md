@@ -2,20 +2,48 @@
 
 This file documents the implemented paper staging deployment, then the M3 public-demo target (not yet implemented). There is no production deployment: LIVE is permanently fail-closed (DEC-0015).
 
-GitHub deploys only to a pre-existing Docker-ready staging VPS in paper mode. It does not create users, install packages, modify the firewall, configure DNS, or provision TLS. The single operator-managed VPS runs one control plane. The application is tenant-aware (forced row-level security), and the deployment serves one operator tenant plus, from M3, one read-only demo tenant.
+PAPER staging runs on AWS in `eu-north-1` (DEC-0020), the only region the AWS organisation allows. One control plane runs on one EC2 host. The application is tenant-aware (forced row-level security), and the deployment serves one operator tenant plus, from M3, one read-only demo tenant.
 
-## GitHub environment
+## AWS staging host
 
-Create a `staging` environment with `STAGING_SSH_PRIVATE_KEY` and the variables `STAGING_HOST`, `STAGING_PORT`, `STAGING_USER`, `STAGING_KNOWN_HOSTS`, `STAGING_DEPLOY_PATH`, and `STAGING_BASE_URL`. The SSH account must be non-root and restricted to the deployment directory and required Docker commands.
+The CDK app in `infra/` owns everything (`Perpeto-Staging` and `Perpeto-Deployer`):
 
-## VPS prerequisites
+- **Host:** one `t3.small` (x86_64, because CI publishes an amd64 image; CPU credits pinned to `standard`) on a pinned Amazon Linux 2023 AMI, with an Elastic IP, an encrypted 30 GiB gp3 root volume and IMDSv2. It runs the compose stack in `deploy/compose/docker-compose.staging.yml`, layered with `docker-compose.aws.yml`, which adds Caddy for TLS and sends every container's logs to the CloudWatch group `/perpeto/staging`.
+- **Network:** a dedicated public-only VPC with no NAT gateway. Only 80 and 443 are open. There is no SSH: the operator uses SSM Session Manager, and deploys use SSM Run Command.
+- **Secrets:** CloudFormation generates the three database passwords into Secrets Manager under `perpeto/staging/`. The first deploy generates the access-token key, the TOTP key, the credential master key and a one-use deployment token into `perpeto/staging/KEYS`. Nothing secret is in the repository or in GitHub except the deployer's access key.
+- **Resilience:** an alarm recovers the instance onto healthy hardware when the system status check fails, and AWS Backup snapshots it daily (kept 7 days). Every deploy also takes a `pg_dump` into `/opt/perpeto/backups` first. The stack has termination protection and the instance has API termination disabled.
+- **TLS:** Caddy serves `api.perpeto.xyz` and `<elastic-ip>.sslip.io`. The sslip.io name works as soon as the host is up; `api.perpeto.xyz` gets its certificate once its DNS `A` record points at the Elastic IP. DNS is at the registrar and changed by hand.
 
-The deployment directory must already contain `runtime.env` with `PERPETO_MODE=PAPER`, database and Redis values, and any test-only runtime secret references. Runtime trading secrets never enter GitHub. Public GHCR images require no registry login.
+### How a deploy works
+
+`.github/workflows/DEPLOY_STAGING.yml` runs after the container image for a `main` commit is published:
+
+1. `cdk deploy --all` applies any infrastructure change.
+2. `scripts/aws/deploy-host.sh` sends an SSM command that downloads `deploy/ec2/refresh.sh` from the repository at exactly that commit and runs it.
+3. `refresh.sh` fetches the compose files, the Caddyfile, `deploy/ec2/staging.env` and the deploy scripts at that commit, renders `/opt/perpeto/runtime.env` from `staging.env` plus Secrets Manager, and runs `scripts/deploy-staging.sh`.
+4. `deploy-staging.sh` backs up the database, provisions the `perpeto_migrator` and `perpeto_app` roles and their passwords (idempotent), migrates as the schema owner, starts the stack and waits for `/readyz`.
+5. The workflow checks `https://<elastic-ip>.sslip.io/readyz` from outside.
+
+Non-secret settings live in `deploy/ec2/staging.env` and change through a pull request.
+
+### GitHub environment
+
+The `staging` environment holds `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` for the `perpeto-github-deployer` IAM user, the variable `AWS_REGION=eu-north-1`, and the repository variable `STAGING_ENABLED=true`. The organisation's service control policy forbids GitHub OIDC, so the deployer is an IAM user. It can only assume the CDK bootstrap roles, read the `Perpeto-*` stack outputs, and run commands on the staging host. Create or rotate its key with `scripts/aws/create-deploy-key.sh`; the key goes from AWS straight into GitHub and is never printed.
+
+### Operator tasks
+
+- **Shell on the host:** `aws ssm start-session --target <InstanceId> --region eu-north-1`. The stack lives in `/opt/perpeto`.
+- **Logs:** CloudWatch Logs group `/perpeto/staging`, one stream per container.
+- **First Owner:** read `DEPLOYMENT_TOKEN` from the `perpeto/staging/KEYS` secret and enter it once in the app. It expires 30 days after the first deploy.
+- **Manual deploy:** run the workflow with `image_sha`, or `scripts/aws/deploy-host.sh <sha> ghcr.io/ayenisholah/perpeto-backend:sha-<sha>` with credentials that can run SSM commands.
+- **Infrastructure change:** `cd infra && npm ci && npx cdk diff`, then merge. CI type-checks and synthesizes the app without credentials, and validates the merged compose files.
+
+Public GHCR images need no registry login. Runtime trading secrets never enter GitHub.
 
 ### PAPER market data
 
 - **`PERPETO_PAPER_SOURCE`:** selects where PAPER reads market data (DEC-0016).
-  - `live` (the default) takes a snapshot of keyless public Binance, Bybit and OKX data every scan, on wall-clock time. Each venue host must be reachable from the VPS; an unreachable venue is reported `UNAVAILABLE` and the engine scans the rest. Check reachability with `funding-arb-connector-evidence snapshot` before relying on a venue.
+  - `live` (the default) takes a snapshot of keyless public Binance, Bybit and OKX data every scan, on wall-clock time. Each venue host must be reachable from the staging host (from `eu-north-1`, all three answered on 2026-11-23); an unreachable venue is reported `UNAVAILABLE` and the engine scans the rest. Check reachability with `funding-arb-connector-evidence snapshot` before relying on a venue.
   - `fixtures` replays the deterministic fixtures, described below.
 - **`PERPETO_PAPER_UNDERLYINGS`:** limits the live universe. The default is `BTC,ETH`.
 - **`PERPETO_MAX_SNAPSHOT_AGE_SECS`:** the newest snapshot age the API accepts for a paper open. The default is 90. Older snapshots are refused with 409 `STALE_MARKET_DATA`, so a stalled engine cannot leave the API filling against old books.
@@ -89,4 +117,4 @@ The `funding-arb-migrate` container runs `migrations/` before the API starts; th
 
 Deployments are serialized, digest-addressed, migration-first, health-checked, and fail closed. Rollback restores the previous compatible image and never arms entries. Production deployment is intentionally absent and not planned.
 
-The staging API container listens on port `8080` internally and is bound only to `127.0.0.1:8081` on the VPS so it cannot conflict with existing services or bypass the host TLS reverse proxy. PostgreSQL uses the specification-pinned PostgreSQL 18.4 multi-platform image digest and its major-version-aware data layout. Deployment waits for PostgreSQL, Redis, and API health before reporting success.
+The staging API container listens on port `8080` internally. Caddy reaches it on the compose network, and it is also bound to `127.0.0.1:8081` on the host for the deploy script's readiness check, so nothing reaches it except through TLS. PostgreSQL uses the specification-pinned PostgreSQL 18.4 multi-platform image digest and its major-version-aware data layout. Deployment waits for PostgreSQL, Redis, and API health before reporting success.
