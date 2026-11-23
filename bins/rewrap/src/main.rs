@@ -2,7 +2,7 @@
 //!
 //! Implements the audited rewrap job from `docs/KEY_MANAGEMENT.md`: on a fixed
 //! interval it re-encrypts every non-revoked stored credential to the secret
-//! backend's current key version via [`SecretStore::rewrap`], so a rotated key
+//! backend's current key version via [`SecretStore::rewrap`](funding_arb_venue_service::SecretStore::rewrap), so a rotated key
 //! can be retired without touching the exchange credential. Idempotent — a
 //! secret already at the current version is a no-op — and plaintext never leaves
 //! the store (Vault rewraps ciphertext-only; the AES store re-encrypts
