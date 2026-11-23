@@ -19,6 +19,8 @@ Stop and request a decision when higher-priority sources conflict. Never silentl
 
 ## Required workflow
 
+Every change reaches `main` through a pull request from a `feat/`, `fix/`, `docs/` or `chore/` branch (DEC-0019). Branch protection blocks direct pushes for every account, and `.githooks/pre-push` refuses them locally. A PR merges only when its required checks pass, and it must update `docs/CHANGELOG.md`. Build warnings are errors: each repository's lint and compile steps fail on any warning.
+
 Before editing, identify the specification section, decision IDs, acceptance criteria, and affected risk boundary. Keep the change within one milestone-sized objective. After editing, run proportionate checks, update `docs/CHANGELOG.md`, and update `docs/TRACEABILITY.md`, `docs/PROGRESS.md`, `docs/MILESTONE.md`, or `docs/DECISION.md` when their facts changed.
 
 Never record a command as passing unless it ran. Record unavailable tooling or external dependencies as blockers. Do not convert missing behavior into a mocked success response.

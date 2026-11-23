@@ -158,3 +158,11 @@ Accepted entries are append-only. Supersede an earlier decision with a new ID in
   - limited-capital pilots;
   - Vault HA and auto-unseal.
 - Consequences: Existing code for these, such as the `signer` binary and route certification state, may remain but is not extended. The corresponding `PRODUCT_SPEC.md` sections are marked deferred. Effort goes to M2–M4, which are what a reviewer can see and run.
+
+## DEC-0019 — PR-only main for every account
+
+- Status: Accepted
+- Date: 2026-11-22
+- Scope: Shared
+- Decision: `main` changes only through a pull request from a feature branch, in every Perpeto repository. Branch protection enforces this for administrators too (`enforce_admins`). Requirements: a pull request, the required status checks on an up-to-date branch, linear history, resolved conversations, and no force-push or deletion. Because the project has one maintainer, a PR needs **zero** approving reviews and no code-owner review; green required checks are the merge gate. Branches are named `feat/`, `fix/`, `docs/` or `chore/`. A local `.githooks/pre-push` hook refuses a push to `main` (enable it with `git config core.hooksPath .githooks`).
+- Consequences: This supersedes DEC-0006. The administrator bypass is gone, so emergency fixes also go through a PR, and a failing required check blocks every merge. Restore a required review count when an independent reviewer joins.
