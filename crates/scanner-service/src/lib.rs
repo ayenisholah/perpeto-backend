@@ -6,9 +6,14 @@
 
 pub mod dto;
 pub mod fixtures;
+pub mod market;
 pub mod repo;
 pub mod service;
 
 pub use dto::{LegDto, OpportunityDto, OpportunityScanDto, RiskLimitsDto};
-pub use repo::ScannerRepo;
+pub use market::{
+    BookSide, FeedStatus, LegBook, MarketSnapshot, MarketSnapshotDto, SnapshotDecodeError,
+    VenueFeedStatus,
+};
+pub use repo::{ScannerRepo, StoredSnapshot};
 pub use service::{RankedOpportunity, ScanResult, Scanner};
