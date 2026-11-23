@@ -64,7 +64,7 @@ The first execution of this baseline exposed several defects, all now fixed:
 ## Open items by milestone
 
 - **M2:**
-  - No PAPER path consumes live public data yet; the engine replays fixtures on simulated time.
+  - The keyless `PublicMarketSource` is implemented and verified live against Binance (`docs/evidence/m2/PUBLIC_SNAPSHOT.md`). The engine's PAPER path does not use it yet; it still replays fixtures on simulated time.
   - `book_snapshot` is unwired on the Bybit and OKX reconnect paths.
   - The public probe (`funding-arb-connector-evidence public`) has not been recorded.
 - **M3:** staging is down (502); no demo viewer; no hosted web build; no one-command local start; the API client registry (`0.7.0`) lags the vendored `0.22.0`.

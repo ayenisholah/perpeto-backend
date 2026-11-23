@@ -10,22 +10,20 @@ use std::str::FromStr;
 use std::time::Duration;
 
 use chrono::{DateTime, Utc};
-use funding_arb_connectors::{MarketEvent, MarketSubscription, ProductType};
 use funding_arb_domain::TradingMode;
-use funding_arb_domain::market::{FundingObservation, InstrumentRef};
 use funding_arb_domain::position::ExitReason;
 use funding_arb_execution_service::{
     BreakerAction, BreakerScope, BreakersRepo, ExecutionService, OutboxRepo, PositionDto,
     PositionsRepo,
 };
-use funding_arb_scanner_service::fixtures::{self, InstrumentKind, MarketLeg, MarketStatus};
+use funding_arb_scanner_service::fixtures::{self, MarketStatus};
 use funding_arb_scanner_service::{Scanner, ScannerRepo};
 use funding_arb_strategy_service::{PositionSummary, StrategiesRepo, StrategyService};
 use funding_arb_tenant_context::{TenantContext, TenantId, assert_safe_runtime_role};
 use funding_arb_venue_service::{
-    ConfiguredConnector, ConnectorRegistry, InstrumentDto, VenueAccountsRepo,
+    ConfiguredConnector, ConnectorRegistry, DEFAULT_DEPTH, DEFAULT_VENUE_TIMEOUT, InstrumentDto,
+    VenueAccountsRepo, measure_leg,
 };
-use futures_util::StreamExt;
 use rust_decimal::Decimal;
 use sqlx::Row;
 use sqlx::postgres::PgPoolOptions;
@@ -265,106 +263,20 @@ async fn live_scan(
                 .upsert_instrument(&instrument_dto(&instrument))
                 .await
                 .map_err(|_| "failed to persist exact instrument metadata".to_owned())?;
-            let subscription = MarketSubscription {
-                instrument: instrument.id.clone(),
-                depth: 50,
-            };
-            let mut stream = configured
-                .connector
-                .market_stream(vec![subscription])
-                .await
-                .map_err(|error| format!("{} market stream: {error}", configured.account.venue))?;
-            let event = stream
-                .next()
-                .await
-                .ok_or_else(|| "connector market stream ended".to_owned())?
-                .map_err(|error| format!("connector market snapshot: {error}"))?;
-            let (book_mark, available_notional, observed_at) =
-                book_measurement(event, instrument.contract_multiplier)?;
-            let (funding_rate, interval_hours, mark_price, index_price, next_funding_at) =
-                if configured.product == ProductType::LinearPerpetual {
-                    let funding = configured
-                        .connector
-                        .current_funding(&instrument.id)
-                        .await
-                        .map_err(|error| {
-                            format!("{} funding: {error}", configured.account.venue)
-                        })?;
-                    (
-                        funding.rate,
-                        funding.interval_hours,
-                        funding.mark_price,
-                        funding.index_price,
-                        funding.next_funding_at,
-                    )
-                } else {
-                    (
-                        Decimal::ZERO,
-                        8,
-                        book_mark,
-                        book_mark,
-                        now + chrono::Duration::hours(8),
-                    )
-                };
-            legs.push(MarketLeg {
-                kind: if configured.product == ProductType::Spot {
-                    InstrumentKind::Spot
-                } else {
-                    InstrumentKind::Perp
-                },
+            // Shared with live-data PAPER (DEC-0016) so the credentialed and
+            // public paths measure a leg identically.
+            let (leg, _book) = measure_leg(
+                configured.connector.as_ref(),
+                &instrument,
                 status,
-                observation: FundingObservation {
-                    instrument: InstrumentRef {
-                        venue: instrument.id.venue,
-                        symbol: instrument.id.symbol,
-                        underlying: instrument.canonical_underlying,
-                    },
-                    funding_rate,
-                    interval_hours,
-                    mark_price,
-                    index_price,
-                    available_notional,
-                    observed_at,
-                    next_funding_at,
-                },
-            });
+                DEFAULT_DEPTH,
+                DEFAULT_VENUE_TIMEOUT,
+            )
+            .await?;
+            legs.push(leg);
         }
     }
     Ok(scanner.scan_legs(now, &legs))
-}
-
-fn book_measurement(
-    event: MarketEvent,
-    contract_multiplier: Decimal,
-) -> Result<(Decimal, Decimal, DateTime<Utc>), String> {
-    let MarketEvent::BookSnapshot {
-        bids,
-        asks,
-        received_at,
-        ..
-    } = event
-    else {
-        return Err("connector did not provide a book snapshot".into());
-    };
-    let best_bid = bids
-        .first()
-        .ok_or_else(|| "connector book has no bids".to_owned())?;
-    let best_ask = asks
-        .first()
-        .ok_or_else(|| "connector book has no asks".to_owned())?;
-    if best_bid.price >= best_ask.price {
-        return Err("connector book is crossed".into());
-    }
-    let mark = (best_bid.price + best_ask.price) / Decimal::new(2, 0);
-    let bid_notional: Decimal = bids
-        .iter()
-        .map(|level| level.price * level.quantity * contract_multiplier)
-        .sum();
-    let ask_notional: Decimal = asks
-        .iter()
-        .map(|level| level.price * level.quantity * contract_multiplier)
-        .sum();
-    Ok((mark, bid_notional.min(ask_notional), received_at))
 }
 
 fn instrument_dto(instrument: &funding_arb_connectors::Instrument) -> InstrumentDto {

@@ -45,6 +45,16 @@ funding-arb-connector-evidence public
 
 This command uses venue networks but no API keys and performs no writes. It is the same keyless path that live-data PAPER uses (DEC-0016).
 
+## Live-data PAPER snapshot (M2)
+
+Take one snapshot exactly as the live-data PAPER engine will:
+
+```text
+funding-arb-connector-evidence snapshot
+```
+
+It needs no credentials or database. It prints each venue's feed status (`HEALTHY`, `DEGRADED` or `UNAVAILABLE`), the legs built and the newest observation time. `PERPETO_PAPER_UNDERLYINGS` overrides the default `BTC,ETH`. A venue that is unreachable from the host's network shows `UNAVAILABLE` without stopping the others, so run it from the host that will run the engine. Record results under `docs/evidence/m2/`.
+
 ## Import credentials
 
 > Operator testnet flow. The passkey-authorized `venue-credentials` API is the

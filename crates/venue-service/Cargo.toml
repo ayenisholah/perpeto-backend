@@ -8,10 +8,12 @@ rust-version.workspace = true
 [dependencies]
 funding-arb-connectors = { path = "../connectors" }
 funding-arb-domain = { path = "../funding-arb-domain" }
+funding-arb-scanner-service = { path = "../scanner-service" }
 funding-arb-tenant-context = { path = "../tenant-context" }
 aes-gcm.workspace = true
 async-trait.workspace = true
 base64.workspace = true
+futures-util.workspace = true
 chrono.workspace = true
 rand.workspace = true
 reqwest.workspace = true
@@ -22,6 +24,7 @@ sqlx.workspace = true
 uuid.workspace = true
 zeroize.workspace = true
 rust_decimal.workspace = true
+tokio = { workspace = true, features = ["time"] }
 
 [dev-dependencies]
 funding-arb-tenant-context = { path = "../tenant-context" }

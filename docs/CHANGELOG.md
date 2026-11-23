@@ -6,6 +6,14 @@ All notable repository changes are recorded here using Keep a Changelog categori
 
 ### Added
 
+- M2 step 1: a keyless public market source (DEC-0016).
+  - **Source:** `crates/venue-service/src/public_market.rs` adds `PublicMarketSource`. It builds Binance, Bybit and OKX connectors with no credentials and reads health, instruments, order books and funding for the configured underlyings (`BTC,ETH` by default).
+  - **Failure handling:** a venue that errors, times out or returns a crossed book is reported `UNAVAILABLE` and contributes no legs. Other venues continue, and there is no fixture fallback.
+  - **Caching:** instrument metadata is cached per venue for 15 minutes, with a 45-second timeout. Books and funding use a 10-second timeout and are read fresh on every snapshot.
+  - **Shared measurement:** the engine's credentialed SANDBOX/SHADOW scan now measures legs through the same `measure_leg`, which also gives it timeouts it previously lacked.
+  - **Evidence CLI:** `funding-arb-connector-evidence snapshot` prints one live snapshot. The first live run is recorded in `docs/evidence/m2/PUBLIC_SNAPSHOT.md`.
+  - **Tests:** 12 tests use a scripted `FakeConnector`. They cover the universe filter, funding on perpetuals only, book capture, degraded health, failure isolation, timeout, crossed book, metadata caching, configuration parsing, and a source-level guard that the module never references the credential store or registry.
+
 - M4 audit review endpoint — an owner-only `GET /api/v1/audit` returns the tenant's hash-chained control-plane events (pseudonymized actor, non-secret details, chained `event_hash` in hex) together with an `intact` flag computed by `verify_audit_chain`, completing the audit feature (write → read/verify). Exposes only display-safe fields — never `previous_hash`, session, or request internals. OpenAPI/client **0.22.0** (vendored into mobile) plus a flag-gated read-only "Recent activity" card. A `DATABASE_URL`-gated test asserts the listing returns events newest-first and that `intact` flips to `false` after tampering.
 
 - M4 hash-chained audit log — every sensitive control-plane action (credential enroll/rotate/revoke/delete, pilot arm/disarm, route certify) now appends a tamper-evident row to the pre-existing `audit_events` table (`event_hash = SHA-256(previous_hash ‖ canonical(fields))`, length-prefixed injective encoding). A per-tenant `pg_advisory_xact_lock` serializes appends so the chain cannot fork, actors are pseudonymized (`audit_actors`), and a `verify` walk recomputes every link to detect any mutation or deletion. Append is best-effort-after-commit (a failure is logged, never dropped, and never fails the action). No migration (the schema and forced-RLS already exist) and contract-neutral — server-internal, no API/OpenAPI/client/mobile change (a read/verify endpoint is deferred). A `DATABASE_URL`-gated test proves linkage, cross-tenant isolation, and tamper detection.
