@@ -27,6 +27,15 @@ pub trait VenueConnector: Send + Sync {
     async fn health(&self) -> ConnectorResult<VenueHealth>;
     async fn server_time(&self) -> ConnectorResult<VenueTimestamp>;
     async fn instruments(&self) -> ConnectorResult<Vec<Instrument>>;
+    /// Open a normalized public book stream.
+    ///
+    /// Every venue starts each (re)connection with a `BookSnapshot`: Bybit and
+    /// OKX push one on subscribe, and Binance fetches one over REST because its
+    /// diff stream has none. An item with
+    /// [`ConnectorErrorKind::ReconciliationRequired`](crate::ConnectorErrorKind)
+    /// means the venue's sequence can no longer be trusted: the consumer must
+    /// discard its local book and reopen the stream rather than keep applying
+    /// deltas.
     async fn market_stream(
         &self,
         subscriptions: Vec<MarketSubscription>,

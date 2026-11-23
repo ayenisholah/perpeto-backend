@@ -819,7 +819,7 @@ fn parse_market_frame(
         .ok_or_else(|| invalid("WS_DATA_EMPTY"))?;
     let sequence = i64_text(item, "seqId")?;
     if sequence < 0 {
-        return Err(reconciliation("SEQUENCE_RESET"));
+        return Err(reconciliation("SEQUENCE_NEGATIVE"));
     }
     let sequence = u64::try_from(sequence).map_err(|_| invalid("WS_SEQUENCE_INVALID"))?;
     let venue_time = millis(i64_text(item, "ts")?)?;
@@ -837,10 +837,19 @@ fn parse_market_frame(
         Some("update") => {
             let previous = i64_text(item, "prevSeqId")?;
             if previous < 0 {
-                return Err(reconciliation("PREVIOUS_SEQUENCE_RESET"));
+                return Err(reconciliation("PREVIOUS_SEQUENCE_NEGATIVE"));
             }
             let previous =
                 u64::try_from(previous).map_err(|_| invalid("WS_PREVIOUS_SEQUENCE_INVALID"))?;
+            // OKX documents a maintenance reset as an update whose `seqId` is
+            // smaller than its `prevSeqId`, after which sequencing restarts in a
+            // new range. A local book keyed on the old range would treat every
+            // later update as a duplicate and silently freeze, so fail closed:
+            // the consumer must discard the book and resubscribe for a fresh
+            // snapshot. The REST book carries no `seqId` and cannot re-seed it.
+            if sequence < previous {
+                return Err(reconciliation("SEQUENCE_RESET"));
+            }
             Ok(Some(MarketEvent::BookDelta {
                 instrument: subscription.instrument.clone(),
                 first_sequence: previous.saturating_add(1),
@@ -1149,6 +1158,7 @@ fn unsupported(code: &str) -> ConnectorError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{BookApply, BookState, BookStatus};
 
     #[test]
     fn demo_header_mode_is_the_only_write_capable_environment() {
@@ -1203,5 +1213,89 @@ mod tests {
                 ..
             })
         ));
+    }
+
+    fn books_frame(action: &str, previous: &str, sequence: &str) -> Value {
+        json!({
+            "arg": {"channel": "books", "instId": "BTC-USDT-SWAP"},
+            "action": action,
+            "data": [{
+                "ts": "1720000000000", "prevSeqId": previous, "seqId": sequence,
+                "bids": [["60000", "1", "0", "1"]],
+                "asks": [["60001", "2", "0", "1"]]
+            }]
+        })
+    }
+
+    fn books_subscription() -> Vec<MarketSubscription> {
+        vec![MarketSubscription {
+            instrument: instrument_id("BTC-USDT-SWAP", ProductType::LinearPerpetual),
+            depth: 400,
+        }]
+    }
+
+    /// The documented OKX sequence example: snapshot (-1, 10), update
+    /// (10, 15), no-change keepalive (15, 15), maintenance reset (15, 3).
+    #[test]
+    fn documented_sequence_example_keeps_the_book_current_until_a_reset() {
+        let subscriptions = books_subscription();
+        let parse = |frame: Value| {
+            parse_market_frame(&frame, &subscriptions)
+                .expect("parse")
+                .expect("book event")
+        };
+        let mut book = BookState::new(subscriptions[0].instrument.clone());
+        assert_eq!(
+            book.apply(&parse(books_frame("snapshot", "-1", "10"))),
+            BookApply::Applied
+        );
+        assert_eq!(
+            book.apply(&parse(books_frame("update", "10", "15"))),
+            BookApply::Applied
+        );
+        let mut keepalive = books_frame("update", "15", "15");
+        keepalive["data"][0]["bids"] = json!([]);
+        keepalive["data"][0]["asks"] = json!([]);
+        assert_eq!(book.apply(&parse(keepalive)), BookApply::IgnoredDuplicate);
+        assert_eq!(book.status(), &BookStatus::Current);
+
+        let reset = parse_market_frame(&books_frame("update", "15", "3"), &subscriptions)
+            .expect_err("a sequence reset must fail closed");
+        assert_eq!(reset.kind, ConnectorErrorKind::ReconciliationRequired);
+        assert_eq!(reset.code, "OKX_SEQUENCE_RESET");
+    }
+
+    #[test]
+    fn a_skipped_update_marks_the_book_stale() {
+        let subscriptions = books_subscription();
+        let parse = |frame: Value| {
+            parse_market_frame(&frame, &subscriptions)
+                .expect("parse")
+                .expect("book event")
+        };
+        let mut book = BookState::new(subscriptions[0].instrument.clone());
+        book.apply(&parse(books_frame("snapshot", "-1", "10")));
+        assert_eq!(
+            book.apply(&parse(books_frame("update", "12", "15"))),
+            BookApply::ResetRequired
+        );
+        assert!(book.view().is_none());
+    }
+
+    #[test]
+    fn a_resubscribe_snapshot_restores_the_book_after_a_reset() {
+        let subscriptions = books_subscription();
+        let mut book = BookState::new(subscriptions[0].instrument.clone());
+        let snapshot = |sequence: &str| {
+            parse_market_frame(&books_frame("snapshot", "-1", sequence), &subscriptions)
+                .expect("parse")
+                .expect("book event")
+        };
+        book.apply(&snapshot("500"));
+        // After the reset the new range starts lower; the fresh snapshot
+        // replaces the book outright rather than being compared with it.
+        assert_eq!(book.apply(&snapshot("3")), BookApply::Applied);
+        assert_eq!(book.status(), &BookStatus::Current);
+        assert_eq!(book.view().expect("view").sequence, 3);
     }
 }

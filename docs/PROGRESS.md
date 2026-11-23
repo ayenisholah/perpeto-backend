@@ -3,7 +3,7 @@
 ## Snapshot
 
 - **Roadmap:** re-baselined by DEC-0015 on 2026-11-22. Perpeto is a public reference implementation, and LIVE is permanently fail-closed.
-- **Milestone:** M1 done. M2, live-data paper trading, is next.
+- **Milestone:** M1 done. M2, live-data paper trading, is code-complete on `main`; its probe and 24-hour staging evidence remain.
 - **CI:** Backend CI, container and staging deploy were green on `main` at `07cb3cc` (2026-07-30).
 - **Staging:** moved to AWS `eu-north-1` (DEC-0020) and live since 2026-11-23 at `https://13.48.32.219.sslip.io` (`/readyz` 200, Let's Encrypt TLS). `api.perpeto.xyz` still points at the retired VPS until its DNS record moves to `13.48.32.219`.
 - **Last full local verification:** 2026-07-29.
@@ -64,15 +64,14 @@ The first execution of this baseline exposed several defects, all now fixed:
 ## Open items by milestone
 
 - **M2:**
-  - The keyless `PublicMarketSource` is implemented and verified live against Binance (`docs/evidence/m2/PUBLIC_SNAPSHOT.md`). The engine's PAPER path does not use it yet; it still replays fixtures on simulated time.
-  - `book_snapshot` is unwired on the Bybit and OKX reconnect paths.
+  - Implemented and on `main` (#8–#11, merged 2026-11-23): the keyless `PublicMarketSource`, snapshot persistence, the engine's live-data PAPER path, fills against the stored book, freshness blocking and per-venue feed status in `/health` (client 0.23.0). Reconnect integrity is implemented for every venue.
   - The public probe (`funding-arb-connector-evidence public`) has not been recorded.
+  - The 24-hour staging run has not started: staging returns 502, and the deploy job fails SSH authentication to the host (2026-11-23).
 - **M3:** staging is down (502); no demo viewer; no hosted web build; no one-command local start; the API client registry (`0.7.0`) lags the vendored `0.22.0`.
 - **M4:** no testnet or demo credentials are enrolled and no execution evidence is committed.
 
 ## Next tasks
 
-1. M2: build the credential-free `PublicMarketSource` and wire it into the engine's PAPER path (`docs/IMPLEMENTATION.md`).
-2. M2: simulate paper fills against live depth, and add stale-feed blocking with its tests.
-3. M2: wire `book_snapshot` into the Bybit and OKX reconnect paths.
-4. M3: restore staging and redeploy `main`.
+1. M2: record the public probe for all three venues under `docs/evidence/m2/`.
+2. M2: restore the staging deploy key and host, redeploy `main` in live-data PAPER, and run the 24-hour soak.
+3. M2: close the milestone with the soak evidence.

@@ -1106,6 +1106,7 @@ fn unsupported(code: &str) -> ConnectorError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{BookApply, BookState, BookStatus};
 
     #[test]
     fn maps_terminal_and_partial_order_states() {
@@ -1160,5 +1161,51 @@ mod tests {
             parse_market_frame(&restart, &subscriptions).expect("parse"),
             Some(MarketEvent::BookSnapshot { sequence: 1, .. })
         ));
+    }
+
+    /// Bybit documents that a successful subscription is answered with a
+    /// `snapshot` and that any `snapshot` resets the local book. A reconnect
+    /// resubscribes, so the transport marker carries no book data and the
+    /// next snapshot replaces the book even when its update ID is lower.
+    #[test]
+    fn a_reconnect_is_recovered_by_the_resubscribe_snapshot() {
+        let subscriptions = vec![MarketSubscription {
+            instrument: InstrumentId {
+                venue: Venue::Bybit,
+                symbol: "BTCUSDT".into(),
+                product: ProductType::LinearPerpetual,
+            },
+            depth: 50,
+        }];
+        let frame = |kind: &str, update: u64| {
+            json!({
+                "topic": "orderbook.50.BTCUSDT",
+                "type": kind,
+                "cts": 1_720_000_000_000_i64,
+                "data": {"u": update, "seq": 900, "b": [["60000", "1"]], "a": [["60001", "2"]]}
+            })
+        };
+        let parse = |value: Value| {
+            parse_market_frame(&value, &subscriptions)
+                .expect("parse")
+                .expect("book event")
+        };
+        let mut book = BookState::new(subscriptions[0].instrument.clone());
+        assert_eq!(
+            book.apply(&parse(frame("snapshot", 100))),
+            BookApply::Applied
+        );
+        assert_eq!(book.apply(&parse(frame("delta", 101))), BookApply::Applied);
+        assert!(
+            parse_market_frame(&json!({"_perpeto_transport": "connected"}), &subscriptions)
+                .expect("parse")
+                .is_none()
+        );
+        assert_eq!(
+            book.apply(&parse(frame("snapshot", 40))),
+            BookApply::Applied
+        );
+        assert_eq!(book.status(), &BookStatus::Current);
+        assert_eq!(book.view().expect("view").sequence, 40);
     }
 }
