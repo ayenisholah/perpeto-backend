@@ -1,5 +1,12 @@
 name: Deploy Staging
 
+# PAPER staging runs on one EC2 host in eu-north-1 (DEC-0020): the CDK app in
+# infra/ owns the host, and each deploy reaches it through SSM Run Command, so
+# there is no SSH key to rotate. The AWS organisation's service control policy
+# forbids GitHub OIDC, so the job uses the scoped perpeto-github-deployer IAM
+# user (infra/lib/deployer-stack.ts); rotate its key with
+# scripts/aws/create-deploy-key.sh.
+
 on:
   workflow_run:
     workflows: ["Backend Container"]
@@ -22,48 +29,45 @@ concurrency:
 jobs:
   deploy:
     if: vars.STAGING_ENABLED == 'true' && (github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success')
-    environment: staging
+    environment:
+      name: staging
+      url: https://api.perpeto.xyz
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 40
+    env:
+      AWS_REGION: ${{ vars.AWS_REGION }}
     steps:
       - name: Resolve source revision
         id: source
         shell: bash
+        env:
+          RUN_SHA: ${{ github.event.workflow_run.head_sha }}
+          INPUT_SHA: ${{ inputs.image_sha }}
         run: |
-          if [[ "${{ github.event_name }}" == "workflow_run" ]]; then
-            echo "sha=${{ github.event.workflow_run.head_sha }}" >> "$GITHUB_OUTPUT"
-          else
-            echo "sha=${{ inputs.image_sha }}" >> "$GITHUB_OUTPUT"
-          fi
+          if [[ "${{ github.event_name }}" == "workflow_run" ]]; then sha="$RUN_SHA"; else sha="$INPUT_SHA"; fi
+          [[ "$sha" =~ ^[0-9a-f]{40}$ ]] || { echo "expected a full commit SHA" >&2; exit 1; }
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
       - uses: actions/checkout@v6
         with:
           ref: ${{ steps.source.outputs.sha }}
-      - name: Configure pinned SSH identity
-        env:
-          SSH_PRIVATE_KEY: ${{ secrets.STAGING_SSH_PRIVATE_KEY }}
-          KNOWN_HOSTS: ${{ vars.STAGING_KNOWN_HOSTS }}
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: infra/package-lock.json
+      - uses: aws-actions/configure-aws-credentials@v6
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ vars.AWS_REGION }}
+      - name: Infrastructure (CDK)
+        working-directory: infra
         run: |
-          install -m 700 -d ~/.ssh
-          printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/id_ed25519
-          chmod 600 ~/.ssh/id_ed25519
-          printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
-          chmod 600 ~/.ssh/known_hosts
-      - name: Upload versioned deployment files
+          npm ci
+          npx cdk deploy --all --require-approval never
+      - name: Deploy the image to the host through SSM
         env:
-          HOST: ${{ vars.STAGING_HOST }}
-          PORT: ${{ vars.STAGING_PORT }}
-          USER: ${{ vars.STAGING_USER }}
-          DEPLOY_PATH: ${{ vars.STAGING_DEPLOY_PATH }}
-        run: |
-          ssh -p "$PORT" "$USER@$HOST" "test -d '$DEPLOY_PATH' && mkdir -p '$DEPLOY_PATH/deploy/compose' '$DEPLOY_PATH/scripts'"
-          scp -P "$PORT" deploy/compose/docker-compose.staging.yml "$USER@$HOST:$DEPLOY_PATH/deploy/compose/"
-          scp -P "$PORT" scripts/deploy-staging.sh "$USER@$HOST:$DEPLOY_PATH/scripts/"
-      - name: Deploy and verify paper staging
-        env:
-          HOST: ${{ vars.STAGING_HOST }}
-          PORT: ${{ vars.STAGING_PORT }}
-          USER: ${{ vars.STAGING_USER }}
-          DEPLOY_PATH: ${{ vars.STAGING_DEPLOY_PATH }}
+          SHA: ${{ steps.source.outputs.sha }}
           IMAGE: ghcr.io/${{ github.repository }}:sha-${{ steps.source.outputs.sha }}
-        run: |
-          ssh -p "$PORT" "$USER@$HOST" "cd '$DEPLOY_PATH' && chmod 700 scripts/deploy-staging.sh && PERPETO_IMAGE='$IMAGE' bash scripts/deploy-staging.sh"
+        run: bash scripts/aws/deploy-host.sh "$SHA" "$IMAGE"
