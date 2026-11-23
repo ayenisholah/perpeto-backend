@@ -38,6 +38,10 @@ pub struct LegDto {
     pub direction_probability: Decimal,
     /// RFC 3339 timestamp of the leg's next funding settlement.
     pub next_funding_at: String,
+    /// RFC 3339 timestamp of the market observation the leg was ranked from.
+    /// Absent on scans stored before client 0.23.0.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub observed_at: Option<String>,
 }
 
 /// A single costed, ranked opportunity with its risk reservation.
@@ -122,6 +126,7 @@ impl LegDto {
             p90_rate: leg.forecast.p90_rate,
             direction_probability: leg.forecast.direction_probability,
             next_funding_at: leg.forecast.next_funding_at.to_rfc3339(),
+            observed_at: Some(leg.forecast.input_freshness.to_rfc3339()),
         }
     }
 }
@@ -243,11 +248,21 @@ mod tests {
             p90_rate: exact,
             direction_probability: exact,
             next_funding_at: "2026-07-19T08:00:00Z".to_owned(),
+            observed_at: None,
         };
 
         let encoded = serde_json::to_string(&leg).expect("serialize leg");
         assert!(encoded.contains("\"predicted_rate\":\"0.123456789012345678\""));
         let decoded: LegDto = serde_json::from_str(&encoded).expect("deserialize leg");
         assert_eq!(decoded.predicted_rate, exact);
+    }
+
+    #[test]
+    fn legs_stored_before_observed_at_still_decode() {
+        let legacy = r#"{"venue":"BYBIT","predicted_rate":"0.1","p10_rate":"0.05","p90_rate":"0.15","direction_probability":"0.9","next_funding_at":"2026-07-19T08:00:00Z"}"#;
+        let decoded: LegDto = serde_json::from_str(legacy).expect("legacy leg");
+        assert_eq!(decoded.observed_at, None);
+        let encoded = serde_json::to_string(&decoded).expect("encode");
+        assert!(!encoded.contains("observed_at"));
     }
 }

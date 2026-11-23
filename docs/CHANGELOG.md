@@ -6,6 +6,12 @@ All notable repository changes are recorded here using Keep a Changelog categori
 
 ### Added
 
+- M2 step 4: the feed-freshness contract (OpenAPI and `@ayenisholah/perpeto-api-client` **0.23.0**, additive).
+  - **`/health` venues:** each venue gains `feed_status` (`HEALTHY`, `DEGRADED`, `UNAVAILABLE` or `UNKNOWN`), `last_observed_at` and `feed_error`. These are derived by `venue_health` from the latest stored market snapshot, with fixture snapshots judged by their legs.
+  - **Real values instead of fabricated ones:** `market_data_age_seconds` is now real; it was hardcoded to `0`. `connected` reflects whether the snapshot reached the venue; it used to be `true` unless a breaker was active. `status` is `DEGRADED` for an active breaker or an unhealthy feed.
+  - **Opportunity legs:** gain an optional `observed_at`, taken from the forecast input. Payloads stored before this change still decode.
+  - **Tests:** 6 health-derivation tests, a legacy-payload decode test, and a client contract test for the new fields.
+
 - M2 step 3: paper trading runs on the market snapshot.
   - **Engine:** takes one snapshot per tick and uses it for venue breakers, supervision, ranking, persistence and auto-entry. `PERPETO_PAPER_SOURCE=live` (the default) uses keyless public data on wall-clock time; `fixtures` keeps the deterministic replay. Unhealthy venue feeds are logged every scan.
   - **`ExecutionService::open_from` / `supervise_with`:** take a snapshot. Each leg fills at the VWAP of its captured book (`book_fill_price`, contract-multiplier aware), and books too thin for the size are refused with `InsufficientDepth`. The fixture `open` and `supervise` wrap them unchanged, and a test proves identical fills.

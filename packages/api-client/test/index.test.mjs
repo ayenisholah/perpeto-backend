@@ -526,3 +526,47 @@ describe("venue account contract", () => {
     assert.equal(JSON.stringify(requests).includes("api_secret"), false);
   });
 });
+
+describe("system health feed contract (0.23.0)", () => {
+  it("passes per-venue public feed health through unchanged", async () => {
+    const health = {
+      venues: [
+        {
+          venue: "BINANCE",
+          status: "HEALTHY",
+          connected: true,
+          market_data_age_seconds: 12,
+          clock_drift_ms: 0,
+          feed_status: "HEALTHY",
+          last_observed_at: "2026-11-22T13:11:01Z",
+          feed_error: null,
+        },
+        {
+          venue: "BYBIT",
+          status: "DEGRADED",
+          connected: false,
+          market_data_age_seconds: 30,
+          clock_drift_ms: 0,
+          feed_status: "UNAVAILABLE",
+          last_observed_at: null,
+          feed_error: "health timed out",
+        },
+      ],
+      services: [],
+      as_of: "2026-11-22T13:11:13Z",
+    };
+    let requested;
+    const client = new PerpetoClient({
+      baseUrl: "https://api.example.test",
+      fetchImplementation: async (url) => {
+        requested = String(url);
+        return response(200, health);
+      },
+    });
+    const result = await client.getSystemHealth();
+    assert.equal(requested, "https://api.example.test/api/v1/health");
+    assert.deepEqual(result, health);
+    assert.equal(result.venues[1].feed_status, "UNAVAILABLE");
+    assert.equal(result.venues[1].feed_error, "health timed out");
+  });
+});

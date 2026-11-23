@@ -1879,10 +1879,11 @@ pub async fn get_health(
     Extension(caller): Extension<CallerContext>,
 ) -> Result<impl IntoResponse, ApiError> {
     caller.require_active()?;
+    let market = state.scanner.latest_snapshot().await.map_err(internal)?;
     Ok(Json(
         state
             .monitoring
-            .health(caller.tenant_context()?, Utc::now())
+            .health(caller.tenant_context()?, market.as_ref(), Utc::now())
             .await
             .map_err(internal)?,
     ))

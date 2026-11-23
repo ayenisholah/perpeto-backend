@@ -2,7 +2,7 @@
 
 ## Contract and implementation status
 
-The implemented API is rooted at `/api/v1`. `/livez`, `/readyz` and `/entryz` are public infrastructure probes outside the versioned namespace. [`schemas/openapi.yaml`](../schemas/openapi.yaml) (version `0.22.0`) is the normative contract, and `@ayenisholah/perpeto-api-client` is generated from it. This page summarizes it.
+The implemented API is rooted at `/api/v1`. `/livez`, `/readyz` and `/entryz` are public infrastructure probes outside the versioned namespace. [`schemas/openapi.yaml`](../schemas/openapi.yaml) (version `0.23.0`) is the normative contract, and `@ayenisholah/perpeto-api-client` is generated from it. This page summarizes it.
 
 Production exchange writes are unavailable: LIVE is permanently fail-closed (DEC-0015). Venue writes exist only in SANDBOX, against the operator's own testnet and demo accounts.
 
@@ -33,7 +33,7 @@ The credential, certification and pilot groups are implemented hardening (DEC-00
 - **M2:** no new paths.
   - `POST /positions` now opens against the market snapshot stored with the latest scan and fills from its captured books.
   - It returns 409 with `STALE_MARKET_DATA`, `VENUE_DEGRADED` or `INSUFFICIENT_DEPTH` in addition to `RISK_HALTED`.
-  - Health and opportunity reads gain feed freshness in client `0.23.0`.
+  - `0.23.0`: `/health` venues report `feed_status`, `last_observed_at` and `feed_error` from the latest snapshot, with a real `market_data_age_seconds`. Opportunity legs gain `observed_at`.
 - **M3:** a read-only demo viewer (DEC-0017). Additive authentication for the viewer, and a role every mutating endpoint rejects, proven by an authorization test.
 - **M4:** no new paths. SANDBOX evidence uses the existing venue-account, connector-order and reconciliation endpoints.
 
