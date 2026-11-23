@@ -2,37 +2,67 @@
 
 ## Current objective
 
-Finish M3 connector certification without enabling production writes, then continue M4 as small, independently verifiable security and pilot slices. The verified-build objective is met: compile, Clippy, migrations and the full test suite pass together under a correct two-role database model. The current AES master-key/CLI credential path is transitional and cannot be reused as the M4 production design.
+Deliver M2: live-data paper trading. Then deliver M3, the public demo, and M4, testnet execution (DEC-0015). M1 is closed. Every slice below must be closable by one maintainer without real capital.
 
-## Baseline recovery
+## M2 — Live-data paper trading (next)
 
-**Complete.** The workspace compiles, passes Clippy with warnings denied, applies all 18 migrations as the schema owner, and passes 136 tests as the non-owning runtime role; the exact-decimal wire/persistence representation is covered by passing PostgreSQL round-trip tests. Establishing this required a two-role database model (`scripts/bootstrap-db-roles.sql`), which nothing previously provisioned even though `assert_safe_runtime_role` has always demanded it — every runtime binary would have refused to start against the shipped CI and Compose configuration. See the verification baseline in `docs/PROGRESS.md` for the reproduction commands and the defects the first execution exposed.
+Most of the plumbing exists. The engine already builds each `MarketLeg` from `connector.market_stream` and `connector.current_funding` (`bins/engine/src/main.rs`), but only for configured accounts in SANDBOX/SHADOW. PAPER still replays `crates/scanner-service/src/fixtures.rs` on simulated time.
 
-Remaining from the original baseline list: the M1 real-device, accessibility and provider/replay evidence.
+1. **Public market source:** a credential-free `PublicMarketSource` over the existing Binance, Bybit and OKX adapters in `crates/connectors/src/{binance,bybit,okx}.rs`, using only their public REST and WebSocket endpoints. It returns instruments, funding (rate, interval, next settlement, mark and index), and order-book snapshots and deltas. It must not depend on `ConnectorRegistry::load` or any `SecretStore`.
+2. **Engine wiring:** in PAPER, feed public legs into `scanner.scan_legs`. Fixture replay (`PERPETO_SIM_START`, `PERPETO_SIM_TICK_SECS`) becomes an explicit selection, `PERPETO_PAPER_SOURCE=fixtures`, and stays the default under test.
+3. **Paper fills against live depth:** simulate each leg's fill by walking the live book with the existing `BookState::executable_price` (`crates/connectors/src/book.rs`), and apply configured fees. Funding accrues at real settlement times.
+4. **Freshness and failure:** stale or failed feeds mark the affected legs stale. They block paper entries and surface in `/health` and the opportunity freshness fields. There is no silent fallback to fixtures.
+5. **Reconnect integrity:** wire `book_snapshot` into the Bybit and OKX reconnect paths, as Binance already does.
+6. **Evidence:**
+   - parser tests on recorded public payloads;
+   - a stale-feed blocking test;
+   - a test proving PAPER constructs no credential read path;
+   - a 24-hour staging run with no crash.
 
-## M3 completion
+## M3 — Public demo
 
-1. **Build-verified; live evidence open:** primary public/private WebSocket streams, bounded reconnect handling and connector-specific sequence recovery for Bybit, Binance and OKX. The transport/parser suites pass. `book_snapshot` remains unwired on the Bybit and OKX reconnect paths, where Binance uses it to rebuild the book and re-anchor the sequence.
-2. Run credentialed sandbox/demo probes, reconciliation and timed soak evidence with least-privilege operator test accounts.
-3. Run production read-only shadow evidence and record platform connector/route certification. Do not submit a production order.
+1. Restore staging. The last successful deploy was `07cb3cc` on 2026-07-30, and the API returned 502 on 2026-11-22. Redeploy current `main` in live-data PAPER.
+2. Add the read-only demo viewer and a seeded demo tenant (DEC-0017), with an authorization test that calls every mutating endpoint as the viewer and expects rejection.
+3. Add a one-command local start: a Compose profile for PostgreSQL, Redis, migrate, API and engine in live-data PAPER.
+4. Rewrite the README as a 5-minute tour, with links to the demo, an architecture diagram, local start and an evidence index.
+5. Publish the API client so the registry (`0.7.0`) matches the vendored `0.22.0`.
 
-## M4 ordered slices
+The mobile side (hosted web build, TestFlight, viewer UX) is tracked in the mobile repository.
 
-1. **Tenant foundation — partially implemented locally:** personal tenants, one-owner membership, session-derived tenant context and public tenant summary are present. Tenant-scoped private IDs, commands, audit and idempotency remain part of the next isolation slices.
-2. **Database isolation — verified:** migration `0016` adds tenant ownership, tenant-aware foreign/unique constraints and forced RLS, quarantines legacy rows in a suspended tenant, and repositories establish transaction-local tenant context. Runtime binaries reject owner or `BYPASSRLS` roles, and `scripts/bootstrap-db-roles.sql` now provisions the distinct `perpeto_migrator` and `perpeto_app` roles this requires. Migrations execute as the owner and the adversarial cross-tenant tests pass as the runtime role; run as a superuser they fail, so the evidence binds. Migration `0016` also needed repair — three constraint drops named identifiers longer than PostgreSQL's 63-byte limit.
-3. **Tenant-aware runtime — partially implemented locally:** API repositories, engine work, reconciliation, worker queues/outbox, breakers, alerts, connector accounting and encrypted credentials are tenant-scoped. Redis keys/locks, tenant WebSocket delivery, exports and full observability separation remain.
-4. **Passkeys — build- and database-verified:** WebAuthn registration/assertion, RP/origin validation, monotonic signature-count clone detection, single-use challenges and one-use action proofs bound to an exact `ActionDescriptor` are present (migration `0017`, `funding_arb_domain::auth`, `auth-service/src/passkey.rs`, additive API/OpenAPI `0.16.0` and a flagged mobile surface). `webauthn-rs` and `auth-service` compile (that crate pulls in native OpenSSL, so `pkg-config` and `libssl-dev` are build prerequisites) and the forced-RLS/adversarial passkey tests pass under a non-`BYPASSRLS` role. A credentialed assertion round-trip against a real authenticator still needs an EAS development build. Device/recovery lifecycle beyond register/revoke and binding proofs to concrete credential/live actions follow with slices 6–8.
-5. **Vault foundation — application code implemented locally; infra + evidence open:** a `VaultTransitSecretStore` (`crates/venue-service/src/vault.rs`) implements the existing `SecretStore` trait with per-tenant opaque Transit keys, record-binding `associated_data`, and separate encrypt-only (API) vs decrypt-only (workload) tokens; migration `0018` adds the `VAULT` credential row shape; runtime binaries select Vault when `PERPETO_VAULT_ADDR` is set, else the transitional AES store, fail-closed outside PAPER. The ciphertext-rewrap application path has now landed too: a `SecretStore::rewrap` primitive (Vault via Transit's native `rewrap` endpoint, gated on `PERPETO_VAULT_REWRAP_TOKEN`; the transitional AES store via a decrypt-only keyring) driven by a scheduled `bins/rewrap` worker that migrates non-revoked credentials to the current key version, idempotently and without exposing plaintext. Still to do (infra): deploy Vault Transit, create the per-tenant keys, workload auth/policies (including the rewrap token), 2-of-3 Shamir initialization, sealed readiness, audited operator runbooks, plus the live encrypt→decrypt/rewrap/policy evidence.
-6. **Credential lifecycle — enroll/rotate/revoke + preflight wiring implemented locally; live evidence + deletion open:** an owner/trader `POST /venue-credentials/{id}/preflight` (`bins/api` `preflight_credential`) now composes the connection config checks with a live `ReconciliationService.run` and calls `record_preflight_result`, making `ELIGIBLE` reachable and closing the enroll→preflight→eligible→arm→gate pipeline. The config half runs now; reaching `ELIGIBLE` needs testnet credentials (fail-closed to `PREFLIGHT_FAILED` otherwise). Earlier:  a passkey-gated API (`bins/api` `venue-credentials` routes → `CredentialEnrollmentService`, `crates/venue-service/src/enrollment.rs`) replaces the CLI: `enroll` creates the account and writes the secret through the encrypt-only `SecretStore` (Vault outside PAPER), `rotate`/`revoke` reuse it, and each op consumes a one-use passkey `ActionProof` bound to the exact action. Secrets are write-only and never returned or logged; endpoints 503 in PAPER. A `PENDING_PREFLIGHT → ELIGIBLE/PREFLIGHT_FAILED` state machine exists, and a scheduled `bins/preflight` worker now re-runs the shared `PreflightService` against every `ELIGIBLE` connection to demote drifted routes fail-closed (the compose is extracted from the handler into `crates/venue-service/src/preflight.rs`, so endpoint and worker cannot diverge). Credential deletion now exists too: a passkey-gated `delete/start`+`/finish` (`DeleteCredential` action) → `CredentialEnrollmentService::delete` destroys every connection secret and tombstones the account (`get` now hides tombstoned rows), fail-closed (503 in PAPER, 409 while `PILOT_ARMED`). The ciphertext-rewrap job remains deferred.
-7. **Account live gate — arming control plane implemented locally; live effect + platform certification open:** a pure `PilotState` machine (`crates/funding-arb-domain/src/pilot.rs`) plus the first `tenants.state` write path (`auth-service` `pilot_state`/`set_pilot_state`) drive `PAPER_ONLY → PILOT_ELIGIBLE → PILOT_ARMED`. Owner-only `pilot` endpoints grant eligibility (when a connection is preflight-`ELIGIBLE`), arm with a one-use passkey `ActionProof` (`ArmPilot`) plus a typed confirmation matching the account alias, and disarm (always available, halts new risk). Transitions emit outbox events. This is **control-plane only** — LIVE stays fail-closed, so arming records intent but changes no execution. A hash-chained, tamper-evident audit log now records every sensitive control-plane action (credential enroll/rotate/revoke/delete, pilot arm/disarm, route certify) into the pre-existing `audit_events` table (`auth-service` `audit.rs` + `record_audit`/`verify_audit_chain`), and an owner-only `GET /api/v1/audit` (`audit_log` → `list_audit` + `verify_audit_chain`, OpenAPI/client `0.22.0`) surfaces the log with an integrity flag. Platform route certification and `permission_version` session invalidation remain deferred.
-8. **Limited CEX execution — live-risk gate + disarm/flatten implemented locally; live rollout deferred:** `permit_live_risk` (`crates/funding-arb-domain/src/pilot.rs`) gates production connector submission on `PILOT_ARMED` + connection `ELIGIBLE` + certification `Pilot`/`CertifiedLive`, wired fail-closed into `submit_connector_order` (inert while LIVE is locked, testnet exempt). Disarm now escalates to `FLATTEN` (closes positions via the engine). Owner + passkey-gated per-route certification promotion (`CertifyRoute`, forward-only `CertificationState::promote`) records operator assertion. Still deferred: actual live order execution / `PILOT` cohort rollout (needs LIVE unlock + venue evidence), loss/drawdown containment beyond the engine's checks, credential revocation ordering, and venue-authoritative recovery.
-9. **Mobile/API contract evidence:** release versioned additive contracts, generated client and mobile flows only as each backend security boundary becomes real.
-10. **Acceptance — buildable evidence authored locally; infra/venue evidence deferred:** a forced-RLS configuration guard (`crates/auth-service/tests/forced_rls.rs`) asserts every private tenant table (`0016`+`0017`) forces RLS with a tenant policy and that a missing context reads/writes nothing; adversarial cross-tenant behavioral tests cover positions, credentials, passkeys, tenant-state, breakers and venue accounts; and a domain pipeline test proves `PilotState`→`permit_live_risk` compose fail-closed. Still deferred (need infra/venues): Vault policy/seal/restore exercises, passkey lost-device/recovery and ceremony replay/origin, the limited-capital pilot, and the signed evidence run. M4 closes only with that signed evidence.
+## M4 — Testnet execution
+
+1. Enroll the operator's own Bybit testnet, Binance testnet and OKX demo credentials through `funding-arb-venue-admin import` or the passkey-gated `venue-credentials` API.
+2. Per venue, run one coordinated open → funding → close cycle in SANDBOX through `ConnectorExecutionCoordinator`.
+3. Per venue, force one partial fill or a timeout with an unknown outcome, and show it is reconciled before any retry.
+4. Commit the redacted evidence and reconciliation report under `docs/evidence/<venue>/`, following `CONNECTOR_EVIDENCE.md`.
+
+## Implemented hardening (kept, not a gate)
+
+The following stay in the codebase and their suites must keep passing. Extending them is not on the roadmap:
+- personal tenants and forced RLS (`0015`, `0016`);
+- passkeys (`0017`);
+- the Vault Transit store and the AES store (`0018`), plus the rewrap worker;
+- passkey-gated credential lifecycle and preflight (endpoint and worker);
+- the pilot state machine and `permit_live_risk`, with disarm → flatten;
+- the hash-chained audit log and `GET /audit`.
 
 ## Change protocol
 
-Each slice updates migrations/domain → service/repository → API/OpenAPI/client → mobile → tests/docs. Avoid a period where a secret endpoint exists without forced tenant isolation, passkey authorization and encrypt-only Vault access. Production write mode stays fail-closed until the complete gate is deployed and accepted.
+Each slice moves through these layers in order:
+1. migrations and domain;
+2. service and repository;
+3. API, OpenAPI and client;
+4. mobile;
+5. tests and docs.
 
-## Explicitly deferred
+PAPER never loads credentials. SANDBOX writes only to explicitly configured testnet or demo accounts. LIVE stays fail-closed.
 
-DEX connectors/signers move to M5. Vault HA/managed auto-unseal, static egress improvements, stronger workload/host isolation, full DR/SLO/security review move to M6. `CERTIFIED_LIVE` and broader rollout move to M7. Automatic CEX withdrawals/transfers, team tenants, custody and double-entry ledger remain separately deferred; lossless-decimal persistence is an open M2 exit gate, not deferred live work.
+## Deferred (DEC-0018)
+
+- DEX connectors and the signer
+- Treasury, rebalancing and compounding
+- Telegram/Discord
+- Route certification soaks and limited-capital pilots
+- Vault HA and auto-unseal
+- Team tenants and custody
+- Any real-money rollout

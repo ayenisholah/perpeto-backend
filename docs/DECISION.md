@@ -113,3 +113,48 @@ Accepted entries are append-only. Supersede an earlier decision with a new ID in
 - Scope: Shared
 - Decision: A `DevIdentityVerifier` may substitute provider identity-token verification behind the existing `IdentityTokenVerifier` trait, so the Expo Go client can reach authenticated surfaces. Expo Go cannot execute the native Google or Apple modules, so no provider sign-in is possible there and no authenticated screen is otherwise reachable. It accepts only tokens prefixed `perpeto-dev:` and rejects everything else, so a genuine provider token is never treated as verified by a relaxed path. The verifier is selected only when `PERPETO_MODE=PAPER` and `PERPETO_DEV_AUTH=true`; `bins/api` refuses to start when the flag is set in any other mode, rather than falling back to the live verifier, and prints a warning when the verifier is active. `PERPETO_DEV_AUTH` and the client's `EXPO_PUBLIC_DEV_AUTH_ENABLED` appear only in gitignored local files, never in `runtime.env.example`, Compose manifests, or CI.
 - Consequences: This is an authentication bypass and is recorded as one. Enabled anywhere reachable it would let any caller assume any identity, so the mode gate and the refusal to start are load-bearing and may not be relaxed for convenience. Nothing else in the exchange is weakened: challenge purpose and lifetime, the PKCE verifier, the device-platform check and Apple's nonce binding all still apply, and the resulting session is an ordinary one. Because the nonce binding cannot be satisfied by a synthetic token, the development client authenticates as `GOOGLE`. This decision does not alter DEC-0012's authorization model or grant any live capability, and it must be revisited if a development build ever needs to target a deployed backend.
+
+## DEC-0015 — Reposition Perpeto as a public reference implementation
+
+- Status: Accepted
+- Date: 2026-11-22
+- Scope: Shared
+- Decision: Perpeto is a public, self-hostable reference implementation of a market-neutral funding-rate arbitrage system, run by one operator. It is not a multi-user trading service. Real-money LIVE trading is a non-goal for everyone, including the operator, so LIVE stays permanently fail-closed. The roadmap is re-baselined to four milestones, each closable by one maintainer without real capital:
+  - M1: foundations, done;
+  - M2: live-data paper trading;
+  - M3: public demo;
+  - M4: testnet execution on the operator's own accounts.
+- Consequences: This supersedes the product scope of DEC-0012 and DEC-0013: the shared service for independent consumer traders, the `PILOT` cohort, `CERTIFIED_LIVE`, and the old M5–M7 plan. It does not supersede their security mechanisms. Personal tenants, forced RLS, passkey-authorized actions, the Vault Transit store, credential lifecycle, preflight, the pilot gate and the hash-chained audit log stay in the codebase as implemented hardening, tested and maintained but not release gates. Requirements in `PRODUCT_SPEC.md` that apply only to live trading are retained as design record and marked as non-binding.
+  - The earlier plan failed for two reasons. Its exit gates depended on things one maintainer cannot supply: third-party traders, credentialed venue soaks of 72 hours to 14 days, a Vault Shamir ceremony, real capital and signed evidence. As a result M0–M4 were all open at once and none could close.
+  - Operating automated trading for third parties would also carry licensing and legal exposure that the project does not need.
+
+## DEC-0016 — Live-data paper mode
+
+- Status: Accepted
+- Date: 2026-11-22
+- Scope: Backend
+- Decision: `PAPER` may read keyless public market data from Binance, Bybit and OKX through the existing connectors: instruments, funding, mark and index prices, and order books. It simulates fills against those live books on wall-clock time. PAPER never loads exchange credentials, never opens private streams and never submits external orders. The deterministic fixture replay (`PERPETO_SIM_START`, `PERPETO_SIM_TICK_SECS`) remains, selected explicitly, and stays the source for reproducible tests.
+- Consequences: The public demo shows real opportunities rather than replayed fixtures, with no credential in the deployment. A stale or failed public feed marks the affected legs stale and blocks paper entries on them; it never falls back to fixture data silently. This refines DEC-0011, under which production public reads were available only in `SHADOW`.
+
+## DEC-0017 — Read-only demo access
+
+- Status: Accepted
+- Date: 2026-11-22
+- Scope: Shared
+- Decision: The public demo exposes a read-only viewer path into one seeded demo tenant. The viewer can read the scanner, positions, portfolio, health and alerts. It cannot mutate anything: no strategy, control, credential, pilot or account change. DEC-0009 open registration with Owner rights is not used for the public demo, and DEC-0014's development verifier stays local and PAPER-only. The viewer mechanism and its authorization tests are M3 deliverables.
+- Consequences: Reviewers can see the system without an account or a native build. The demo carries no privileged identity. Every mutating endpoint must reject the viewer role, and an authorization test must prove it.
+
+## DEC-0018 — Scope cuts
+
+- Status: Accepted
+- Date: 2026-11-22
+- Scope: Shared
+- Decision: The following are deferred indefinitely and are not on the roadmap:
+  - DEX connectors and transaction signing (dYdX, Hyperliquid, `bins/signer`);
+  - treasury, rebalancing and transfer proposals;
+  - Telegram and Discord notification channels;
+  - second-approver quorum;
+  - platform route certification soaks;
+  - limited-capital pilots;
+  - Vault HA and auto-unseal.
+- Consequences: Existing code for these, such as the `signer` binary and route certification state, may remain but is not extended. The corresponding `PRODUCT_SPEC.md` sections are marked deferred. Effort goes to M2–M4, which are what a reviewer can see and run.
