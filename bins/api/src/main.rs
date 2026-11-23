@@ -1,3 +1,4 @@
+mod freshness;
 mod handlers;
 mod middleware;
 mod problem;
@@ -128,6 +129,15 @@ async fn run() -> ExitCode {
         }
     };
     let execution = ExecutionService::default();
+    let max_snapshot_age = match freshness::parse_max_snapshot_age(
+        env::var("PERPETO_MAX_SNAPSHOT_AGE_SECS").ok().as_deref(),
+    ) {
+        Ok(value) => value,
+        Err(error) => {
+            eprintln!("{error}");
+            return ExitCode::FAILURE;
+        }
+    };
     let passkeys = match config.passkey.as_ref() {
         Some(passkey_config) => match build_webauthn(passkey_config) {
             Ok(webauthn) => Some(PasskeyService::new(pool.clone(), webauthn)),
@@ -184,6 +194,7 @@ async fn run() -> ExitCode {
         passkeys,
         scanner,
         execution,
+        max_snapshot_age,
         positions,
         breakers,
         outbox,

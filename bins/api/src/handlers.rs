@@ -1274,6 +1274,15 @@ fn not_found(title: &str, code: &str) -> Response {
         .into_response()
 }
 
+fn conflict(title: &str, code: &str) -> Response {
+    (
+        StatusCode::CONFLICT,
+        [(axum::http::header::CONTENT_TYPE, "application/problem+json")],
+        format!(r#"{{"type":"about:blank","title":"{title}","status":409,"code":"{code}"}}"#),
+    )
+        .into_response()
+}
+
 /// `POST /api/v1/positions` — open a paper position from a ranked route.
 ///
 /// Requires an active OWNER or TRADER. Honors the `Idempotency-Key` header: a
@@ -1344,16 +1353,36 @@ pub async fn create_position(
         )
             .into_response());
     }
-    let position = match state.execution.open_with_scenario(
+    // Fill against the exact snapshot the latest scan ranked (DEC-0016), and
+    // only while it is fresh: a stalled engine must not leave the API filling
+    // paper orders against old books.
+    let now = Utc::now();
+    let snapshot = state.scanner.latest_snapshot().await.map_err(internal)?;
+    let Some(snapshot) = snapshot.filter(|stored| {
+        crate::freshness::is_fresh(stored.recorded_at, now, state.max_snapshot_age)
+    }) else {
+        return Ok(conflict("Market data is stale", "STALE_MARKET_DATA"));
+    };
+    let position = match state.execution.open_from(
+        &snapshot.snapshot,
         &request.route_id,
         notional,
         key.clone(),
         scenario,
-        Utc::now(),
+        now,
     ) {
         Ok(position) => position,
         Err(OpenError::RouteNotFound | OpenError::LegNotFound) => {
             return Ok(not_found("Route not open-eligible", "ROUTE_NOT_FOUND"));
+        }
+        Err(OpenError::LegDegraded) => {
+            return Ok(conflict("A leg's venue feed is degraded", "VENUE_DEGRADED"));
+        }
+        Err(OpenError::InsufficientDepth) => {
+            return Ok(conflict(
+                "Order book depth cannot fill the requested size",
+                "INSUFFICIENT_DEPTH",
+            ));
         }
         Err(error @ OpenError::Fixture(_)) => {
             return Err(ApiError(AuthError::Internal(error.to_string())));

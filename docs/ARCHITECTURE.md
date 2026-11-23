@@ -24,7 +24,8 @@ Binance / Bybit / OKX public REST + WebSocket   (no credentials)
 ```
 
 - The engine already builds each `MarketLeg` from `connector.market_stream` and `connector.current_funding` (`bins/engine/src/main.rs`). M2 makes that path available in PAPER through the keyless public endpoints only.
-- Fixture replay (`PERPETO_SIM_START`, `PERPETO_SIM_TICK_SECS`) remains an explicit selection for deterministic tests.
+- Fixture replay (`PERPETO_PAPER_SOURCE=fixtures`, with `PERPETO_SIM_START` and `PERPETO_SIM_TICK_SECS`) remains an explicit selection for deterministic tests.
+- **One snapshot per tick.** Every tick, the engine takes one `MarketSnapshot` and uses it for venue breakers, position supervision, ranking and strategy auto-entry. It persists the snapshot with the scan (`scan_runs.market_snapshot`). `POST /positions` opens against that stored snapshot, and only while it is fresh. Each leg fills at the VWAP of walking its captured book; thin books (`INSUFFICIENT_DEPTH`) and degraded legs (`VENUE_DEGRADED`) are refused.
 - PAPER never constructs a `SecretStore` read path, opens a private stream or calls a submit method.
 
 ## Logical architecture

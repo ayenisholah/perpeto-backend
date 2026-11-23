@@ -957,11 +957,18 @@ paths:
       tags: [Positions]
       summary: Open a paper position from a ranked route
       description: >-
-        Requires an active OWNER or TRADER. Sizes each leg to the requested
-        notional (defaulting to the route's risk reservation) and simulates a
-        deterministic paired taker fill. Send an Idempotency-Key header to make
-        the open safe to retry; a repeat with the same key returns the existing
-        position with a 200 rather than opening a duplicate.
+        Requires an active OWNER or TRADER. Opens against the market snapshot
+        stored with the latest scan, re-ranking the route from it. Sizes each
+        leg to the requested notional (defaulting to the route's risk
+        reservation) and fills it at the VWAP of the leg's captured order book,
+        or at the mark crossed by modeled slippage when no book was captured.
+        Send an Idempotency-Key header to make the open safe to retry; a repeat
+        with the same key returns the existing position with a 200 rather than
+        opening a duplicate. A 409 carries one of these codes: RISK_HALTED (a
+        circuit breaker blocks new risk), STALE_MARKET_DATA (no snapshot newer
+        than PERPETO_MAX_SNAPSHOT_AGE_SECS), VENUE_DEGRADED (a leg's venue feed
+        is degraded) or INSUFFICIENT_DEPTH (the captured book cannot fill the
+        size).
       operationId: createPosition
       parameters:
         - in: header

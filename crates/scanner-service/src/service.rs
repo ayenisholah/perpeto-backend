@@ -91,10 +91,16 @@ impl Scanner {
         now: DateTime<Utc>,
     ) -> Result<Option<Opportunity>, FixtureError> {
         let legs = fixtures::load_at(now)?;
-        Ok(self
-            .build_opportunities(&legs)
+        Ok(self.opportunity_in(route_id, &legs))
+    }
+
+    /// The opportunity for `route_id` built from the given legs, unranked and
+    /// unfiltered by risk limits, or `None` if the legs cannot form it.
+    #[must_use]
+    pub fn opportunity_in(&self, route_id: &str, legs: &[MarketLeg]) -> Option<Opportunity> {
+        self.build_opportunities(legs)
             .into_iter()
-            .find(|opportunity| opportunity.route_id == route_id))
+            .find(|opportunity| opportunity.route_id == route_id)
     }
 
     fn build_opportunities(&self, legs: &[MarketLeg]) -> Vec<Opportunity> {

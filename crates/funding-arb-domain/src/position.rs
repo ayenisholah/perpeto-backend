@@ -209,6 +209,10 @@ pub struct LegExecution {
     pub funding_rate: Decimal,
     /// The funding interval length, in hours.
     pub funding_interval_hours: u32,
+    /// The executable price from walking a captured order book (DEC-0016).
+    /// `None` falls back to the mark price crossed by the modeled slippage,
+    /// which is how fixture snapshots, which carry no books, are filled.
+    pub fill_price: Option<Decimal>,
 }
 
 /// Deterministic paper-fill parameters.
@@ -391,7 +395,7 @@ fn leg(
     } else {
         Decimal::ONE - cost.slippage
     };
-    let price = exec.mark_price * slip;
+    let price = exec.fill_price.unwrap_or(exec.mark_price * slip);
     let filled_qty = round_to_step(target_qty * outcome.fraction(), fill.lot_step);
     let fee = filled_qty * price * cost.taker_fee;
     let client_order_id = format!("fa-{position_short}-open-{label}-1");
@@ -998,12 +1002,14 @@ mod tests {
             mark_price: Decimal::from(30_000),
             funding_rate: Decimal::new(1, 4),
             funding_interval_hours: 8,
+            fill_price: None,
         };
         let short_exec = LegExecution {
             symbol: "BTCUSDT".into(),
             mark_price: Decimal::from(30_030),
             funding_rate: Decimal::new(30, 4),
             funding_interval_hours: 8,
+            fill_price: None,
         };
         let position = open_paper_with_scenario(
             "0190abcd-4444-7000-8000-000000000004".into(),
@@ -1041,12 +1047,14 @@ mod tests {
             mark_price: Decimal::from(30_000),
             funding_rate: Decimal::new(1, 4),
             funding_interval_hours: 8,
+            fill_price: None,
         };
         let short_exec = LegExecution {
             symbol: "BTCUSDT".into(),
             mark_price: Decimal::from(30_030),
             funding_rate: Decimal::new(30, 4),
             funding_interval_hours: 8,
+            fill_price: None,
         };
         let cost = CostModel {
             slippage: Decimal::new(2, 2),
@@ -1083,12 +1091,14 @@ mod tests {
             mark_price: Decimal::from(30_000),
             funding_rate: Decimal::new(1, 4),
             funding_interval_hours: 8,
+            fill_price: None,
         };
         let short_exec = LegExecution {
             symbol: "BTCUSDT".into(),
             mark_price: Decimal::from(30_030),
             funding_rate: Decimal::new(30, 4),
             funding_interval_hours: 8,
+            fill_price: None,
         };
         let position = open_paper(
             "0190abcd-1111-7000-8000-000000000001".into(),
@@ -1125,12 +1135,14 @@ mod tests {
             mark_price: Decimal::from(30_000),
             funding_rate: Decimal::new(1, 4),
             funding_interval_hours: 8,
+            fill_price: None,
         };
         let short_exec = LegExecution {
             symbol: "ETHUSDT".into(),
             mark_price: Decimal::from(45_000),
             funding_rate: Decimal::new(30, 4),
             funding_interval_hours: 8,
+            fill_price: None,
         };
         let position = open_paper(
             "0190abcd-2222-7000-8000-000000000002".into(),
@@ -1152,6 +1164,48 @@ mod tests {
     }
 
     #[test]
+    fn a_book_fill_price_replaces_the_modeled_slippage() {
+        let opp = opportunity();
+        let at = Utc.with_ymd_and_hms(2026, 11, 22, 0, 0, 0).unwrap();
+        let open = |long_fill: Option<Decimal>, short_fill: Option<Decimal>| {
+            open_paper(
+                "0190abcd-4444-7000-8000-000000000004".into(),
+                "key-4".into(),
+                &opp,
+                &LegExecution {
+                    fill_price: long_fill,
+                    ..exec("BTCUSDT", 30_000, Decimal::new(1, 4))
+                },
+                &LegExecution {
+                    fill_price: short_fill,
+                    ..exec("BTCUSDT", 30_030, Decimal::new(30, 4))
+                },
+                Decimal::from(100_000),
+                Decimal::from(100_000),
+                &CostModel::default(),
+                &PaperFillConfig::default(),
+                &RiskLimits::default(),
+                at,
+            )
+        };
+        let modeled = open(None, None);
+        let slippage = CostModel::default().slippage;
+        assert_eq!(
+            modeled.long_leg.fills[0].price,
+            Decimal::from(30_000) * (Decimal::ONE + slippage)
+        );
+
+        let booked = open(
+            Some(Decimal::new(300_123, 1)),
+            Some(Decimal::new(300_105, 1)),
+        );
+        assert_eq!(booked.long_leg.fills[0].price, Decimal::new(300_123, 1));
+        assert_eq!(booked.short_leg.fills[0].price, Decimal::new(300_105, 1));
+        // Sizing still uses the mark, so quantities match the modeled open.
+        assert_eq!(booked.long_leg.target_qty, modeled.long_leg.target_qty);
+    }
+
+    #[test]
     fn open_is_deterministic_for_identical_input() {
         let opp = opportunity();
         let long_exec = LegExecution {
@@ -1159,12 +1213,14 @@ mod tests {
             mark_price: Decimal::from(30_000),
             funding_rate: Decimal::new(1, 4),
             funding_interval_hours: 8,
+            fill_price: None,
         };
         let short_exec = LegExecution {
             symbol: "BTCUSDT".into(),
             mark_price: Decimal::from(30_030),
             funding_rate: Decimal::new(30, 4),
             funding_interval_hours: 8,
+            fill_price: None,
         };
         let build = || {
             open_paper(
@@ -1197,6 +1253,7 @@ mod tests {
             mark_price: Decimal::from(mark),
             funding_rate: rate,
             funding_interval_hours: 8,
+            fill_price: None,
         }
     }
 
