@@ -1,0 +1,7 @@
+# TLS front door for the AWS staging host (DEC-0020). PERPETO_PUBLIC_HOSTS
+# lists api.perpeto.xyz and <elastic-ip>.sslip.io, so the host is reachable
+# over HTTPS before and after the DNS record points at it.
+{$PERPETO_PUBLIC_HOSTS} {
+	encode zstd gzip
+	reverse_proxy api:8080
+}

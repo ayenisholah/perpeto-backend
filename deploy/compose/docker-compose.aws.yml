@@ -1,0 +1,44 @@
+# AWS staging override (DEC-0020), layered on docker-compose.staging.yml by
+# deploy/ec2/refresh.sh. It adds Caddy for TLS and ships every container's
+# logs to CloudWatch through dockerd's awslogs driver, which authenticates
+# with the instance role; the containers themselves never call AWS.
+
+x-awslogs: &awslogs
+  driver: awslogs
+  options:
+    awslogs-region: ${AWS_REGION:?AWS_REGION is required}
+    awslogs-group: ${PERPETO_LOG_GROUP:?PERPETO_LOG_GROUP is required}
+    tag: "{{.Name}}"
+
+services:
+  migrate: { logging: *awslogs }
+  api: { logging: *awslogs }
+  engine: { logging: *awslogs }
+  reconciler: { logging: *awslogs }
+  preflight: { logging: *awslogs }
+  rewrap: { logging: *awslogs }
+  worker: { logging: *awslogs }
+  postgres: { logging: *awslogs }
+  redis: { logging: *awslogs }
+
+  caddy:
+    image: caddy:2.10.2-alpine
+    restart: unless-stopped
+    cap_drop: ["ALL"]
+    cap_add: ["NET_BIND_SERVICE"]
+    security_opt: ["no-new-privileges:true"]
+    ports: ["80:80", "443:443"]
+    environment:
+      PERPETO_PUBLIC_HOSTS: ${PERPETO_PUBLIC_HOSTS:?PERPETO_PUBLIC_HOSTS is required}
+    volumes:
+      - ../ec2/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      api:
+        condition: service_healthy
+    logging: *awslogs
+
+volumes:
+  caddy-data:
+  caddy-config:

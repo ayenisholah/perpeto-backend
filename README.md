@@ -81,10 +81,10 @@ The API exposes `/livez`, `/readyz`, and `/entryz` for mode-aware infrastructure
 
 ## Security
 
-Never commit exchange credentials, signer keys, TOTP material, database passwords, production data, or real account fixtures. GitHub Actions holds only deployment and automation credentials. Runtime secrets remain on the VPS. Report security concerns according to [SECURITY.md](.github/SECURITY.md).
+Never commit exchange credentials, signer keys, TOTP material, database passwords, production data, or real account fixtures. GitHub Actions holds only deployment and automation credentials. Runtime secrets live in AWS Secrets Manager and on the staging host. Report security concerns according to [SECURITY.md](.github/SECURITY.md).
 
 ## Deployment
 
-Successful `main` builds publish immutable public GHCR images and deploy to one owner-managed, Docker-ready staging VPS in PAPER mode. That staging deployment becomes the public demo in M3. The workflow does not install Docker, provision hosts, or enable live trading. See [DEPLOYMENT.md](docs/DEPLOYMENT.md).
+Successful `main` builds publish immutable public GHCR images and deploy them in PAPER mode to one EC2 host in AWS `eu-north-1`, defined by the CDK app in `infra/` and reached through SSM rather than SSH (DEC-0020). That staging deployment becomes the public demo in M3. The workflow never enables live trading. See [DEPLOYMENT.md](docs/DEPLOYMENT.md).
 
 No license has been granted yet. Until a license decision is recorded, all rights are reserved.

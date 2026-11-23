@@ -23,4 +23,4 @@ What this run shows:
   - Binance futures `MIN_NOTIONAL` was parsed with the spot field name, so futures instruments never loaded.
   - Spot `exchangeInfo` was fetched unfiltered (about 18 MB), which timed out on this link.
 
-Still required for M2: a run from the staging VPS where all three venues are reachable, then the 24-hour engine run.
+Still required for M2: a run from the staging host where all three venues are reachable, then the 24-hour engine run. The AWS staging host in `eu-north-1` (DEC-0020) reaches all three over HTTPS (2026-11-23).

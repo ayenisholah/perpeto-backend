@@ -105,6 +105,47 @@ jobs:
         working-directory: .
         run: npx --yes @redocly/cli@2.3.0 lint schemas/openapi.yaml
 
+  infra:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: infra
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: infra/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      # No AWS credentials: the stacks avoid context lookups, so synth is offline.
+      - run: npm run synth
+      - run: npm audit --audit-level=high
+      - name: Validate the staging compose stack with the AWS override
+        working-directory: .
+        run: |
+          host="$(mktemp -d)"
+          mkdir -p "$host/deploy/compose" "$host/deploy/ec2"
+          cp deploy/compose/docker-compose.staging.yml deploy/compose/docker-compose.aws.yml "$host/deploy/compose/"
+          cp deploy/ec2/Caddyfile "$host/deploy/ec2/"
+          {
+            cat deploy/ec2/staging.env
+            echo "POSTGRES_PASSWORD=ci"
+            echo "MIGRATE_DATABASE_URL=postgres://perpeto_migrator:ci@postgres:5432/perpeto"
+            echo "DATABASE_URL=postgres://perpeto_app:ci@postgres:5432/perpeto"
+            echo "AWS_REGION=eu-north-1"
+            echo "PERPETO_LOG_GROUP=/perpeto/staging"
+            echo "PERPETO_PUBLIC_HOSTS=api.perpeto.xyz, 127.0.0.1.sslip.io"
+          } > "$host/runtime.env"
+          cd "$host"
+          PERPETO_IMAGE=ghcr.io/example/perpeto:ci docker compose --env-file runtime.env \
+            -f deploy/compose/docker-compose.staging.yml -f deploy/compose/docker-compose.aws.yml config --quiet
+          for script in deploy/ec2/refresh.sh scripts/deploy-staging.sh scripts/aws/deploy-host.sh scripts/aws/create-deploy-key.sh; do
+            bash -n "$GITHUB_WORKSPACE/$script"
+          done
+
   dependency-review:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
