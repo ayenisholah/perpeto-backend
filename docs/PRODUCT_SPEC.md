@@ -1329,7 +1329,7 @@ The backend rejects CEX credentials with withdrawal capability where that can be
 
 ### 12.1 Product character
 
-The interface should feel calm, exact, and operational—not casino-like. Avoid neon gradients, confetti, price-ticker visual noise, and profit-first green/red screens. Risk and data freshness receive equal visual weight to projected yield.
+The interface should feel calm, exact, and operational—not casino-like. It shares the AgentFloor (Settle) design system: dark only, warm paper and ink neutrals, and one lime accent. Avoid neon gradients and glow, confetti, price-ticker visual noise, and profit-first green/red screens. Risk and data freshness receive equal visual weight to projected yield.
 
 The product name is written **Perpeto** in title case in normal copy. An uppercase `PERPETO` treatment is permitted only in the approved wordmark. The identity should express perpetual continuity, market-neutral balance and controlled execution without making the interface resemble a casino or implying that execution is risk-free:
 
@@ -1340,26 +1340,28 @@ The product name is written **Perpeto** in title case in normal copy. An upperca
 - Avoid coins, currency symbols, bull/bear mascots, rockets, lightning bolts, speedometers, shields, locks, flames, neon glow and imagery that implies guaranteed speed, yield or safety.
 - Use *The perpetual edge* as the short brand line and *Automated funding-rate arbitrage* as the plain-language descriptor. The compact app header and icon use the name or mark alone.
 
-Use an 8-point spacing grid, 12–16 px card radii, native system fonts, tabular numeric glyphs, consistent iconography, and minimum 48 × 48 dp touch targets. Phones use stacked cards and bottom sheets; tablets use constrained two-column layouts and side panels.
+Use an 8-point spacing grid, square corners on every surface (only round status dots keep a radius), Space Grotesk for interface text and Space Mono for character-by-character values (both bundled with the app, never fetched at runtime), tabular numeric glyphs, consistent iconography, and minimum 48 × 48 dp touch targets. Phones use stacked cards and bottom sheets; tablets use constrained two-column layouts and side panels.
 
-Motion reinforces state changes rather than decorating the screen. Use 120 ms feedback transitions, 180 ms standard transitions and 240 ms deliberate panel transitions with restrained ease-out curves. A signal may travel once from detection to approval to execution; persistent pulsing, looping velocity effects and animated PnL are prohibited. Order progress, leg imbalance and stale-data warnings remain readable when all motion is disabled.
+Motion reinforces state changes rather than decorating the screen. Use 160 ms feedback transitions, 200 ms standard transitions, 240 ms deliberate panel transitions and 700 ms one-shot entrances with the ease-out curve `cubic-bezier(0.2, 0.7, 0.2, 1)`. A signal may travel once from detection to approval to execution. The only permitted loop is the live status dot's 1.4 s pulse; other persistent pulsing, looping velocity effects and animated PnL are prohibited. Order progress, leg imbalance and stale-data warnings remain readable when all motion is disabled.
 
 ### 12.2 Theme tokens
 
-| Token | Light | Dark |
-|---|---|---|
-| `background` | `#F5F7FB` | `#080D18` |
-| `surface` | `#FFFFFF` | `#111827` |
-| `surface_elevated` | `#EEF2F7` | `#1B2535` |
-| `text_primary` | `#101828` | `#F8FAFC` |
-| `text_secondary` | `#475467` | `#B6C2D2` |
-| `border` | `#D0D5DD` | `#344054` |
-| `accent` | `#1E5EFF` | `#78A6FF` |
-| `signal` | `#007A70` | `#5EEAD4` |
-| `velocity` | `#6D28D9` | `#C4B5FD` |
-| `focus` | `#174EA6` | `#A8C7FA` |
+The interface ships a single dark theme.
 
-Define separate semantic tokens for positive, negative, warning, critical, informational, disabled, long, short, stale and healthy states. `signal` identifies fresh, threshold-qualified information; `velocity` supports progress and directional accents but never communicates risk or profitability. Validate WCAG 2.2 AA contrast in both themes. Profit/loss, long/short, signal qualification and health always combine color with sign, label and icon; color alone is prohibited.
+| Token | Value |
+|---|---|
+| `background` | `#0F0F0F` |
+| `surface` | `#181817` |
+| `surface_elevated` | `#252422` |
+| `text_primary` | `#F1EFE6` |
+| `text_secondary` | `#A7A59C` |
+| `border` | `rgba(245,235,235,0.10)` |
+| `accent` | `#CBFE42` |
+| `signal` | `#E9FB7F` |
+| `velocity` | `#93C449` |
+| `focus` | `#CBFE42` |
+
+Define separate semantic tokens for positive, negative, warning, critical, informational, disabled, long, short, stale and healthy states. `signal` identifies fresh, threshold-qualified information; `velocity` supports progress and directional accents but never communicates risk or profitability. Validate WCAG 2.2 AA contrast for every text, fill and status pairing. Profit/loss, long/short, signal qualification and health always combine color with sign, label and icon; color alone is prohibited.
 
 Shared components:
 
