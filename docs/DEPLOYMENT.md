@@ -26,6 +26,8 @@ The CDK app in `infra/` owns everything (`Perpeto-Staging` and `Perpeto-Deployer
 
 Non-secret settings live in `deploy/ec2/staging.env` and change through a pull request.
 
+PAPER staging runs `api`, `engine`, `worker`, `postgres`, `redis` and Caddy. The `reconciler`, `preflight` and `rewrap` workers refuse to start outside SANDBOX or SHADOW, so they sit behind the `connectors` compose profile and start only with `COMPOSE_PROFILES=connectors`. Without that profile, `deploy-staging.sh` removes any container left from an earlier run.
+
 ### GitHub environment
 
 The `staging` environment holds `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` for the `perpeto-github-deployer` IAM user, the variable `AWS_REGION=eu-north-1`, and the repository variable `STAGING_ENABLED=true`. The organisation's service control policy forbids GitHub OIDC, so the deployer is an IAM user. It can only assume the CDK bootstrap roles, read the `Perpeto-*` stack outputs, and run commands on the staging host. Create or rotate its key with `scripts/aws/create-deploy-key.sh`; the key goes from AWS straight into GitHub and is never printed.

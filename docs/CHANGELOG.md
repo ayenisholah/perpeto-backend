@@ -138,6 +138,7 @@ All notable repository changes are recorded here using Keep a Changelog categori
 
 ### Fixed
 
+- PAPER staging no longer crash-loops the `reconciler`, `preflight` and `rewrap` workers. Each refuses to start outside SANDBOX or SHADOW, and under `restart: unless-stopped` they restarted about every 20 seconds. They now sit behind the `connectors` compose profile, and `deploy-staging.sh` removes their containers when that profile is off. `engine` and `worker` now wait for a healthy database and a completed migration, as `api` already did.
 - Bybit and OKX now parse their live public data; both failed validation on staging and were reported `UNAVAILABLE`, leaving PAPER to scan Binance only. Fixtures had been written to the wrong shape, so the tests passed while the live feeds failed.
   - **Bybit instruments (`BYBIT_TEXT_MISSING`):** spot `lotSizeFilter` has no `qtyStep`. Per the v5 instruments-info documentation, spot sizes orders by `basePrecision`, `minOrderAmt` and `maxLimitOrderQty`, and linear by `qtyStep`, `minOrderQty`, `maxOrderQty` and `minNotionalValue`. `parse_instrument` now reads the fields of each category.
   - **OKX books (`OKX_TEXT_MISSING`):** OKX documents `seqId` and `prevSeqId` as integers, and they arrive as JSON numbers, but the parser required strings. A string sequence is now rejected as undocumented.
