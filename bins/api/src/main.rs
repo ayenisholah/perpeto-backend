@@ -186,7 +186,7 @@ async fn run() -> ExitCode {
         Arc::new(DevIdentityVerifier)
     } else {
         Arc::new(LiveIdentityVerifier::new(
-            config.apple_bundle_id.clone(),
+            config.apple_audiences(),
             config.google_client_ids.clone(),
         ))
     };

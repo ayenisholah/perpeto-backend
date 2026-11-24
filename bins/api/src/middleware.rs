@@ -31,6 +31,11 @@ pub async fn require_auth(
         .ok_or(AuthError::Unauthorized)?;
 
     let claims = state.service.verify_access_token(token)?;
+    // A revoked, logged-out or expired session stops working immediately, not
+    // when its access token expires (DEC-0021: web sessions are revocable).
+    if !state.service.session_is_live(&claims.sid).await? {
+        return Err(AuthError::SessionRevoked.into());
+    }
     let user = state.service.user_projection(&claims.sub).await?;
     if user.tenant_id != claims.tid {
         return Err(AuthError::Unauthorized.into());

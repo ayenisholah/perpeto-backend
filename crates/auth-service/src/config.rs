@@ -17,6 +17,8 @@ pub struct AuthConfig {
     pub token_issuer: String,
     /// Expected Apple `aud` claim (the app bundle identifier).
     pub apple_bundle_id: String,
+    /// Apple Services ID for web sign-in (DEC-0021), also accepted as `aud`.
+    pub apple_web_services_id: Option<String>,
     /// Accepted Google `aud` claims (iOS and web client identifiers).
     pub google_client_ids: Vec<String>,
     /// SHA-256 (32 bytes) of the one-use deployment bootstrap token.
@@ -95,6 +97,14 @@ fn hex_nibble(byte: u8) -> Option<u8> {
 }
 
 impl AuthConfig {
+    /// Every accepted Apple `aud`: the bundle ID and the web Services ID.
+    #[must_use]
+    pub fn apple_audiences(&self) -> Vec<String> {
+        let mut audiences = vec![self.apple_bundle_id.clone()];
+        audiences.extend(self.apple_web_services_id.clone());
+        audiences
+    }
+
     /// Resolve configuration from the process environment.
     ///
     /// # Errors
@@ -109,6 +119,10 @@ impl AuthConfig {
         )?;
         let token_issuer = required("PERPETO_TOKEN_ISSUER")?;
         let apple_bundle_id = required("PERPETO_APPLE_BUNDLE_ID")?;
+        let apple_web_services_id = env::var("PERPETO_APPLE_WEB_SERVICES_ID")
+            .ok()
+            .map(|value| value.trim().to_owned())
+            .filter(|value| !value.is_empty());
 
         let mut google_client_ids = Vec::new();
         if let Ok(value) = env::var("PERPETO_GOOGLE_IOS_CLIENT_ID")
@@ -175,6 +189,7 @@ impl AuthConfig {
             token_signing_seed,
             token_issuer,
             apple_bundle_id,
+            apple_web_services_id,
             google_client_ids,
             bootstrap_token_hash,
             bootstrap_token_expires_at,

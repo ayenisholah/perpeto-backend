@@ -194,7 +194,8 @@ export interface AuthTransition {
 
 export interface DeviceRegistration {
   readonly installation_id: string;
-  readonly platform: "IOS";
+  /** `WEB` is the Next.js web platform (DEC-0021). */
+  readonly platform: "IOS" | "WEB";
   readonly app_version: string;
   readonly display_name: string;
 }

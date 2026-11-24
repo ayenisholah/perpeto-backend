@@ -26,7 +26,7 @@ pub struct VerifiedIdentity {
     pub email_verified: bool,
     /// Display name, if the provider supplied one.
     pub display_name: Option<String>,
-    /// Raw nonce claim (Apple only), if present.
+    /// Raw nonce claim, if the provider token carries one.
     pub nonce: Option<String>,
 }
 
@@ -49,19 +49,19 @@ pub trait IdentityTokenVerifier: Send + Sync {
 pub struct LiveIdentityVerifier {
     apple_cache: Arc<JwksCache>,
     google_cache: Arc<JwksCache>,
-    apple_bundle_id: String,
+    apple_audiences: Vec<String>,
     google_client_ids: Vec<String>,
 }
 
 impl LiveIdentityVerifier {
     /// Construct the live verifier from configured audiences.
     #[must_use]
-    pub fn new(apple_bundle_id: String, google_client_ids: Vec<String>) -> Self {
+    pub fn new(apple_audiences: Vec<String>, google_client_ids: Vec<String>) -> Self {
         let http = reqwest::Client::new();
         Self {
             apple_cache: JwksCache::new(apple::JWKS_URL, http.clone()),
             google_cache: JwksCache::new(google::JWKS_URL, http),
-            apple_bundle_id,
+            apple_audiences,
             google_client_ids,
         }
     }
@@ -76,7 +76,7 @@ impl IdentityTokenVerifier for LiveIdentityVerifier {
     ) -> Result<VerifiedIdentity, AuthError> {
         match provider {
             Provider::Apple => {
-                apple::verify(&self.apple_cache, &self.apple_bundle_id, identity_token).await
+                apple::verify(&self.apple_cache, &self.apple_audiences, identity_token).await
             }
             Provider::Google => {
                 google::verify(&self.google_cache, &self.google_client_ids, identity_token).await

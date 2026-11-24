@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Perpeto Control API
-  version: 0.24.0
+  version: 0.25.0
   description: >-
     Social identity, MFA, and secure sessions plus the M2 deterministic paper
     scanner and coordinated simulated positions. Live execution remains unavailable.
@@ -2104,7 +2104,12 @@ components:
       required: [installation_id, platform, app_version, display_name]
       properties:
         installation_id: { type: string, minLength: 16, writeOnly: true }
-        platform: { const: IOS }
+        platform:
+          type: string
+          enum: [IOS, WEB]
+          description: >-
+            WEB is the Next.js web platform's backend-for-frontend (DEC-0021);
+            a WEB exchange must bind the challenge nonce for either provider.
         app_version: { type: string }
         display_name: { type: string, maxLength: 100 }
     AuthTransition:

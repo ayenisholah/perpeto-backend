@@ -115,6 +115,7 @@ async fn router_with(
         token_signing_seed: [7; 32],
         token_issuer: "perpeto-test".to_owned(),
         apple_bundle_id: "test.bundle".to_owned(),
+        apple_web_services_id: None,
         google_client_ids: vec!["test.apps.googleusercontent.com".to_owned()],
         bootstrap_token_hash: None,
         bootstrap_token_expires_at: None,
@@ -335,4 +336,22 @@ async fn a_stale_market_snapshot_refuses_a_paper_entry() {
         serde_json::from_slice(&to_bytes(response.into_body(), 1 << 20).await.expect("body"))
             .expect("problem");
     assert_eq!(body["code"], "STALE_MARKET_DATA");
+}
+
+/// DEC-0021: a session stops working the moment it is logged out, not when its
+/// 15-minute access token expires.
+#[tokio::test]
+async fn a_logged_out_access_token_is_refused_at_once() {
+    let Some((router, service)) = router_with(false, true, chrono::Duration::seconds(90)).await
+    else {
+        return;
+    };
+    let token = owner_token(&service).await;
+    let (status, _) = call(&router, Method::GET, "/api/v1/auth/me", Some(&token)).await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, _) = call(&router, Method::POST, "/api/v1/auth/logout", Some(&token)).await;
+    assert!(status.is_success(), "logout returned {status}");
+    let (status, body) = call(&router, Method::GET, "/api/v1/auth/me", Some(&token)).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    assert_eq!(body["code"], "SESSION_REVOKED");
 }
