@@ -6,6 +6,12 @@ All notable repository changes are recorded here using Keep a Changelog categori
 
 ### Added
 
+- M3: one-command local start. `docker compose up --build` from the repository root runs PostgreSQL, Redis, migrations, the API, the live-data PAPER engine and the `perpeto-web` platform.
+  - **Keys:** a one-shot `keys` service generates this machine's access-token, MFA and web-session keys into a volume, so nothing secret is committed.
+  - **Demo and sign-in:** the demo and the development sign-in are on, and the web platform answers at <http://localhost:3000>.
+  - **Hardening:** every application container runs read-only, without capabilities, and only on `127.0.0.1` ports.
+  - **README:** the 5-minute tour now leads with the live demo and the local start.
+
 - M3: backend support for web sign-in through the Next.js platform (DEC-0021), with OpenAPI and `@ayenisholah/perpeto-api-client` **0.25.0** (additive).
   - **Web devices:** `exchange` accepts `platform: WEB` and stores the platform it receives; it used to hardcode `IOS`. Any other platform is still refused.
   - **Nonce on the web:** a WEB exchange must bind the challenge nonce for Google as well as Apple. Google Identity Services carries it on the web, and the Google verifier now returns the claim. Native Google sign-in still relies on PKCE and the one-use challenge.

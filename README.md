@@ -26,7 +26,17 @@ Details: [MILESTONE.md](docs/MILESTONE.md), [PROGRESS.md](docs/PROGRESS.md).
 
 ## 5-minute tour
 
-The public demo and one-command local start arrive with M3. Until then, the fastest way to read the system:
+**See it running.** Open the live demo at [app.perpeto.xyz](https://app.perpeto.xyz): a seeded PAPER account trading live public data from Binance, Bybit and OKX, read-only, with no account needed. The web platform is [`perpeto-web`](https://github.com/ayenisholah/perpeto-web) (DEC-0021).
+
+**Run it yourself.** With Docker and Compose v2, from a fresh clone:
+
+```bash
+docker compose up --build
+```
+
+Then open <http://localhost:3000>. "Open the live demo" shows the seeded tenant, and "Development sign-in" signs you in as a local Owner who can open and close paper positions. The API answers at <http://localhost:8080/readyz>. The first build compiles the Rust workspace, which takes several minutes. Nothing secret is committed: the stack generates its own keys on first run, and `docker compose down -v` forgets them with the database.
+
+**Read the code:**
 
 1. [OVERVIEW.md](docs/OVERVIEW.md): what it is and what it deliberately is not.
 2. [ARCHITECTURE.md](docs/ARCHITECTURE.md): the data flow and the isolation boundary.
