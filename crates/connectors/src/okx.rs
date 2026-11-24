@@ -817,7 +817,7 @@ fn parse_market_frame(
     let item = data(frame)?
         .first()
         .ok_or_else(|| invalid("WS_DATA_EMPTY"))?;
-    let sequence = i64_text(item, "seqId")?;
+    let sequence = integer(item, "seqId")?;
     if sequence < 0 {
         return Err(reconciliation("SEQUENCE_NEGATIVE"));
     }
@@ -835,7 +835,7 @@ fn parse_market_frame(
             checksum,
         })),
         Some("update") => {
-            let previous = i64_text(item, "prevSeqId")?;
+            let previous = integer(item, "prevSeqId")?;
             if previous < 0 {
                 return Err(reconciliation("PREVIOUS_SEQUENCE_NEGATIVE"));
             }
@@ -1085,6 +1085,16 @@ fn optional_decimal(value: &Value, key: &str) -> ConnectorResult<Option<Decimal>
     }
 }
 
+/// Reads a field OKX documents as an `Integer`, such as the `books` channel's
+/// `seqId` and `prevSeqId`, which arrive as JSON numbers rather than strings.
+fn integer(value: &Value, key: &str) -> ConnectorResult<i64> {
+    value
+        .get(key)
+        .ok_or_else(|| invalid("INTEGER_MISSING"))?
+        .as_i64()
+        .ok_or_else(|| invalid("INTEGER_INVALID"))
+}
+
 fn i64_text(value: &Value, key: &str) -> ConnectorResult<i64> {
     text(value, key)?
         .parse()
@@ -1198,7 +1208,7 @@ mod tests {
             "arg": {"channel": "books", "instId": "BTC-USDT-SWAP"},
             "action": "update",
             "data": [{
-                "ts": "1720000000000", "prevSeqId": "100", "seqId": "102",
+                "ts": "1720000000000", "prevSeqId": 100, "seqId": 102,
                 "checksum": -12345,
                 "bids": [["60000", "1", "0", "1"]],
                 "asks": [["60001", "2", "0", "1"]]
@@ -1215,7 +1225,7 @@ mod tests {
         ));
     }
 
-    fn books_frame(action: &str, previous: &str, sequence: &str) -> Value {
+    fn books_frame(action: &str, previous: i64, sequence: i64) -> Value {
         json!({
             "arg": {"channel": "books", "instId": "BTC-USDT-SWAP"},
             "action": action,
@@ -1225,6 +1235,13 @@ mod tests {
                 "asks": [["60001", "2", "0", "1"]]
             }]
         })
+    }
+
+    #[test]
+    fn a_string_sequence_id_is_rejected_as_undocumented() {
+        let mut frame = books_frame("snapshot", -1, 10);
+        frame["data"][0]["seqId"] = json!("10");
+        assert!(parse_market_frame(&frame, &books_subscription()).is_err());
     }
 
     fn books_subscription() -> Vec<MarketSubscription> {
@@ -1246,20 +1263,20 @@ mod tests {
         };
         let mut book = BookState::new(subscriptions[0].instrument.clone());
         assert_eq!(
-            book.apply(&parse(books_frame("snapshot", "-1", "10"))),
+            book.apply(&parse(books_frame("snapshot", -1, 10))),
             BookApply::Applied
         );
         assert_eq!(
-            book.apply(&parse(books_frame("update", "10", "15"))),
+            book.apply(&parse(books_frame("update", 10, 15))),
             BookApply::Applied
         );
-        let mut keepalive = books_frame("update", "15", "15");
+        let mut keepalive = books_frame("update", 15, 15);
         keepalive["data"][0]["bids"] = json!([]);
         keepalive["data"][0]["asks"] = json!([]);
         assert_eq!(book.apply(&parse(keepalive)), BookApply::IgnoredDuplicate);
         assert_eq!(book.status(), &BookStatus::Current);
 
-        let reset = parse_market_frame(&books_frame("update", "15", "3"), &subscriptions)
+        let reset = parse_market_frame(&books_frame("update", 15, 3), &subscriptions)
             .expect_err("a sequence reset must fail closed");
         assert_eq!(reset.kind, ConnectorErrorKind::ReconciliationRequired);
         assert_eq!(reset.code, "OKX_SEQUENCE_RESET");
@@ -1274,9 +1291,9 @@ mod tests {
                 .expect("book event")
         };
         let mut book = BookState::new(subscriptions[0].instrument.clone());
-        book.apply(&parse(books_frame("snapshot", "-1", "10")));
+        book.apply(&parse(books_frame("snapshot", -1, 10)));
         assert_eq!(
-            book.apply(&parse(books_frame("update", "12", "15"))),
+            book.apply(&parse(books_frame("update", 12, 15))),
             BookApply::ResetRequired
         );
         assert!(book.view().is_none());
@@ -1286,15 +1303,15 @@ mod tests {
     fn a_resubscribe_snapshot_restores_the_book_after_a_reset() {
         let subscriptions = books_subscription();
         let mut book = BookState::new(subscriptions[0].instrument.clone());
-        let snapshot = |sequence: &str| {
-            parse_market_frame(&books_frame("snapshot", "-1", sequence), &subscriptions)
+        let snapshot = |sequence: i64| {
+            parse_market_frame(&books_frame("snapshot", -1, sequence), &subscriptions)
                 .expect("parse")
                 .expect("book event")
         };
-        book.apply(&snapshot("500"));
+        book.apply(&snapshot(500));
         // After the reset the new range starts lower; the fresh snapshot
         // replaces the book outright rather than being compared with it.
-        assert_eq!(book.apply(&snapshot("3")), BookApply::Applied);
+        assert_eq!(book.apply(&snapshot(3)), BookApply::Applied);
         assert_eq!(book.status(), &BookStatus::Current);
         assert_eq!(book.view().expect("view").sequence, 3);
     }
