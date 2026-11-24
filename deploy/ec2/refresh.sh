@@ -24,6 +24,7 @@ for file in \
   deploy/compose/docker-compose.aws.yml \
   deploy/ec2/Caddyfile \
   deploy/ec2/staging.env \
+  deploy/ec2/update-web.sh \
   scripts/deploy-staging.sh \
   scripts/bootstrap-db-roles.sql; do
   curl -fsSL --retry 3 "$raw/$file" -o "$dir/$file.tmp"
@@ -54,6 +55,23 @@ if [[ -z "$(jq -r '.PERPETO_ACCESS_TOKEN_KEY // empty' <<<"$keys")" ]]; then
 fi
 key() { jq -r --arg name "$1" '.[$name]' <<<"$keys"; }
 
+# The web demo answers on PERPETO_APP_DOMAIN and on app.<elastic-ip>.sslip.io,
+# which works before the DNS record exists.
+app_domain="$(sed -n 's/^PERPETO_APP_DOMAIN=//p' "$dir/deploy/ec2/staging.env" | tail -n 1)"
+sslip_host="$(tr ',' '\n' <<<"$PERPETO_PUBLIC_HOSTS" | tr -d ' ' | grep 'sslip\.io$' | head -n 1)"
+app_hosts="${app_domain:-app.perpeto.xyz}${sslip_host:+, app.${sslip_host}}"
+
+# The web image is published by perpeto-mobile. Keep the one update-web.sh
+# last deployed, else follow web-main; enable the web profile only when the
+# image can actually be pulled.
+web_image="$(cat "$dir/.current-web-image" 2>/dev/null || echo "ghcr.io/ayenisholah/perpeto-mobile:web-main")"
+profiles=""
+if docker pull --quiet "$web_image" >/dev/null 2>&1; then
+  profiles="web"
+else
+  echo "web image $web_image is not available yet; deploying without the web demo" >&2
+fi
+
 postgres_password="$(secret POSTGRES_PASSWORD)"
 migrator_password="$(secret MIGRATOR_PASSWORD)"
 app_password="$(secret APP_PASSWORD)"
@@ -76,12 +94,16 @@ umask 077
   echo "AWS_REGION=${AWS_REGION}"
   echo "PERPETO_LOG_GROUP=${PERPETO_LOG_GROUP}"
   echo "PERPETO_PUBLIC_HOSTS=${PERPETO_PUBLIC_HOSTS}"
+  echo "PERPETO_APP_HOSTS=${app_hosts}"
+  echo "PERPETO_WEB_IMAGE=${web_image}"
 } > "$dir/runtime.env.tmp"
 mv "$dir/runtime.env.tmp" "$dir/runtime.env"
 
 cd "$dir"
+COMPOSE_PROFILES="$profiles" \
 PERPETO_IMAGE="$image" \
 PERPETO_COMPOSE_OVERRIDE=deploy/compose/docker-compose.aws.yml \
 PERPETO_PROVISION_DB_ROLES=1 \
   bash scripts/deploy-staging.sh
+chmod 700 deploy/ec2/update-web.sh
 printf '%s\n' "$sha" > .current-sha

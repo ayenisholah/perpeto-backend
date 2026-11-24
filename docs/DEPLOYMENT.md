@@ -28,6 +28,13 @@ Non-secret settings live in `deploy/ec2/staging.env` and change through a pull r
 
 PAPER staging runs `api`, `engine`, `worker`, `postgres`, `redis` and Caddy. The `reconciler`, `preflight` and `rewrap` workers refuse to start outside SANDBOX or SHADOW, so they sit behind the `connectors` compose profile and start only with `COMPOSE_PROFILES=connectors`. Without that profile, `deploy-staging.sh` removes any container left from an earlier run.
 
+### Web demo (DEC-0021)
+
+`app.perpeto.xyz` (and `app.<elastic-ip>.sslip.io` before DNS) serves the read-only web demo. Caddy proxies `/api/*`, `/readyz` and `/livez` to the API and everything else to the `web` container, whose image `perpeto-mobile` publishes as `ghcr.io/ayenisholah/perpeto-mobile:web-<sha>` (and `web-main`). The demo itself is on through `PERPETO_DEMO_ENABLED=true` in `deploy/ec2/staging.env`.
+
+- **Backend deploys:** `refresh.sh` keeps the web image last rolled out (`.current-web-image`), else `web-main`, and starts the `web` profile only if that image can be pulled.
+- **Web deploys:** `perpeto-mobile`'s Web Demo workflow uses the `perpeto-web-deployer` IAM user. That user may only send the `Perpeto-UpdateWeb` SSM document to the staging host. The document accepts a full-commit web image and runs `deploy/ec2/update-web.sh`, which recreates the `web` container alone. Create its key with `scripts/aws/create-deploy-key.sh perpeto-web-deployer ayenisholah/perpeto-mobile web-demo`.
+
 ### GitHub environment
 
 The `staging` environment holds `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` for the `perpeto-github-deployer` IAM user, the variable `AWS_REGION=eu-north-1`, and the repository variable `STAGING_ENABLED=true`. The organisation's service control policy forbids GitHub OIDC, so the deployer is an IAM user. It can only assume the CDK bootstrap roles, read the `Perpeto-*` stack outputs, and run commands on the staging host. Create or rotate its key with `scripts/aws/create-deploy-key.sh`; the key goes from AWS straight into GitHub and is never printed.

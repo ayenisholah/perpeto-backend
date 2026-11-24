@@ -28,7 +28,7 @@ Most of the plumbing exists. The engine already builds each `MarketLeg` from `co
 4. Rewrite the README as a 5-minute tour, with links to the demo, an architecture diagram, local start and an evidence index.
 5. Publish the API client so the registry (`0.7.0`) matches the vendored `0.22.0`.
 
-The mobile side (hosted web build, TestFlight, viewer UX) is tracked in the mobile repository.
+The mobile side (hosted web build, viewer UX) is tracked in the mobile repository. The staging host serves the web build at `app.perpeto.xyz` on the same origin as the API (DEC-0021). TestFlight is paused.
 
 ## M4 — Testnet execution
 

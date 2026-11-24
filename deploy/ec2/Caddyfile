@@ -1,7 +1,27 @@
-# TLS front door for the AWS staging host (DEC-0020). PERPETO_PUBLIC_HOSTS
-# lists api.perpeto.xyz and <elastic-ip>.sslip.io, so the host is reachable
-# over HTTPS before and after the DNS record points at it.
+# TLS front door for the AWS staging host (DEC-0020).
+#
+# PERPETO_PUBLIC_HOSTS lists api.perpeto.xyz and <elastic-ip>.sslip.io, so the
+# API is reachable over HTTPS before and after its DNS record points here.
 {$PERPETO_PUBLIC_HOSTS} {
 	encode zstd gzip
 	reverse_proxy api:8080
+}
+
+# The hosted read-only web demo (DEC-0021): app.perpeto.xyz and
+# app.<elastic-ip>.sslip.io. The API is served on the same origin, so the
+# browser needs no CORS and the backend keeps none in production.
+{$PERPETO_APP_HOSTS} {
+	encode zstd gzip
+	@api path /api/* /readyz /livez
+	handle @api {
+		reverse_proxy api:8080
+	}
+	handle {
+		header {
+			X-Content-Type-Options nosniff
+			Referrer-Policy no-referrer
+			X-Frame-Options DENY
+		}
+		reverse_proxy web:8080
+	}
 }

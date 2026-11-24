@@ -30,6 +30,7 @@ services:
     ports: ["80:80", "443:443"]
     environment:
       PERPETO_PUBLIC_HOSTS: ${PERPETO_PUBLIC_HOSTS:?PERPETO_PUBLIC_HOSTS is required}
+      PERPETO_APP_HOSTS: ${PERPETO_APP_HOSTS:?PERPETO_APP_HOSTS is required}
     volumes:
       - ../ec2/Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy-data:/data
@@ -37,6 +38,19 @@ services:
     depends_on:
       api:
         condition: service_healthy
+    logging: *awslogs
+
+  # The static web demo built by perpeto-mobile (DEC-0021). Behind the `web`
+  # profile, which refresh.sh enables only once the image can be pulled, so a
+  # backend deploy never waits on the mobile repository.
+  web:
+    profiles: ["web"]
+    image: ${PERPETO_WEB_IMAGE:-ghcr.io/ayenisholah/perpeto-mobile:web-main}
+    restart: unless-stopped
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    read_only: true
+    tmpfs: ["/config:rw,noexec,nosuid,size=4m", "/data:rw,noexec,nosuid,size=4m"]
     logging: *awslogs
 
 volumes:
