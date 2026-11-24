@@ -45,6 +45,11 @@ fi
 # for schema public". Only `migrate` overrides the URL to the schema owner.
 "${compose[@]}" run --rm migrate
 "${compose[@]}" up -d --remove-orphans --wait --wait-timeout 60
+# Services behind an inactive profile are not orphans, so containers left by an
+# earlier deploy (or a previous SANDBOX run) must be removed explicitly.
+if [[ ",${COMPOSE_PROFILES:-}," != *",connectors,"* ]]; then
+  "${compose[@]}" rm --stop --force reconciler preflight rewrap
+fi
 
 for _ in $(seq 1 30); do
   if curl --fail --silent http://127.0.0.1:8081/readyz >/dev/null; then
@@ -56,5 +61,5 @@ for _ in $(seq 1 30); do
 done
 
 echo "staging readiness failed" >&2
-"${compose[@]}" logs --tail=200 api engine reconciler preflight rewrap worker >&2 || true
+"${compose[@]}" logs --tail=200 api engine worker >&2 || true
 exit 1

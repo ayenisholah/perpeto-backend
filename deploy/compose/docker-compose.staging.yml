@@ -47,21 +47,33 @@ services:
     entrypoint: ["funding-arb-engine"]
     env_file: ["../../runtime.env"]
     tmpfs: ["/tmp:rw,noexec,nosuid,size=16m"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
+  # The reconciler, preflight and rewrap workers refuse to start outside
+  # SANDBOX or SHADOW, so in PAPER they would exit and restart forever. They
+  # run only with COMPOSE_PROFILES=connectors.
 
   reconciler:
     <<: *service-security
+    profiles: ["connectors"]
     image: ${PERPETO_IMAGE:?PERPETO_IMAGE is required}
     entrypoint: ["funding-arb-reconciler"]
     env_file: ["../../runtime.env"]
 
   preflight:
     <<: *service-security
+    profiles: ["connectors"]
     image: ${PERPETO_IMAGE:?PERPETO_IMAGE is required}
     entrypoint: ["funding-arb-preflight"]
     env_file: ["../../runtime.env"]
 
   rewrap:
     <<: *service-security
+    profiles: ["connectors"]
     image: ${PERPETO_IMAGE:?PERPETO_IMAGE is required}
     entrypoint: ["funding-arb-rewrap"]
     env_file: ["../../runtime.env"]
@@ -71,6 +83,11 @@ services:
     image: ${PERPETO_IMAGE:?PERPETO_IMAGE is required}
     entrypoint: ["funding-arb-worker"]
     env_file: ["../../runtime.env"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
 
   postgres:
     image: postgres:18.4-bookworm@sha256:7cfd7f5e307dbd8cf5d88761b22934c042a749362c0ab7efc41805572d58b3a3
