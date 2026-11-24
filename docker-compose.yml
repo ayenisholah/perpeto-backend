@@ -1,0 +1,135 @@
+# One-command local start (M3): the whole stack in live-data PAPER.
+#
+#   docker compose up --build
+#
+# then open http://localhost:3000 for the web platform (the read-only demo and
+# a development sign-in), or http://localhost:8080/readyz for the API. Nothing
+# secret is committed: the `keys` service generates this machine's signing
+# keys once into a volume, and every service reads them from there. PAPER only;
+# the development sign-in and the demo are refused in any other mode.
+#
+# `docker compose down -v` forgets the database and the keys.
+
+name: perpeto-local
+
+x-backend: &backend
+  build: .
+  image: perpeto-backend:local
+  read_only: true
+  cap_drop: ["ALL"]
+  security_opt: ["no-new-privileges:true"]
+  environment: &backend-env
+    PERPETO_MODE: PAPER
+    PERPETO_PAPER_SOURCE: live
+    DATABASE_URL: postgres://perpeto_app:perpeto_app@postgres:5432/perpeto
+    PERPETO_TOKEN_ISSUER: http://localhost:8080
+    PERPETO_APPLE_BUNDLE_ID: com.signex.mobile
+    PERPETO_OPEN_REGISTRATION: "true"
+    PERPETO_DEV_AUTH: "true"
+    PERPETO_DEMO_ENABLED: "true"
+  volumes: ["keys:/keys:ro"]
+
+services:
+  keys:
+    image: alpine:3.22
+    restart: "no"
+    command:
+      - sh
+      - -c
+      - |
+        set -eu
+        if [ ! -s /keys/keys.env ]; then
+          umask 077
+          key() { head -c 32 /dev/urandom | base64; }
+          {
+            echo "export PERPETO_ACCESS_TOKEN_KEY=$$(key)"
+            echo "export PERPETO_MFA_KEY=$$(key)"
+            echo "export PERPETO_WEB_SESSION_KEY=$$(key)"
+          } > /keys/keys.env
+          chmod 644 /keys/keys.env
+          echo "generated local keys"
+        fi
+    volumes: ["keys:/keys"]
+
+  postgres:
+    image: postgres:18.4-bookworm@sha256:7cfd7f5e307dbd8cf5d88761b22934c042a749362c0ab7efc41805572d58b3a3
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: perpeto
+      POSTGRES_PASSWORD: perpeto
+      POSTGRES_DB: perpeto
+    volumes:
+      - postgres:/var/lib/postgresql
+      - ./scripts/bootstrap-db-roles.sql:/docker-entrypoint-initdb.d/10-bootstrap-db-roles.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U perpeto -d perpeto"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+  redis:
+    image: redis:7.4.5-bookworm
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "no", "--save", ""]
+
+  migrate:
+    <<: *backend
+    restart: "no"
+    entrypoint: ["funding-arb-migrate"]
+    environment:
+      <<: *backend-env
+      DATABASE_URL: postgres://perpeto_migrator:perpeto_migrator@postgres:5432/perpeto
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  api:
+    <<: *backend
+    restart: unless-stopped
+    entrypoint: ["sh", "-c", ". /keys/keys.env && exec funding-arb-api"]
+    ports: ["127.0.0.1:${PERPETO_LOCAL_API_PORT:-8080}:8080"]
+    tmpfs: ["/tmp:rw,noexec,nosuid,size=16m"]
+    depends_on:
+      keys:
+        condition: service_completed_successfully
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "funding-arb-api", "--health-check"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+  engine:
+    <<: *backend
+    restart: unless-stopped
+    entrypoint: ["funding-arb-engine"]
+    tmpfs: ["/tmp:rw,noexec,nosuid,size=16m"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  # The Next.js web platform (DEC-0021), from the perpeto-web repository.
+  web:
+    image: ${PERPETO_WEB_IMAGE:-ghcr.io/ayenisholah/perpeto-web:main}
+    restart: unless-stopped
+    entrypoint: ["sh", "-c", ". /keys/keys.env && exec node server.js"]
+    environment:
+      PERPETO_API_URL: http://api:8080
+      PERPETO_WEB_ORIGIN: http://localhost:${PERPETO_LOCAL_WEB_PORT:-3000}
+      PERPETO_WEB_DEV_SIGN_IN: "true"
+    ports: ["127.0.0.1:${PERPETO_LOCAL_WEB_PORT:-3000}:3000"]
+    read_only: true
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m
+      - /app/.next/cache:rw,noexec,nosuid,size=128m,uid=1000,gid=1000
+    volumes: ["keys:/keys:ro"]
+    depends_on:
+      api:
+        condition: service_healthy
+
+volumes:
+  keys:
+  postgres:

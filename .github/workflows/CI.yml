@@ -123,6 +123,9 @@ jobs:
       # No AWS credentials: the stacks avoid context lookups, so synth is offline.
       - run: npm run synth
       - run: npm audit --audit-level=high
+      - name: Validate the one-command local stack
+        working-directory: .
+        run: docker compose config --quiet
       - name: Validate the staging compose stack with the AWS override
         working-directory: .
         run: |

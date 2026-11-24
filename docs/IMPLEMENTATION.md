@@ -24,7 +24,7 @@ Most of the plumbing exists. The engine already builds each `MarketLeg` from `co
 
 1. Restore staging. The last successful deploy was `07cb3cc` on 2026-07-30, and the API returned 502 on 2026-11-22. Redeploy current `main` in live-data PAPER.
 2. Add the read-only demo viewer and a seeded demo tenant (DEC-0017), with an authorization test that calls every mutating endpoint as the viewer and expects rejection. **Implemented:** `PERPETO_DEMO_ENABLED=true` (PAPER only) seeds the principal and one enabled paper strategy; `POST /api/v1/demo/session` issues access-only sessions; `require_auth` refuses every non-GET from the demo principal.
-3. Add a one-command local start: a Compose profile for PostgreSQL, Redis, migrate, API and engine in live-data PAPER.
+3. Add a one-command local start: a Compose profile for PostgreSQL, Redis, migrate, API and engine in live-data PAPER. **Implemented:** root `docker-compose.yml`, which also runs the web platform, with generated keys.
 4. Rewrite the README as a 5-minute tour, with links to the demo, an architecture diagram, local start and an evidence index.
 5. Publish the API client so the registry (`0.7.0`) matches the vendored `0.22.0`.
 
