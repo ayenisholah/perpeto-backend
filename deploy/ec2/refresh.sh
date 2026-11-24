@@ -24,6 +24,7 @@ for file in \
   deploy/compose/docker-compose.aws.yml \
   deploy/ec2/Caddyfile \
   deploy/ec2/staging.env \
+  deploy/ec2/update-web.sh \
   scripts/deploy-staging.sh \
   scripts/bootstrap-db-roles.sql; do
   curl -fsSL --retry 3 "$raw/$file" -o "$dir/$file.tmp"
@@ -52,7 +53,31 @@ if [[ -z "$(jq -r '.PERPETO_ACCESS_TOKEN_KEY // empty' <<<"$keys")" ]]; then
     --secret-id "$SECRET_PREFIX/KEYS" --secret-string "$keys" >/dev/null
   echo "generated the application keys and a one-use deployment token in $SECRET_PREFIX/KEYS"
 fi
+# The web platform's session-cookie key (DEC-0021), added once to existing keys.
+if [[ -z "$(jq -r '.PERPETO_WEB_SESSION_KEY // empty' <<<"$keys")" ]]; then
+  keys="$(jq --arg web "$(openssl rand -base64 32)" '. + {PERPETO_WEB_SESSION_KEY: $web}' <<<"$keys")"
+  aws secretsmanager put-secret-value --region "$AWS_REGION" \
+    --secret-id "$SECRET_PREFIX/KEYS" --secret-string "$keys" >/dev/null
+  echo "generated the web session key in $SECRET_PREFIX/KEYS"
+fi
 key() { jq -r --arg name "$1" '.[$name]' <<<"$keys"; }
+
+# The web demo answers on PERPETO_APP_DOMAIN and on app.<elastic-ip>.sslip.io,
+# which works before the DNS record exists.
+app_domain="$(sed -n 's/^PERPETO_APP_DOMAIN=//p' "$dir/deploy/ec2/staging.env" | tail -n 1)"
+sslip_host="$(tr ',' '\n' <<<"$PERPETO_PUBLIC_HOSTS" | tr -d ' ' | grep 'sslip\.io$' | head -n 1)"
+app_hosts="${app_domain:-app.perpeto.xyz}${sslip_host:+, app.${sslip_host}}"
+
+# The web image is published by perpeto-web. Keep the one update-web.sh last
+# deployed, else follow main; enable the web profile only when the image can
+# actually be pulled.
+web_image="$(cat "$dir/.current-web-image" 2>/dev/null || echo "ghcr.io/ayenisholah/perpeto-web:main")"
+profiles=""
+if docker pull --quiet "$web_image" >/dev/null 2>&1; then
+  profiles="web"
+else
+  echo "web image $web_image is not available yet; deploying without the web demo" >&2
+fi
 
 postgres_password="$(secret POSTGRES_PASSWORD)"
 migrator_password="$(secret MIGRATOR_PASSWORD)"
@@ -76,12 +101,29 @@ umask 077
   echo "AWS_REGION=${AWS_REGION}"
   echo "PERPETO_LOG_GROUP=${PERPETO_LOG_GROUP}"
   echo "PERPETO_PUBLIC_HOSTS=${PERPETO_PUBLIC_HOSTS}"
+  echo "PERPETO_APP_HOSTS=${app_hosts}"
+  echo "PERPETO_WEB_IMAGE=${web_image}"
 } > "$dir/runtime.env.tmp"
 mv "$dir/runtime.env.tmp" "$dir/runtime.env"
 
+# The web server's own environment: only what it needs, never database or API
+# signing keys. It reaches the API over the compose network.
+first_app_host="${app_hosts%%,*}"
+{
+  echo "PERPETO_API_URL=http://api:8080"
+  echo "PERPETO_WEB_ORIGIN=https://${first_app_host}"
+  echo "PERPETO_WEB_SESSION_KEY=$(key PERPETO_WEB_SESSION_KEY)"
+  # Read by the web server at request time, so one image serves any deployment.
+  sed -n 's/^PERPETO_GOOGLE_WEB_CLIENT_ID=/PERPETO_GOOGLE_CLIENT_ID=/p' "$dir/deploy/ec2/staging.env"
+  sed -n 's/^PERPETO_APPLE_WEB_SERVICES_ID=/PERPETO_APPLE_SERVICES_ID=/p' "$dir/deploy/ec2/staging.env"
+} > "$dir/web.env.tmp"
+mv "$dir/web.env.tmp" "$dir/web.env"
+
 cd "$dir"
+COMPOSE_PROFILES="$profiles" \
 PERPETO_IMAGE="$image" \
 PERPETO_COMPOSE_OVERRIDE=deploy/compose/docker-compose.aws.yml \
 PERPETO_PROVISION_DB_ROLES=1 \
   bash scripts/deploy-staging.sh
+chmod 700 deploy/ec2/update-web.sh
 printf '%s\n' "$sha" > .current-sha

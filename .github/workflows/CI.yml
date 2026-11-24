@@ -138,11 +138,22 @@ jobs:
             echo "AWS_REGION=eu-north-1"
             echo "PERPETO_LOG_GROUP=/perpeto/staging"
             echo "PERPETO_PUBLIC_HOSTS=api.perpeto.xyz, 127.0.0.1.sslip.io"
+            echo "PERPETO_APP_HOSTS=app.perpeto.xyz, app.127.0.0.1.sslip.io"
           } > "$host/runtime.env"
+          {
+            echo "PERPETO_API_URL=http://api:8080"
+            echo "PERPETO_WEB_ORIGIN=https://app.perpeto.xyz"
+            echo "PERPETO_WEB_SESSION_KEY=ci"
+          } > "$host/web.env"
           cd "$host"
-          PERPETO_IMAGE=ghcr.io/example/perpeto:ci docker compose --env-file runtime.env \
-            -f deploy/compose/docker-compose.staging.yml -f deploy/compose/docker-compose.aws.yml config --quiet
-          for script in deploy/ec2/refresh.sh scripts/deploy-staging.sh scripts/aws/deploy-host.sh scripts/aws/create-deploy-key.sh; do
+          for profiles in "" web connectors; do
+            COMPOSE_PROFILES="$profiles" PERPETO_IMAGE=ghcr.io/example/perpeto:ci docker compose --env-file runtime.env \
+              -f deploy/compose/docker-compose.staging.yml -f deploy/compose/docker-compose.aws.yml config --quiet
+          done
+          docker run --rm -v "$GITHUB_WORKSPACE/deploy/ec2/Caddyfile:/etc/caddy/Caddyfile:ro" \
+            -e PERPETO_PUBLIC_HOSTS="api.perpeto.xyz" -e PERPETO_APP_HOSTS="app.perpeto.xyz" \
+            caddy:2.10.2-alpine caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+          for script in deploy/ec2/refresh.sh deploy/ec2/update-web.sh scripts/deploy-staging.sh scripts/aws/deploy-host.sh scripts/aws/create-deploy-key.sh; do
             bash -n "$GITHUB_WORKSPACE/$script"
           done
 

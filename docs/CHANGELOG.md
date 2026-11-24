@@ -6,6 +6,13 @@ All notable repository changes are recorded here using Keep a Changelog categori
 
 ### Added
 
+- M3: the staging host serves the Next.js web platform from `perpeto-web` (DEC-0021).
+  - **Caddy:** a second site, `PERPETO_APP_HOSTS` (`app.perpeto.xyz` and `app.<elastic-ip>.sslip.io`), sends every request to the `web` container on port 3000, with HSTS, `nosniff`, referrer and framing headers. The browser never reaches the API directly.
+  - **Compose:** `web` runs the `perpeto-web` image read-only, without capabilities, behind the `web` profile, with tmpfs for `/tmp` and the Next.js cache. It waits for a healthy API.
+  - **Configuration:** `refresh.sh` derives the app hosts, keeps the last rolled-out web image, enables the profile only when that image can be pulled, generates `PERPETO_WEB_SESSION_KEY` once, and renders a separate `web.env` holding only what the web server needs. `staging.env` turns on `PERPETO_DEMO_ENABLED` and adds an empty `PERPETO_APPLE_WEB_SERVICES_ID`.
+  - **Web deploys:** `deploy/ec2/update-web.sh` recreates only the `web` container. The CDK `Perpeto-Deployer` stack adds the `Perpeto-UpdateWeb` SSM document, whose only parameter must match `ghcr.io/ayenisholah/perpeto-web:sha-<full sha>`, and the `perpeto-web-deployer` IAM user, which may only send that document to the staging host. `create-deploy-key.sh` now takes a user, repository and environment.
+  - **CI:** the `infra` job validates the compose files under each profile and the Caddyfile.
+
 - M3: the read-only demo viewer (DEC-0017), with OpenAPI and `@ayenisholah/perpeto-api-client` **0.24.0** (additive).
   - **Principal:** migration `0020_demo_viewer.sql` adds `users.demo`, allows at most one demo user, and lets devices be `WEB`. With `PERPETO_DEMO_ENABLED=true`, which only PAPER permits, the API seeds one demo tenant whose user holds only `VIEWER`, plus one enabled paper strategy (BTC and ETH across Binance, Bybit and OKX), so the engine trades it and the read models fill.
   - **Sessions:** `POST /api/v1/demo/session` issues an access-only session that lasts as long as its 15-minute access token. It returns no refresh token, deletes expired demo sessions as it goes, and is capped at 120 sessions a minute per deployment (429 `DEMO_RATE_LIMITED`). It returns 404 when the demo is off.

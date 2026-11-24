@@ -30,10 +30,28 @@ services:
     ports: ["80:80", "443:443"]
     environment:
       PERPETO_PUBLIC_HOSTS: ${PERPETO_PUBLIC_HOSTS:?PERPETO_PUBLIC_HOSTS is required}
+      PERPETO_APP_HOSTS: ${PERPETO_APP_HOSTS:?PERPETO_APP_HOSTS is required}
     volumes:
       - ../ec2/Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy-data:/data
       - caddy-config:/config
+    depends_on:
+      api:
+        condition: service_healthy
+    logging: *awslogs
+
+  # The Next.js web platform from perpeto-web (DEC-0021). Behind the `web`
+  # profile, which refresh.sh enables only once the image can be pulled, so a
+  # backend deploy never waits on the web repository.
+  web:
+    profiles: ["web"]
+    image: ${PERPETO_WEB_IMAGE:-ghcr.io/ayenisholah/perpeto-web:main}
+    restart: unless-stopped
+    env_file: ["../../web.env"]
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    read_only: true
+    tmpfs: ["/tmp:rw,noexec,nosuid,size=64m", "/app/.next/cache:rw,noexec,nosuid,size=128m,uid=1000,gid=1000"]
     depends_on:
       api:
         condition: service_healthy
