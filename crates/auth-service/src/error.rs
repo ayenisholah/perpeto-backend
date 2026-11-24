@@ -41,6 +41,10 @@ pub enum AuthError {
     /// A passkey registration or assertion failed verification (including a
     /// detected authenticator clone). Deliberately non-specific to the client.
     PasskeyProofInvalid,
+    /// The read-only demo principal attempted a mutation (DEC-0017).
+    DemoReadOnly,
+    /// Demo sessions are being issued faster than the deployment allows.
+    DemoRateLimited,
     /// An unexpected internal failure.
     Internal(String),
 }
@@ -60,9 +64,10 @@ impl AuthError {
             | Self::BootstrapInvalid
             | Self::PasskeyProofInvalid
             | Self::Unauthorized => 401,
-            Self::Forbidden => 403,
+            Self::Forbidden | Self::DemoReadOnly => 403,
             Self::NotFound => 404,
             Self::ChallengeConsumed | Self::Conflict(_) => 409,
+            Self::DemoRateLimited => 429,
             Self::PasskeysUnavailable | Self::CredentialsUnavailable => 503,
             Self::Internal(_) => 500,
         }
@@ -88,6 +93,8 @@ impl AuthError {
             Self::PasskeysUnavailable => "PASSKEYS_UNAVAILABLE",
             Self::CredentialsUnavailable => "CREDENTIALS_UNAVAILABLE",
             Self::PasskeyProofInvalid => "PASSKEY_PROOF_INVALID",
+            Self::DemoReadOnly => "DEMO_READ_ONLY",
+            Self::DemoRateLimited => "DEMO_RATE_LIMITED",
             Self::Internal(_) => "INTERNAL",
         }
     }
@@ -113,6 +120,10 @@ impl AuthError {
             }
             Self::CredentialsUnavailable => "Credential enrollment is not available.".to_owned(),
             Self::PasskeyProofInvalid => "The passkey could not be verified.".to_owned(),
+            Self::DemoReadOnly => "The live demo is read-only.".to_owned(),
+            Self::DemoRateLimited => {
+                "Too many demo sessions were started; try again shortly.".to_owned()
+            }
             Self::Internal(_) => "The request could not be completed.".to_owned(),
         }
     }

@@ -63,6 +63,16 @@ pub struct CurrentUser {
     pub roles: Vec<Role>,
     pub linked_providers: Vec<Provider>,
     pub mfa_enrolled: bool,
+    /// The read-only demo principal (DEC-0017); every mutation is refused.
+    pub demo: bool,
+}
+
+/// An access-only session for the read-only demo principal (DEC-0017).
+#[derive(Clone, Debug, Serialize)]
+pub struct DemoSession {
+    pub access_token: String,
+    pub access_token_expires_at: String,
+    pub session_id: String,
 }
 
 /// The access + refresh credential pair returned after successful auth.

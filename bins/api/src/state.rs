@@ -15,6 +15,8 @@ use funding_arb_venue_service::{
 };
 use std::sync::Arc;
 
+use crate::demo::DemoGate;
+
 /// Cloneable state shared across all handlers.
 #[derive(Clone)]
 pub struct AppState {
@@ -53,4 +55,7 @@ pub struct AppState {
     pub connector_execution: ConnectorExecutionCoordinator,
     /// Read-only venue reconciliation used by credential preflight.
     pub reconciliation: ReconciliationService,
+    /// The read-only public demo (DEC-0017); `None` unless
+    /// `PERPETO_DEMO_ENABLED=true` in PAPER mode.
+    pub demo: Option<Arc<DemoGate>>,
 }

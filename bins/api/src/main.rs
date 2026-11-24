@@ -1,3 +1,6 @@
+mod demo;
+#[cfg(test)]
+mod demo_authorization_tests;
 mod freshness;
 mod handlers;
 mod middleware;
@@ -188,6 +191,29 @@ async fn run() -> ExitCode {
         ))
     };
     let service = AuthService::new(repo, &config, verifier);
+
+    // The read-only public demo (DEC-0017). PAPER only, like the development
+    // verifier: in any other mode the flag aborts startup.
+    let demo_enabled = env::var("PERPETO_DEMO_ENABLED")
+        .map(|value| value.trim().eq_ignore_ascii_case("true"))
+        .unwrap_or(false);
+    if demo_enabled && !mode.is_paper() {
+        eprintln!(
+            "PERPETO_DEMO_ENABLED is only permitted in PAPER mode (current mode is {mode}); \
+             refusing to start"
+        );
+        return ExitCode::FAILURE;
+    }
+    let demo = if demo_enabled {
+        if let Err(error) = demo::seed(&service, &strategies).await {
+            eprintln!("failed to seed the demo tenant: {error}");
+            return ExitCode::FAILURE;
+        }
+        println!("read-only demo enabled");
+        Some(Arc::new(demo::DemoGate::new()))
+    } else {
+        None
+    };
     let router = build_router(AppState {
         mode,
         service,
@@ -206,6 +232,7 @@ async fn run() -> ExitCode {
         enrollment,
         connector_execution,
         reconciliation,
+        demo,
     });
 
     // Browsers refuse cross-origin calls without CORS, and `expo start --web`

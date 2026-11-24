@@ -198,6 +198,7 @@ pub fn build_router(state: AppState) -> Router {
         )
         .route("/api/v1/auth/social/exchange", post(handlers::exchange))
         .route("/api/v1/auth/refresh", post(handlers::refresh))
+        .route("/api/v1/demo/session", post(handlers::create_demo_session))
         .route("/api/v1/auth/mfa/confirm", post(handlers::confirm_mfa))
         .route("/api/v1/auth/mfa/verify", post(handlers::verify_mfa))
         .route(

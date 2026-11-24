@@ -149,6 +149,41 @@ describe("social authentication contract", () => {
     assert.equal(authorization, "Bearer ephemeral");
   });
 
+  it("starts an unauthenticated demo session", async () => {
+    let request;
+    const client = new PerpetoClient({
+      baseUrl: "https://perpeto.test",
+      getAccessToken: () => "should-not-be-sent",
+      fetchImplementation: async (url, init) => {
+        request = { url: String(url), init };
+        return response(201, {
+          access_token: "demo-token",
+          access_token_expires_at: "2026-11-24T10:15:00Z",
+          session_id: "00000000-0000-4000-8000-000000000000",
+        });
+      },
+    });
+    const session = await client.createDemoSession();
+    assert.equal(session.access_token, "demo-token");
+    assert.equal(request.url, "https://perpeto.test/api/v1/demo/session");
+    assert.equal(request.init.method, "POST");
+    assert.equal(new Headers(request.init.headers).get("Authorization"), null);
+  });
+
+  it("surfaces the demo read-only refusal", async () => {
+    const client = new PerpetoClient({
+      baseUrl: "https://perpeto.test",
+      fetchImplementation: async () => Response.json(
+        { code: "DEMO_READ_ONLY", title: "The live demo is read-only." },
+        { status: 403 },
+      ),
+    });
+    await assert.rejects(
+      () => client.logout(),
+      (error) => error instanceof PerpetoApiError && error.code === "DEMO_READ_ONLY",
+    );
+  });
+
   it("normalizes problem responses", async () => {
     const client = new PerpetoClient({
       baseUrl: "https://perpeto.test",
