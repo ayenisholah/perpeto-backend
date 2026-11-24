@@ -113,8 +113,9 @@ first_app_host="${app_hosts%%,*}"
   echo "PERPETO_API_URL=http://api:8080"
   echo "PERPETO_WEB_ORIGIN=https://${first_app_host}"
   echo "PERPETO_WEB_SESSION_KEY=$(key PERPETO_WEB_SESSION_KEY)"
-  sed -n 's/^PERPETO_GOOGLE_WEB_CLIENT_ID=/NEXT_PUBLIC_GOOGLE_CLIENT_ID=/p' "$dir/deploy/ec2/staging.env"
-  sed -n 's/^PERPETO_APPLE_WEB_SERVICES_ID=/NEXT_PUBLIC_APPLE_SERVICES_ID=/p' "$dir/deploy/ec2/staging.env"
+  # Read by the web server at request time, so one image serves any deployment.
+  sed -n 's/^PERPETO_GOOGLE_WEB_CLIENT_ID=/PERPETO_GOOGLE_CLIENT_ID=/p' "$dir/deploy/ec2/staging.env"
+  sed -n 's/^PERPETO_APPLE_WEB_SERVICES_ID=/PERPETO_APPLE_SERVICES_ID=/p' "$dir/deploy/ec2/staging.env"
 } > "$dir/web.env.tmp"
 mv "$dir/web.env.tmp" "$dir/web.env"
 
