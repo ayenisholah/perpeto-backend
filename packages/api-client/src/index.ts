@@ -654,7 +654,10 @@ export class PerpetoClient {
 
   public constructor(options: PerpetoClientOptions) {
     this.#baseUrl = options.baseUrl.replace(/\/+$/u, "");
-    this.#fetch = options.fetchImplementation ?? fetch;
+    // Browsers reject `fetch` called as a method of another object ("Illegal
+    // invocation"), so the global is wrapped rather than stored and called as
+    // `this.#fetch(...)`. React Native's fetch tolerates either.
+    this.#fetch = options.fetchImplementation ?? ((input, init) => globalThis.fetch(input, init));
     this.#getAccessToken = options.getAccessToken ?? (() => undefined);
   }
 

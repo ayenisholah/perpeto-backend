@@ -149,6 +149,29 @@ describe("social authentication contract", () => {
     assert.equal(authorization, "Bearer ephemeral");
   });
 
+  it("calls the global fetch unbound, as browsers require", async () => {
+    const original = globalThis.fetch;
+    let receiver = "unset";
+    globalThis.fetch = function (url) {
+      receiver = this;
+      if (this !== undefined && this !== globalThis) {
+        throw new TypeError("Illegal invocation");
+      }
+      return Promise.resolve(response(201, {
+        access_token: "demo-token",
+        access_token_expires_at: "2026-11-24T10:15:00Z",
+        session_id: String(url).length > 0 ? "00000000-0000-4000-8000-000000000000" : "",
+      }));
+    };
+    try {
+      const client = new PerpetoClient({ baseUrl: "https://perpeto.test" });
+      await client.createDemoSession();
+      assert.ok(receiver === undefined || receiver === globalThis);
+    } finally {
+      globalThis.fetch = original;
+    }
+  });
+
   it("starts an unauthenticated demo session", async () => {
     let request;
     const client = new PerpetoClient({
