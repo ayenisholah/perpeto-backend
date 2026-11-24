@@ -176,6 +176,14 @@ impl AuthService {
     ///
     /// # Errors
     /// Returns [`AuthError::NotFound`] if the user is gone.
+    /// Whether the session behind an access token is still active.
+    ///
+    /// # Errors
+    /// Propagates database failures.
+    pub async fn session_is_live(&self, session_id: &str) -> AuthResult<bool> {
+        self.repo.session_is_live(session_id).await
+    }
+
     pub async fn user_projection(&self, user_id: &str) -> AuthResult<UserProjection> {
         self.repo.user_projection(user_id).await
     }
@@ -264,7 +272,14 @@ impl AuthService {
             .verify(provider, &request.identity_token)
             .await?;
 
-        if provider == Provider::Apple {
+        let web = request.device.platform == "WEB";
+        if !web && request.device.platform != "IOS" {
+            return Err(AuthError::BadRequest("unsupported device platform"));
+        }
+        // Apple always binds the challenge nonce. On the web, Google Identity
+        // Services carries it too, so a web exchange must bind it for either
+        // provider; the native Google SDK cannot, and relies on PKCE alone.
+        if provider == Provider::Apple || web {
             let nonce = identity
                 .nonce
                 .as_deref()
@@ -278,9 +293,6 @@ impl AuthService {
             }
         }
 
-        if request.device.platform != "IOS" {
-            return Err(AuthError::BadRequest("unsupported device platform"));
-        }
         let display_name = match provider {
             Provider::Apple => request
                 .apple_profile
@@ -303,6 +315,7 @@ impl AuthService {
         };
         let device_upsert = DeviceUpsert {
             installation_id_hash: sha256(request.device.installation_id.as_bytes()).to_vec(),
+            platform: if web { "WEB" } else { "IOS" },
             app_version: request.device.app_version.clone(),
             display_name: request.device.display_name.clone(),
         };

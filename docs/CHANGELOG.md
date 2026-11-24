@@ -6,6 +6,14 @@ All notable repository changes are recorded here using Keep a Changelog categori
 
 ### Added
 
+- M3: backend support for web sign-in through the Next.js platform (DEC-0021), with OpenAPI and `@ayenisholah/perpeto-api-client` **0.25.0** (additive).
+  - **Web devices:** `exchange` accepts `platform: WEB` and stores the platform it receives; it used to hardcode `IOS`. Any other platform is still refused.
+  - **Nonce on the web:** a WEB exchange must bind the challenge nonce for Google as well as Apple. Google Identity Services carries it on the web, and the Google verifier now returns the claim. Native Google sign-in still relies on PKCE and the one-use challenge.
+  - **Apple on the web:** `PERPETO_APPLE_WEB_SERVICES_ID` adds the web Services ID to the accepted Apple audiences, next to the bundle ID.
+  - **Development sign-in:** the PAPER-only dev verifier accepts an optional third part, `perpeto-dev:<subject>:<email>:<nonce>`, so local web development can satisfy the web nonce binding.
+  - **Immediate revocation:** the bearer middleware now refuses an access token whose session is no longer active or has expired (401 `SESSION_REVOKED`). Logout, session revocation and reuse detection used to take effect only when the 15-minute token lapsed.
+  - **Tests:** a web exchange rejecting a wrong nonce and recording a `WEB` device, an unknown platform rejected, and a logged-out token refused on its next request.
+
 - M3: the staging host serves the Next.js web platform from `perpeto-web` (DEC-0021).
   - **Caddy:** a second site, `PERPETO_APP_HOSTS` (`app.perpeto.xyz` and `app.<elastic-ip>.sslip.io`), sends every request to the `web` container on port 3000, with HSTS, `nosniff`, referrer and framing headers. The browser never reaches the API directly.
   - **Compose:** `web` runs the `perpeto-web` image read-only, without capabilities, behind the `web` profile, with tmpfs for `/tmp` and the Next.js cache. It waits for a healthy API.

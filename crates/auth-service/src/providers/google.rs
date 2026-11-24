@@ -20,12 +20,15 @@ struct GoogleClaims {
     email_verified: Option<serde_json::Value>,
     #[serde(default)]
     name: Option<String>,
+    #[serde(default)]
+    nonce: Option<String>,
 }
 
 /// Verify a Google identity token against the accepted audiences (client ids).
 ///
-/// Google identity tokens carry no nonce in this flow (the native SDK never
-/// receives one), so replay defense is the one-use challenge plus PKCE.
+/// The native iOS SDK never receives a nonce, so native replay defense is the
+/// one-use challenge plus PKCE. Google Identity Services on the web does carry
+/// the challenge nonce, and `exchange` requires it for web devices.
 ///
 /// # Errors
 /// Returns [`AuthError::ProviderProofInvalid`] on any verification failure.
@@ -61,6 +64,6 @@ pub async fn verify(
             Some(serde_json::Value::String(text)) if text == "true"
         ),
         display_name: claims.name,
-        nonce: None,
+        nonce: claims.nonce,
     })
 }

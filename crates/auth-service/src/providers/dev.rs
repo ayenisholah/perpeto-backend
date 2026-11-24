@@ -46,22 +46,25 @@ impl IdentityTokenVerifier for DevIdentityVerifier {
         let claims = identity_token
             .strip_prefix(PREFIX)
             .ok_or(AuthError::ProviderProofInvalid)?;
-        let mut parts = claims.splitn(2, ':');
+        // `perpeto-dev:<subject>[:<email>[:<nonce>]]`. The optional nonce lets
+        // the web platform's local development sign-in satisfy the nonce
+        // binding every WEB exchange requires (DEC-0021).
+        let mut parts = claims.splitn(3, ':');
         let subject = parts
             .next()
             .filter(|value| !value.is_empty())
             .ok_or(AuthError::ProviderProofInvalid)?;
         let email = parts.next().filter(|value| !value.is_empty());
+        let nonce = parts.next().filter(|value| !value.is_empty());
 
         Ok(VerifiedIdentity {
             subject: subject.to_owned(),
             email: email.map(str::to_owned),
             email_verified: email.is_some(),
             display_name: Some("Development account".to_owned()),
-            // Apple's nonce binding cannot be satisfied without the challenge,
-            // so the development client signs in as GOOGLE, where `exchange`
-            // does not consult the nonce.
-            nonce: None,
+            // The native development client signs in as GOOGLE without a
+            // nonce; the web development client passes the challenge nonce.
+            nonce: nonce.map(str::to_owned),
         })
     }
 }
@@ -69,6 +72,20 @@ impl IdentityTokenVerifier for DevIdentityVerifier {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn carries_an_optional_nonce_for_web_development_sign_in() {
+        let identity = DevIdentityVerifier
+            .verify(
+                Provider::Google,
+                "perpeto-dev:web-owner:owner@example.test:abc123",
+            )
+            .await
+            .expect("verified");
+        assert_eq!(identity.subject, "web-owner");
+        assert_eq!(identity.email.as_deref(), Some("owner@example.test"));
+        assert_eq!(identity.nonce.as_deref(), Some("abc123"));
+    }
 
     #[tokio::test]
     async fn accepts_a_development_token_with_a_stable_subject() {

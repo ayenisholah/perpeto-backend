@@ -48,6 +48,7 @@ fn test_config(database_url: String, bootstrap_token: &str, open_registration: b
         token_signing_seed: [11_u8; 32],
         token_issuer: "https://perpeto.test".to_owned(),
         apple_bundle_id: "com.signex.mobile".to_owned(),
+        apple_web_services_id: None,
         google_client_ids: vec!["ios.apps.googleusercontent.com".to_owned()],
         bootstrap_token_hash: Some(sha256(bootstrap_token.as_bytes())),
         bootstrap_token_expires_at: Some("2999-01-01T00:00:00Z".to_owned()),
@@ -368,4 +369,121 @@ async fn bootstrap_promotes_first_owner_to_mfa_enrollment() {
         )
         .await;
     assert_eq!(second.err(), Some(AuthError::BootstrapInvalid));
+}
+
+/// Web sign-in (DEC-0021): the provider token is expected to echo the
+/// challenge nonce, which this verifier takes from the token text itself.
+struct NonceEchoVerifier;
+
+#[async_trait]
+impl IdentityTokenVerifier for NonceEchoVerifier {
+    async fn verify(
+        &self,
+        _provider: Provider,
+        identity_token: &str,
+    ) -> Result<VerifiedIdentity, AuthError> {
+        Ok(VerifiedIdentity {
+            subject: "google-sub-web".to_owned(),
+            email: Some("web@example.com".to_owned()),
+            email_verified: true,
+            display_name: Some("Web".to_owned()),
+            nonce: Some(identity_token.to_owned()),
+        })
+    }
+}
+
+async fn web_exchange(
+    service: &AuthService,
+    nonce_for: impl Fn(&str) -> String,
+) -> Result<funding_arb_auth_service::dto::AuthTransition, AuthError> {
+    let verifier = "verifier-000000000000000000000000000000000000000";
+    let challenge = service
+        .create_challenge(CreateChallengeRequest {
+            provider: Provider::Google,
+            redirect_uri: "https://app.perpeto.xyz".to_owned(),
+            code_challenge: encode_base64url(&sha256(verifier.as_bytes())),
+            purpose: "SIGN_IN".to_owned(),
+        })
+        .await
+        .expect("challenge");
+    service
+        .exchange(ExchangeRequest {
+            challenge_id: challenge.id,
+            authorization_code: "web".to_owned(),
+            identity_token: nonce_for(&challenge.nonce),
+            code_verifier: Some(verifier.to_owned()),
+            apple_profile: None,
+            device: DeviceRegistration {
+                installation_id: "browser-installation".to_owned(),
+                platform: "WEB".to_owned(),
+                app_version: "web".to_owned(),
+                display_name: "Browser".to_owned(),
+            },
+        })
+        .await
+}
+
+#[tokio::test]
+async fn a_web_exchange_binds_the_google_nonce_and_records_a_web_device() {
+    let _guard = TEST_LOCK.lock().await;
+    let Some((_, pool)) = setup("unused", "dev-token").await else {
+        eprintln!("skipping: DATABASE_URL is not set");
+        return;
+    };
+    let config = test_config(
+        std::env::var("DATABASE_URL").expect("database url"),
+        "dev-token",
+        true,
+    );
+    let service = AuthService::new(
+        Repo::new(pool.clone()),
+        &config,
+        Arc::new(NonceEchoVerifier),
+    );
+
+    let rejected = web_exchange(&service, |_| "a-different-nonce".to_owned()).await;
+    assert!(matches!(rejected, Err(AuthError::ProviderProofInvalid)));
+
+    let transition = web_exchange(&service, str::to_owned)
+        .await
+        .expect("web exchange");
+    let session = transition.session.expect("session");
+    let platform: String = sqlx::query_scalar("SELECT platform FROM devices WHERE id = $1::uuid")
+        .bind(&session.device_id)
+        .fetch_one(&pool)
+        .await
+        .expect("device");
+    assert_eq!(platform, "WEB");
+}
+
+#[tokio::test]
+async fn an_unknown_device_platform_is_rejected() {
+    let _guard = TEST_LOCK.lock().await;
+    let Some((service, _pool)) = setup("google-sub-android", "dev-token").await else {
+        eprintln!("skipping: DATABASE_URL is not set");
+        return;
+    };
+    let verifier = "verifier-000000000000000000000000000000000000000";
+    let challenge = service
+        .create_challenge(CreateChallengeRequest {
+            provider: Provider::Google,
+            redirect_uri: "signex://auth/callback".to_owned(),
+            code_challenge: encode_base64url(&sha256(verifier.as_bytes())),
+            purpose: "SIGN_IN".to_owned(),
+        })
+        .await
+        .expect("challenge");
+    let mut android = device();
+    android.platform = "ANDROID".to_owned();
+    let result = service
+        .exchange(ExchangeRequest {
+            challenge_id: challenge.id,
+            authorization_code: "code".to_owned(),
+            identity_token: "token".to_owned(),
+            code_verifier: Some(verifier.to_owned()),
+            apple_profile: None,
+            device: android,
+        })
+        .await;
+    assert!(matches!(result, Err(AuthError::BadRequest(_))));
 }

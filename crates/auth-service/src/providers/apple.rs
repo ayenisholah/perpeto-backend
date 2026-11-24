@@ -22,22 +22,26 @@ struct AppleClaims {
     nonce: Option<String>,
 }
 
-/// Verify an Apple identity token against the given audience (bundle id).
+/// Verify an Apple identity token against the accepted audiences: the iOS
+/// bundle ID and, for web sign-in, the Services ID (DEC-0021).
 ///
 /// # Errors
 /// Returns [`AuthError::ProviderProofInvalid`] on any verification failure.
 pub async fn verify(
     cache: &JwksCache,
-    audience: &str,
+    audiences: &[String],
     identity_token: &str,
 ) -> Result<VerifiedIdentity, AuthError> {
+    if audiences.is_empty() {
+        return Err(AuthError::ProviderProofInvalid);
+    }
     let header = decode_header(identity_token).map_err(|_| AuthError::ProviderProofInvalid)?;
     let kid = header.kid.ok_or(AuthError::ProviderProofInvalid)?;
     let key = cache.decoding_key(&kid).await?;
 
     let mut validation = Validation::new(Algorithm::RS256);
     validation.set_issuer(&[ISSUER]);
-    validation.set_audience(&[audience]);
+    validation.set_audience(audiences);
     validation.set_required_spec_claims(&["exp", "iss", "aud", "sub"]);
 
     let token = decode::<AppleClaims>(identity_token, &key, &validation)

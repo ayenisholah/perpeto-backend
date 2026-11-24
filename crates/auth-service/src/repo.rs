@@ -66,6 +66,8 @@ pub struct IdentityUpsert {
 #[derive(Clone, Debug)]
 pub struct DeviceUpsert {
     pub installation_id_hash: Vec<u8>,
+    /// `IOS` or `WEB` (migration 0020).
+    pub platform: &'static str,
     pub app_version: String,
     pub display_name: String,
 }
@@ -305,7 +307,7 @@ impl Repo {
         let device_id: String = sqlx::query_scalar(
             "INSERT INTO devices \
              (id, user_id, installation_id_hash, platform, app_version, display_name) \
-             VALUES ($1, $2, $3, 'IOS', $4, $5) \
+             VALUES ($1, $2, $3, $6, $4, $5) \
              ON CONFLICT (user_id, installation_id_hash) DO UPDATE \
              SET last_seen_at = now(), app_version = EXCLUDED.app_version, \
                  display_name = EXCLUDED.display_name, revoked_at = NULL \
@@ -316,6 +318,7 @@ impl Repo {
         .bind(&device.installation_id_hash)
         .bind(&device.app_version)
         .bind(&device.display_name)
+        .bind(device.platform)
         .fetch_one(&mut *tx)
         .await?;
 
@@ -475,6 +478,25 @@ impl Repo {
             Utc::now() + Duration::days(SESSION_TTL_DAYS),
         )
         .await
+    }
+
+    /// Whether a session is still active and unexpired. The bearer middleware
+    /// checks this on every request, so logout and revocation take effect at
+    /// once instead of when the 15-minute access token lapses.
+    ///
+    /// # Errors
+    /// Propagates database failures.
+    pub async fn session_is_live(&self, session_id: &str) -> AuthResult<bool> {
+        let Ok(session) = Uuid::parse_str(session_id) else {
+            return Ok(false);
+        };
+        Ok(sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM sessions \
+             WHERE id = $1 AND state = 'ACTIVE' AND expires_at > now())",
+        )
+        .bind(session)
+        .fetch_one(&self.pool)
+        .await?)
     }
 
     /// Ensure the read-only demo principal exists, creating its tenant, its
