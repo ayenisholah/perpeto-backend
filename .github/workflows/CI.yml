@@ -140,6 +140,11 @@ jobs:
             echo "PERPETO_PUBLIC_HOSTS=api.perpeto.xyz, 127.0.0.1.sslip.io"
             echo "PERPETO_APP_HOSTS=app.perpeto.xyz, app.127.0.0.1.sslip.io"
           } > "$host/runtime.env"
+          {
+            echo "PERPETO_API_URL=http://api:8080"
+            echo "PERPETO_WEB_ORIGIN=https://app.perpeto.xyz"
+            echo "PERPETO_WEB_SESSION_KEY=ci"
+          } > "$host/web.env"
           cd "$host"
           for profiles in "" web connectors; do
             COMPOSE_PROFILES="$profiles" PERPETO_IMAGE=ghcr.io/example/perpeto:ci docker compose --env-file runtime.env \

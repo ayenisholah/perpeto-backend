@@ -52,22 +52,22 @@ export class DeployerStack extends Stack {
       }),
     );
 
-    // The web demo (DEC-0021) is deployed from perpeto-mobile by a second,
+    // The web platform (DEC-0021) is deployed from perpeto-web by a second,
     // narrower identity. It cannot run arbitrary shell: it may only invoke
-    // this document, whose single parameter must be a perpeto-mobile web image
-    // pinned to a full commit, and which runs nothing but update-web.sh.
+    // this document, whose single parameter must be a perpeto-web image pinned
+    // to a full commit, and which runs nothing but update-web.sh.
     const updateWeb = new ssm.CfnDocument(this, "UpdateWebDocument", {
       name: "Perpeto-UpdateWeb",
       documentType: "Command",
       updateMethod: "NewVersion",
       content: {
         schemaVersion: "2.2",
-        description: "Roll the Perpeto web demo container to one image (DEC-0021).",
+        description: "Roll the Perpeto web platform container to one image (DEC-0021).",
         parameters: {
           image: {
             type: "String",
-            description: "ghcr.io/ayenisholah/perpeto-mobile:web-<full commit sha>",
-            allowedPattern: "^ghcr\\.io/ayenisholah/perpeto-mobile:web-[0-9a-f]{40}$",
+            description: "ghcr.io/ayenisholah/perpeto-web:sha-<full commit sha>",
+            allowedPattern: "^ghcr\\.io/ayenisholah/perpeto-web:sha-[0-9a-f]{40}$",
           },
         },
         mainSteps: [

@@ -4,7 +4,7 @@
 # and is never printed. Older keys are deleted after the new one is stored.
 #
 #   create-deploy-key.sh                      # backend: perpeto-github-deployer -> staging
-#   create-deploy-key.sh perpeto-web-deployer ayenisholah/perpeto-mobile web-demo
+#   create-deploy-key.sh perpeto-web-deployer ayenisholah/perpeto-web staging
 #
 # Needs AWS credentials that can manage the user's keys, and `gh` logged in
 # with admin rights on the repository.

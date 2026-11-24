@@ -53,6 +53,13 @@ if [[ -z "$(jq -r '.PERPETO_ACCESS_TOKEN_KEY // empty' <<<"$keys")" ]]; then
     --secret-id "$SECRET_PREFIX/KEYS" --secret-string "$keys" >/dev/null
   echo "generated the application keys and a one-use deployment token in $SECRET_PREFIX/KEYS"
 fi
+# The web platform's session-cookie key (DEC-0021), added once to existing keys.
+if [[ -z "$(jq -r '.PERPETO_WEB_SESSION_KEY // empty' <<<"$keys")" ]]; then
+  keys="$(jq --arg web "$(openssl rand -base64 32)" '. + {PERPETO_WEB_SESSION_KEY: $web}' <<<"$keys")"
+  aws secretsmanager put-secret-value --region "$AWS_REGION" \
+    --secret-id "$SECRET_PREFIX/KEYS" --secret-string "$keys" >/dev/null
+  echo "generated the web session key in $SECRET_PREFIX/KEYS"
+fi
 key() { jq -r --arg name "$1" '.[$name]' <<<"$keys"; }
 
 # The web demo answers on PERPETO_APP_DOMAIN and on app.<elastic-ip>.sslip.io,
@@ -61,10 +68,10 @@ app_domain="$(sed -n 's/^PERPETO_APP_DOMAIN=//p' "$dir/deploy/ec2/staging.env" |
 sslip_host="$(tr ',' '\n' <<<"$PERPETO_PUBLIC_HOSTS" | tr -d ' ' | grep 'sslip\.io$' | head -n 1)"
 app_hosts="${app_domain:-app.perpeto.xyz}${sslip_host:+, app.${sslip_host}}"
 
-# The web image is published by perpeto-mobile. Keep the one update-web.sh
-# last deployed, else follow web-main; enable the web profile only when the
-# image can actually be pulled.
-web_image="$(cat "$dir/.current-web-image" 2>/dev/null || echo "ghcr.io/ayenisholah/perpeto-mobile:web-main")"
+# The web image is published by perpeto-web. Keep the one update-web.sh last
+# deployed, else follow main; enable the web profile only when the image can
+# actually be pulled.
+web_image="$(cat "$dir/.current-web-image" 2>/dev/null || echo "ghcr.io/ayenisholah/perpeto-web:main")"
 profiles=""
 if docker pull --quiet "$web_image" >/dev/null 2>&1; then
   profiles="web"
@@ -98,6 +105,18 @@ umask 077
   echo "PERPETO_WEB_IMAGE=${web_image}"
 } > "$dir/runtime.env.tmp"
 mv "$dir/runtime.env.tmp" "$dir/runtime.env"
+
+# The web server's own environment: only what it needs, never database or API
+# signing keys. It reaches the API over the compose network.
+first_app_host="${app_hosts%%,*}"
+{
+  echo "PERPETO_API_URL=http://api:8080"
+  echo "PERPETO_WEB_ORIGIN=https://${first_app_host}"
+  echo "PERPETO_WEB_SESSION_KEY=$(key PERPETO_WEB_SESSION_KEY)"
+  sed -n 's/^PERPETO_GOOGLE_WEB_CLIENT_ID=/NEXT_PUBLIC_GOOGLE_CLIENT_ID=/p' "$dir/deploy/ec2/staging.env"
+  sed -n 's/^PERPETO_APPLE_WEB_SERVICES_ID=/NEXT_PUBLIC_APPLE_SERVICES_ID=/p' "$dir/deploy/ec2/staging.env"
+} > "$dir/web.env.tmp"
+mv "$dir/web.env.tmp" "$dir/web.env"
 
 cd "$dir"
 COMPOSE_PROFILES="$profiles" \

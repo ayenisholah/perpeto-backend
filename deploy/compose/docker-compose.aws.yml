@@ -40,17 +40,21 @@ services:
         condition: service_healthy
     logging: *awslogs
 
-  # The static web demo built by perpeto-mobile (DEC-0021). Behind the `web`
+  # The Next.js web platform from perpeto-web (DEC-0021). Behind the `web`
   # profile, which refresh.sh enables only once the image can be pulled, so a
-  # backend deploy never waits on the mobile repository.
+  # backend deploy never waits on the web repository.
   web:
     profiles: ["web"]
-    image: ${PERPETO_WEB_IMAGE:-ghcr.io/ayenisholah/perpeto-mobile:web-main}
+    image: ${PERPETO_WEB_IMAGE:-ghcr.io/ayenisholah/perpeto-web:main}
     restart: unless-stopped
+    env_file: ["../../web.env"]
     cap_drop: ["ALL"]
     security_opt: ["no-new-privileges:true"]
     read_only: true
-    tmpfs: ["/config:rw,noexec,nosuid,size=4m", "/data:rw,noexec,nosuid,size=4m"]
+    tmpfs: ["/tmp:rw,noexec,nosuid,size=64m", "/app/.next/cache:rw,noexec,nosuid,size=128m"]
+    depends_on:
+      api:
+        condition: service_healthy
     logging: *awslogs
 
 volumes:

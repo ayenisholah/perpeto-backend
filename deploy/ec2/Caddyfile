@@ -7,21 +7,18 @@
 	reverse_proxy api:8080
 }
 
-# The hosted read-only web demo (DEC-0021): app.perpeto.xyz and
-# app.<elastic-ip>.sslip.io. The API is served on the same origin, so the
-# browser needs no CORS and the backend keeps none in production.
+# The Next.js web platform (DEC-0021): app.perpeto.xyz and
+# app.<elastic-ip>.sslip.io. Every request goes to the web server, whose
+# backend-for-frontend calls the API over the compose network; the browser
+# never holds an API token, so the API needs no CORS.
 {$PERPETO_APP_HOSTS} {
 	encode zstd gzip
-	@api path /api/* /readyz /livez
-	handle @api {
-		reverse_proxy api:8080
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options nosniff
+		Referrer-Policy strict-origin-when-cross-origin
+		X-Frame-Options DENY
+		-Server
 	}
-	handle {
-		header {
-			X-Content-Type-Options nosniff
-			Referrer-Policy no-referrer
-			X-Frame-Options DENY
-		}
-		reverse_proxy web:8080
-	}
+	reverse_proxy web:3000
 }

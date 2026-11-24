@@ -6,10 +6,11 @@ All notable repository changes are recorded here using Keep a Changelog categori
 
 ### Added
 
-- M3: the staging host serves the hosted web demo (DEC-0021).
-  - **Caddy:** a second site, `PERPETO_APP_HOSTS` (`app.perpeto.xyz` and `app.<elastic-ip>.sslip.io`), proxies `/api/*`, `/readyz` and `/livez` to the API on the same origin and everything else to a new `web` service. It sends `nosniff`, `no-referrer` and `DENY` framing headers.
-  - **Compose:** `web` runs the `perpeto-mobile` web image read-only, without capabilities, behind the `web` profile. `refresh.sh` derives the app hosts, keeps the last rolled-out web image, and enables the profile only when that image can be pulled. `staging.env` turns on `PERPETO_DEMO_ENABLED`.
-  - **Web deploys:** `deploy/ec2/update-web.sh` recreates only the `web` container. The CDK `Perpeto-Deployer` stack adds the `Perpeto-UpdateWeb` SSM document, whose only parameter must match a full-commit `perpeto-mobile` web image, and the `perpeto-web-deployer` IAM user, which may only send that document to the staging host. `create-deploy-key.sh` now takes a user, repository and environment.
+- M3: the staging host serves the Next.js web platform from `perpeto-web` (DEC-0021).
+  - **Caddy:** a second site, `PERPETO_APP_HOSTS` (`app.perpeto.xyz` and `app.<elastic-ip>.sslip.io`), sends every request to the `web` container on port 3000, with HSTS, `nosniff`, referrer and framing headers. The browser never reaches the API directly.
+  - **Compose:** `web` runs the `perpeto-web` image read-only, without capabilities, behind the `web` profile, with tmpfs for `/tmp` and the Next.js cache. It waits for a healthy API.
+  - **Configuration:** `refresh.sh` derives the app hosts, keeps the last rolled-out web image, enables the profile only when that image can be pulled, generates `PERPETO_WEB_SESSION_KEY` once, and renders a separate `web.env` holding only what the web server needs. `staging.env` turns on `PERPETO_DEMO_ENABLED` and adds an empty `PERPETO_APPLE_WEB_SERVICES_ID`.
+  - **Web deploys:** `deploy/ec2/update-web.sh` recreates only the `web` container. The CDK `Perpeto-Deployer` stack adds the `Perpeto-UpdateWeb` SSM document, whose only parameter must match `ghcr.io/ayenisholah/perpeto-web:sha-<full sha>`, and the `perpeto-web-deployer` IAM user, which may only send that document to the staging host. `create-deploy-key.sh` now takes a user, repository and environment.
   - **CI:** the `infra` job validates the compose files under each profile and the Caddyfile.
 
 - M3: the read-only demo viewer (DEC-0017), with OpenAPI and `@ayenisholah/perpeto-api-client` **0.24.0** (additive).
