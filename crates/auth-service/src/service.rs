@@ -13,15 +13,15 @@ use uuid::Uuid;
 use crate::config::AuthConfig;
 use crate::dto::{
     AccessRequest, AcknowledgeRecoveryRequest, AuditEntry, AuditLog, AuthTransition,
-    BootstrapRequest, CreateChallengeRequest, CurrentUser, ExchangeRequest, LinkedIdentity,
-    MfaConfirmRequest, MfaConfirmResponse, MfaEnrollment, MfaVerifyRequest, NextState, Provider,
-    RefreshRequest, Role, SessionCredentials, SessionSummary, SocialChallenge, TenantSummary,
-    UserStatus,
+    BootstrapRequest, CreateChallengeRequest, CurrentUser, DemoSession, ExchangeRequest,
+    LinkedIdentity, MfaConfirmRequest, MfaConfirmResponse, MfaEnrollment, MfaVerifyRequest,
+    NextState, Provider, RefreshRequest, Role, SessionCredentials, SessionSummary, SocialChallenge,
+    TenantSummary, UserStatus,
 };
 use crate::error::{AuthError, AuthResult};
 use crate::mfa;
 use crate::providers::IdentityTokenVerifier;
-use crate::repo::{DeviceUpsert, IdentityUpsert, Repo, UserProjection, to_rfc3339};
+use crate::repo::{DemoPrincipal, DeviceUpsert, IdentityUpsert, Repo, UserProjection, to_rfc3339};
 use crate::tokens::{
     TokenSigner, decode_base64url, encode_base64url, generate_recovery_codes,
     generate_refresh_token, sha256,
@@ -40,6 +40,9 @@ pub struct CallerContext {
     pub device_id: String,
     pub status: String,
     pub roles: Vec<String>,
+    /// The read-only demo principal (DEC-0017); the transport refuses its
+    /// mutations before any handler runs.
+    pub demo: bool,
 }
 
 impl CallerContext {
@@ -426,6 +429,44 @@ impl AuthService {
     ///
     /// # Errors
     /// Propagates lookup failures.
+    /// Ensure the read-only demo principal exists (DEC-0017).
+    ///
+    /// # Errors
+    /// Propagates database failures.
+    pub async fn ensure_demo_principal(&self) -> AuthResult<DemoPrincipal> {
+        self.repo.ensure_demo_principal().await
+    }
+
+    /// Issue a short-lived, access-only session for the demo principal.
+    ///
+    /// The session lives exactly as long as its access token and carries no
+    /// refresh credential, so a visitor asks for a new one when it expires.
+    ///
+    /// # Errors
+    /// Propagates database and token-signing failures.
+    pub async fn open_demo_session(&self) -> AuthResult<DemoSession> {
+        let principal = self.repo.ensure_demo_principal().await?;
+        let session_id = Uuid::new_v4().to_string();
+        // The column is required and unique; the value is never disclosed.
+        let refresh_hash = sha256(generate_refresh_token().as_bytes());
+        let (access_token, expires_at) = self.signer.mint_access_token(
+            &principal.user_id,
+            &principal.tenant_id,
+            &session_id,
+            &principal.device_id,
+            principal.permission_version,
+        )?;
+        let expires_at = from_epoch(expires_at);
+        self.repo
+            .create_demo_session(&principal, &session_id, &refresh_hash, expires_at)
+            .await?;
+        Ok(DemoSession {
+            access_token,
+            access_token_expires_at: to_rfc3339(expires_at),
+            session_id,
+        })
+    }
+
     pub async fn me(&self, user_id: &str) -> AuthResult<CurrentUser> {
         Ok(to_current_user(&self.repo.user_projection(user_id).await?))
     }
@@ -858,6 +899,7 @@ fn to_current_user(projection: &UserProjection) -> CurrentUser {
             .filter_map(|provider| Provider::from_db(provider))
             .collect(),
         mfa_enrolled: projection.mfa_enrolled,
+        demo: projection.demo,
     }
 }
 

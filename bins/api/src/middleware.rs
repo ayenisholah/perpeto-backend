@@ -1,7 +1,7 @@
 //! Bearer authentication middleware resolving the [`CallerContext`].
 
 use axum::extract::{Request, State};
-use axum::http::header;
+use axum::http::{Method, header};
 use axum::middleware::Next;
 use axum::response::Response;
 use funding_arb_auth_service::AuthError;
@@ -48,7 +48,14 @@ pub async fn require_auth(
         device_id: claims.did,
         status: user.status,
         roles: user.roles,
+        demo: user.demo,
     };
+    // The demo principal is read-only (DEC-0017). Refusing every non-read
+    // method here covers each protected route at once, including those whose
+    // handlers only check that the account is active.
+    if context.demo && !matches!(*request.method(), Method::GET | Method::HEAD) {
+        return Err(AuthError::DemoReadOnly.into());
+    }
     request.extensions_mut().insert(context);
     Ok(next.run(request).await)
 }

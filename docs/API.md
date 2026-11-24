@@ -16,7 +16,7 @@ Production exchange writes are unavailable: LIVE is permanently fail-closed (DEC
 
 | Group | Paths | Notes |
 |---|---|---|
-| Identity and sessions | `/auth/social/*`, `/auth/refresh`, `/auth/logout`, `/auth/me`, `/auth/sessions*`, `/auth/identities*`, `/auth/mfa/*`, `/auth/step-up`, `/auth/bootstrap`, `/access-requests*`, `/account` | Google and Apple identity with Perpeto-authoritative sessions (DEC-0007) |
+| Identity and sessions | `/auth/social/*`, `/auth/refresh`, `/demo/session`, `/auth/logout`, `/auth/me`, `/auth/sessions*`, `/auth/identities*`, `/auth/mfa/*`, `/auth/step-up`, `/auth/bootstrap`, `/access-requests*`, `/account` | Google and Apple identity with Perpeto-authoritative sessions (DEC-0007) |
 | Passkeys | `/passkeys`, `/passkeys/register/*`, `/passkeys/authenticate/*`, `/passkeys/{id}/revoke` | One-use action proofs bound to an exact action |
 | Scanner and risk | `/opportunities`, `/opportunities/{route_id}`, `/risk/limits` | Ranked by conservative net return |
 | Strategies | `/strategies*` | Versioned, with enable, disable and apply-to-open |

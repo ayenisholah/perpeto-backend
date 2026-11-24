@@ -166,6 +166,15 @@ export interface CurrentUser {
   readonly roles: readonly Role[];
   readonly linked_providers: readonly SocialProvider[];
   readonly mfa_enrolled: boolean;
+  /** The read-only demo principal (DEC-0017). Absent before 0.24.0, meaning false. */
+  readonly demo?: boolean;
+}
+
+/** An access-only session for the read-only demo principal (DEC-0017). */
+export interface DemoSession {
+  readonly access_token: string;
+  readonly access_token_expires_at: string;
+  readonly session_id: string;
 }
 
 export interface SessionCredentials {
@@ -645,7 +654,10 @@ export class PerpetoClient {
 
   public constructor(options: PerpetoClientOptions) {
     this.#baseUrl = options.baseUrl.replace(/\/+$/u, "");
-    this.#fetch = options.fetchImplementation ?? fetch;
+    // Browsers reject `fetch` called as a method of another object ("Illegal
+    // invocation"), so the global is wrapped rather than stored and called as
+    // `this.#fetch(...)`. React Native's fetch tolerates either.
+    this.#fetch = options.fetchImplementation ?? ((input, init) => globalThis.fetch(input, init));
     this.#getAccessToken = options.getAccessToken ?? (() => undefined);
   }
 
@@ -753,6 +765,14 @@ export class PerpetoClient {
       method: "POST",
       body: JSON.stringify({ refresh_token: refreshToken, device_id: deviceId }),
     }, false);
+  }
+
+  /**
+   * Starts a read-only demo session (DEC-0017). The session has no refresh
+   * token; call again once `access_token_expires_at` passes.
+   */
+  public createDemoSession(): Promise<DemoSession> {
+    return this.#request("/api/v1/demo/session", { method: "POST" }, false);
   }
 
   public me(): Promise<CurrentUser> {

@@ -111,6 +111,19 @@ pub async fn me(
     Ok(Json(state.service.me(&caller.user_id).await?))
 }
 
+/// `POST /api/v1/demo/session` issues an access-only session for the
+/// read-only demo principal (DEC-0017). Returns 404 when the demo is off.
+pub async fn create_demo_session(State(state): State<AppState>) -> Result<Response, ApiError> {
+    let Some(gate) = state.demo.as_ref() else {
+        return Err(AuthError::NotFound.into());
+    };
+    if !gate.admit() {
+        return Err(AuthError::DemoRateLimited.into());
+    }
+    let session = state.service.open_demo_session().await?;
+    Ok((StatusCode::CREATED, Json(session)).into_response())
+}
+
 /// `POST /api/v1/auth/bootstrap`
 pub async fn bootstrap(
     State(state): State<AppState>,

@@ -337,6 +337,7 @@ async fn bootstrap_promotes_first_owner_to_mfa_enrollment() {
         device_id: session.device_id.clone(),
         status: "PENDING".to_owned(),
         roles: vec![],
+        demo: false,
     };
 
     let promoted = service

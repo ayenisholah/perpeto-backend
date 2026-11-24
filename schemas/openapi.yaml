@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Perpeto Control API
-  version: 0.23.0
+  version: 0.24.0
   description: >-
     Social identity, MFA, and secure sessions plus the M2 deterministic paper
     scanner and coordinated simulated positions. Live execution remains unavailable.
@@ -245,6 +245,27 @@ paths:
               schema: { $ref: "#/components/schemas/SessionCredentials" }
         "401": { $ref: "#/components/responses/ProblemResponse" }
         "409": { $ref: "#/components/responses/ProblemResponse" }
+  /api/v1/demo/session:
+    post:
+      tags: [Sessions]
+      security: []
+      summary: Start a read-only demo session (DEC-0017)
+      description: >-
+        Issues an access-only session for the seeded demo principal, which holds
+        only VIEWER and is refused every non-GET request with 403
+        `DEMO_READ_ONLY`. There is no refresh token; request a new session when
+        the access token expires. Returns 404 unless the deployment enables the
+        demo, which only PAPER permits, and 429 `DEMO_RATE_LIMITED` when the
+        deployment-wide issuance limit is reached.
+      operationId: createDemoSession
+      responses:
+        "201":
+          description: Demo session issued.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DemoSession" }
+        "404": { $ref: "#/components/responses/ProblemResponse" }
+        "429": { $ref: "#/components/responses/ProblemResponse" }
   /api/v1/auth/step-up:
     post:
       tags: [MFA]
@@ -2114,6 +2135,12 @@ components:
           uniqueItems: true
           items: { $ref: "#/components/schemas/SocialProvider" }
         mfa_enrolled: { type: boolean }
+        demo:
+          type: boolean
+          description: >-
+            True for the read-only demo principal (DEC-0017); the API refuses
+            every mutation it attempts. Absent from servers before 0.24.0, where
+            it means false.
     TenantSummary:
       type: object
       additionalProperties: false
@@ -2159,6 +2186,14 @@ components:
         refresh_token: { type: string, writeOnly: true }
         session_id: { type: string, format: uuid }
         device_id: { type: string, format: uuid }
+    DemoSession:
+      type: object
+      additionalProperties: false
+      required: [access_token, access_token_expires_at, session_id]
+      properties:
+        access_token: { type: string, writeOnly: true }
+        access_token_expires_at: { type: string, format: date-time }
+        session_id: { type: string, format: uuid }
     Session:
       type: object
       additionalProperties: false

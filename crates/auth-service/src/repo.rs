@@ -28,6 +28,17 @@ pub struct UserProjection {
     pub roles: Vec<String>,
     pub providers: Vec<String>,
     pub mfa_enrolled: bool,
+    /// Whether this is the read-only demo principal (DEC-0017).
+    pub demo: bool,
+}
+
+/// The seeded read-only demo principal and its web device (DEC-0017).
+#[derive(Clone, Debug)]
+pub struct DemoPrincipal {
+    pub user_id: String,
+    pub tenant_id: String,
+    pub device_id: String,
+    pub permission_version: i64,
 }
 
 /// The parsed challenge row needed for verification.
@@ -318,6 +329,7 @@ impl Repo {
                 &device_id,
                 refresh_hash,
                 user.permission_version,
+                Utc::now() + Duration::days(SESSION_TTL_DAYS),
             )
             .await?;
         }
@@ -460,8 +472,121 @@ impl Repo {
             device_id,
             refresh_hash,
             permission_version,
+            Utc::now() + Duration::days(SESSION_TTL_DAYS),
         )
         .await
+    }
+
+    /// Ensure the read-only demo principal exists, creating its tenant, its
+    /// `VIEWER` role and its web device on first use (DEC-0017). Idempotent and
+    /// safe under concurrent API replicas.
+    ///
+    /// # Errors
+    /// Propagates database failures.
+    pub async fn ensure_demo_principal(&self) -> AuthResult<DemoPrincipal> {
+        let mut tx = self.pool.begin().await?;
+        sqlx::query("SELECT pg_advisory_xact_lock(hashtext('perpeto-demo-principal'))")
+            .execute(&mut *tx)
+            .await?;
+        let existing = sqlx::query(
+            "SELECT u.id, u.permission_version, tm.tenant_id \
+             FROM users u JOIN tenant_memberships tm ON tm.user_id = u.id AND tm.active \
+             WHERE u.demo",
+        )
+        .fetch_optional(&mut *tx)
+        .await?;
+        let (user, tenant, permission_version) = if let Some(row) = existing {
+            (
+                row.get::<Uuid, _>("id"),
+                row.get::<Uuid, _>("tenant_id"),
+                row.get::<i64, _>("permission_version"),
+            )
+        } else {
+            let user = Uuid::new_v4();
+            let tenant = Uuid::new_v4();
+            sqlx::query(
+                "INSERT INTO users (id, status, display_name, approved_at, demo) \
+                 VALUES ($1, 'ACTIVE', 'Demo viewer', now(), true)",
+            )
+            .bind(user)
+            .execute(&mut *tx)
+            .await?;
+            sqlx::query("INSERT INTO tenants (id, display_name) VALUES ($1, 'Perpeto demo')")
+                .bind(tenant)
+                .execute(&mut *tx)
+                .await?;
+            // Every tenant is personal, so its one membership is structurally
+            // the owner. Permissions come from `user_roles`, which holds only
+            // VIEWER, and the `demo` flag refuses every mutation regardless.
+            sqlx::query(
+                "INSERT INTO tenant_memberships (tenant_id, user_id, role, active) \
+                 VALUES ($1, $2, 'OWNER', true)",
+            )
+            .bind(tenant)
+            .bind(user)
+            .execute(&mut *tx)
+            .await?;
+            sqlx::query(
+                "INSERT INTO user_roles (user_id, role, active, activated_at) \
+                 VALUES ($1, 'VIEWER', true, now())",
+            )
+            .bind(user)
+            .execute(&mut *tx)
+            .await?;
+            (user, tenant, 1)
+        };
+        let device: Uuid = sqlx::query_scalar(
+            "INSERT INTO devices (id, user_id, installation_id_hash, platform, app_version, display_name) \
+             VALUES ($1, $2, $3, 'WEB', 'web', 'Web demo') \
+             ON CONFLICT (user_id, installation_id_hash) DO UPDATE SET last_seen_at = now() \
+             RETURNING id",
+        )
+        .bind(Uuid::new_v4())
+        .bind(user)
+        .bind(crate::tokens::sha256(b"perpeto-web-demo").to_vec())
+        .fetch_one(&mut *tx)
+        .await?;
+        tx.commit().await?;
+        Ok(DemoPrincipal {
+            user_id: user.to_string(),
+            tenant_id: tenant.to_string(),
+            device_id: device.to_string(),
+            permission_version,
+        })
+    }
+
+    /// Record a short-lived demo session, first deleting the principal's
+    /// expired ones so the table does not grow with anonymous visits.
+    ///
+    /// # Errors
+    /// Propagates database failures.
+    pub async fn create_demo_session(
+        &self,
+        principal: &DemoPrincipal,
+        session_id: &str,
+        refresh_hash: &[u8],
+        expires_at: DateTime<Utc>,
+    ) -> AuthResult<()> {
+        let mut tx = self.pool.begin().await?;
+        sqlx::query(
+            "DELETE FROM sessions s USING users u \
+             WHERE s.user_id = u.id AND u.demo AND s.expires_at < now() \
+               AND NOT EXISTS (SELECT 1 FROM refresh_token_history h WHERE h.session_id = s.id)",
+        )
+        .execute(&mut *tx)
+        .await?;
+        insert_session(
+            &mut *tx,
+            session_id,
+            &principal.user_id,
+            &principal.device_id,
+            refresh_hash,
+            principal.permission_version,
+            expires_at,
+        )
+        .await?;
+        tx.commit().await?;
+        Ok(())
     }
 
     /// Load the deployment bootstrap state.
@@ -1279,6 +1404,7 @@ async fn insert_session<'e, E>(
     device_id: &str,
     refresh_hash: &[u8],
     permission_version: i64,
+    expires_at: DateTime<Utc>,
 ) -> AuthResult<()>
 where
     E: sqlx::PgExecutor<'e>,
@@ -1286,7 +1412,6 @@ where
     let session_uuid = parse_uuid(session_id)?;
     let user_uuid = parse_uuid(user_id)?;
     let device_uuid = parse_uuid(device_id)?;
-    let expires_at = Utc::now() + Duration::days(SESSION_TTL_DAYS);
     let result = sqlx::query(
         "INSERT INTO sessions \
          (id, user_id, tenant_id, device_id, family_id, refresh_token_hash, generation, \
@@ -1315,7 +1440,7 @@ async fn load_user_projection(
 ) -> AuthResult<UserProjection> {
     let uuid = parse_uuid(user_id)?;
     let base = sqlx::query(
-        "SELECT u.status::text AS status, u.email, u.display_name, u.permission_version, \
+        "SELECT u.status::text AS status, u.email, u.display_name, u.permission_version, u.demo, \
                 t.id::text AS tenant_id, t.display_name AS tenant_display_name, \
                 t.base_currency, t.state::text AS tenant_state \
          FROM users u \
@@ -1364,5 +1489,6 @@ async fn load_user_projection(
         roles,
         providers,
         mfa_enrolled,
+        demo: base.get("demo"),
     })
 }

@@ -6,6 +6,14 @@ All notable repository changes are recorded here using Keep a Changelog categori
 
 ### Added
 
+- M3: the read-only demo viewer (DEC-0017), with OpenAPI and `@ayenisholah/perpeto-api-client` **0.24.0** (additive).
+  - **Principal:** migration `0020_demo_viewer.sql` adds `users.demo`, allows at most one demo user, and lets devices be `WEB`. With `PERPETO_DEMO_ENABLED=true`, which only PAPER permits, the API seeds one demo tenant whose user holds only `VIEWER`, plus one enabled paper strategy (BTC and ETH across Binance, Bybit and OKX), so the engine trades it and the read models fill.
+  - **Sessions:** `POST /api/v1/demo/session` issues an access-only session that lasts as long as its 15-minute access token. It returns no refresh token, deletes expired demo sessions as it goes, and is capped at 120 sessions a minute per deployment (429 `DEMO_RATE_LIMITED`). It returns 404 when the demo is off.
+  - **Read-only guard:** `require_auth` refuses every non-GET request from the demo principal with 403 `DEMO_READ_ONLY` before any handler runs. This also covers routes whose handlers only check that the account is active, such as alert acknowledgement, passkeys, session revocation and account deletion.
+  - **`/auth/me`:** gains `demo`; the client also adds `createDemoSession()`.
+  - **Client fix:** `PerpetoClient` called the global `fetch` as `this.#fetch(...)`, which browsers reject with "Illegal invocation". React Native tolerated it, so it surfaced only with the hosted web build. The default is now an unbound wrapper, and a test fails if `fetch` runs with any `this`.
+  - **Tests:** the first router-level tests (`bins/api/src/router_tests.rs`). They read every route from `routes.rs`, so a new route is covered automatically. It asserts all 43 protected mutations return 403 for the demo, the demo reads its ten surfaces with 200 and sees its enabled strategy, and the endpoint is absent when disabled. The same harness closes an M2 evidence gap: an owner's `POST /positions` against a stored snapshot older than `PERPETO_MAX_SNAPSHOT_AGE_SECS` returns 409 `STALE_MARKET_DATA`.
+
 - PAPER staging runs on AWS (DEC-0020). The CDK app in `infra/` (`Perpeto-Staging`, `Perpeto-Deployer`) owns one `t3.small` in `eu-north-1` on a pinned Amazon Linux 2023 AMI, with an Elastic IP, a public-only VPC open on 80/443 only, Secrets Manager for every secret, CloudWatch Logs for every container, daily AWS Backup snapshots and automatic recovery.
   - `deploy/compose/docker-compose.aws.yml` layers Caddy (TLS for `api.perpeto.xyz` and `<elastic-ip>.sslip.io`) and the awslogs driver onto the staging stack. `deploy/ec2/staging.env` holds the non-secret settings.
   - `deploy/ec2/refresh.sh` deploys one image on the host: it fetches the deployment files at the exact commit, renders `runtime.env` from Secrets Manager, and generates the application keys and the one-use deployment token on first run.
