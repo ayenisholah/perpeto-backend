@@ -188,44 +188,7 @@ impl BybitConnector {
                 if !matches!(symbol, "BTCUSDT" | "ETHUSDT") {
                     continue;
                 }
-                let lot = &item["lotSizeFilter"];
-                let price_filter = &item["priceFilter"];
-                instruments.push(Instrument {
-                    id: InstrumentId {
-                        venue: Venue::Bybit,
-                        symbol: symbol.into(),
-                        product,
-                    },
-                    canonical_underlying: symbol.trim_end_matches("USDT").into(),
-                    quote_asset: "USDT".into(),
-                    settlement_asset: "USDT".into(),
-                    margin_asset: "USDT".into(),
-                    contract_multiplier: Decimal::ONE,
-                    price_tick: decimal(price_filter, "tickSize")?,
-                    quantity_step: decimal(lot, "qtyStep")?,
-                    minimum_quantity: decimal(lot, "minOrderQty")?,
-                    maximum_quantity: optional_decimal(lot, "maxOrderQty")?,
-                    minimum_notional: optional_decimal(lot, "minNotionalValue")?
-                        .unwrap_or(Decimal::ZERO),
-                    funding_interval_hours: item
-                        .get("fundingInterval")
-                        .and_then(|minutes| {
-                            minutes
-                                .as_u64()
-                                .and_then(|value| u32::try_from(value).ok())
-                                .or_else(|| {
-                                    minutes.as_str().and_then(|value| value.parse::<u32>().ok())
-                                })
-                        })
-                        .map(|minutes| minutes / 60),
-                    funding_cap: optional_decimal(item, "upperFundingRate")?,
-                    funding_floor: optional_decimal(item, "lowerFundingRate")?,
-                    maximum_leverage: optional_decimal(&item["leverageFilter"], "maxLeverage")?,
-                    trading: text(item, "status")? == "Trading",
-                    metadata_version: format!("bybit-v5-{}", Utc::now().date_naive()),
-                    venue_updated_at: None,
-                    received_at: Utc::now(),
-                });
+                instruments.push(parse_instrument(item, product)?);
             }
             cursor = result
                 .get("nextPageCursor")
@@ -982,6 +945,73 @@ fn parse_order(item: &Value, product: ProductType) -> ConnectorResult<VenueOrder
     })
 }
 
+/// Normalizes one `/v5/market/instruments-info` entry.
+///
+/// Bybit documents different `lotSizeFilter` fields per category
+/// (<https://bybit-exchange.github.io/docs/v5/market/instrument>): linear
+/// contracts carry `qtyStep`, `minOrderQty`, `maxOrderQty` and
+/// `minNotionalValue`, while spot carries `basePrecision` as the quantity step,
+/// `minOrderAmt` as the minimum quote amount, `maxLimitOrderQty` as the limit
+/// order cap, and a deprecated `minOrderQty`.
+fn parse_instrument(item: &Value, product: ProductType) -> ConnectorResult<Instrument> {
+    let symbol = text(item, "symbol")?;
+    let lot = &item["lotSizeFilter"];
+    let price_filter = &item["priceFilter"];
+    let (quantity_step, minimum_quantity, maximum_quantity, minimum_notional) = match product {
+        ProductType::LinearPerpetual => (
+            decimal(lot, "qtyStep")?,
+            decimal(lot, "minOrderQty")?,
+            optional_decimal(lot, "maxOrderQty")?,
+            optional_decimal(lot, "minNotionalValue")?.unwrap_or(Decimal::ZERO),
+        ),
+        ProductType::Spot => {
+            let step = decimal(lot, "basePrecision")?;
+            (
+                step,
+                optional_decimal(lot, "minOrderQty")?.unwrap_or(step),
+                match optional_decimal(lot, "maxLimitOrderQty")? {
+                    Some(limit) => Some(limit),
+                    None => optional_decimal(lot, "maxOrderQty")?,
+                },
+                optional_decimal(lot, "minOrderAmt")?.unwrap_or(Decimal::ZERO),
+            )
+        }
+    };
+    Ok(Instrument {
+        id: InstrumentId {
+            venue: Venue::Bybit,
+            symbol: symbol.into(),
+            product,
+        },
+        canonical_underlying: symbol.trim_end_matches("USDT").into(),
+        quote_asset: "USDT".into(),
+        settlement_asset: "USDT".into(),
+        margin_asset: "USDT".into(),
+        contract_multiplier: Decimal::ONE,
+        price_tick: decimal(price_filter, "tickSize")?,
+        quantity_step,
+        minimum_quantity,
+        maximum_quantity,
+        minimum_notional,
+        funding_interval_hours: item
+            .get("fundingInterval")
+            .and_then(|minutes| {
+                minutes
+                    .as_u64()
+                    .and_then(|value| u32::try_from(value).ok())
+                    .or_else(|| minutes.as_str().and_then(|value| value.parse::<u32>().ok()))
+            })
+            .map(|minutes| minutes / 60),
+        funding_cap: optional_decimal(item, "upperFundingRate")?,
+        funding_floor: optional_decimal(item, "lowerFundingRate")?,
+        maximum_leverage: optional_decimal(&item["leverageFilter"], "maxLeverage")?,
+        trading: text(item, "status")? == "Trading",
+        metadata_version: format!("bybit-v5-{}", Utc::now().date_naive()),
+        venue_updated_at: None,
+        received_at: Utc::now(),
+    })
+}
+
 const fn category(product: ProductType) -> &'static str {
     match product {
         ProductType::Spot => "spot",
@@ -1107,6 +1137,54 @@ fn unsupported(code: &str) -> ConnectorError {
 mod tests {
     use super::*;
     use crate::{BookApply, BookState, BookStatus};
+
+    // Live `/v5/market/instruments-info?symbol=BTCUSDT` responses captured from
+    // the eu-north-1 staging host on 2026-11-24, trimmed to the fields read.
+    const SPOT_INSTRUMENT: &str = r#"{"symbol":"BTCUSDT","status":"Trading","lotSizeFilter":{"basePrecision":"0.000001","quotePrecision":"0.0000001","minOrderQty":"0.000001","maxOrderQty":"230","minOrderAmt":"5","maxOrderAmt":"8000000","maxLimitOrderQty":"230","maxMarketOrderQty":"120","postOnlyMaxLimitOrderSize":"1150"},"priceFilter":{"tickSize":"0.1"}}"#;
+    const LINEAR_INSTRUMENT: &str = r#"{"symbol":"BTCUSDT","contractType":"LinearPerpetual","status":"Trading","leverageFilter":{"minLeverage":"1","maxLeverage":"150.00","leverageStep":"0.01"},"priceFilter":{"minPrice":"0.10","maxPrice":"1999999.80","tickSize":"0.10"},"lotSizeFilter":{"maxOrderQty":"1500.000","minOrderQty":"0.001","qtyStep":"0.001","postOnlyMaxOrderQty":"1500.000","maxMktOrderQty":"150.000","minNotionalValue":"5"},"fundingInterval":480,"upperFundingRate":"0.00333","lowerFundingRate":"-0.00333"}"#;
+
+    #[test]
+    fn a_live_spot_instrument_uses_the_spot_size_fields() {
+        let item: Value = serde_json::from_str(SPOT_INSTRUMENT).unwrap();
+        let instrument = parse_instrument(&item, ProductType::Spot).unwrap();
+        assert_eq!(
+            instrument.quantity_step,
+            Decimal::from_str("0.000001").unwrap()
+        );
+        assert_eq!(
+            instrument.minimum_quantity,
+            Decimal::from_str("0.000001").unwrap()
+        );
+        assert_eq!(instrument.maximum_quantity, Some(Decimal::from(230)));
+        assert_eq!(instrument.minimum_notional, Decimal::from(5));
+        assert_eq!(instrument.price_tick, Decimal::from_str("0.1").unwrap());
+        assert!(instrument.trading);
+    }
+
+    #[test]
+    fn a_live_linear_instrument_uses_the_contract_size_fields() {
+        let item: Value = serde_json::from_str(LINEAR_INSTRUMENT).unwrap();
+        let instrument = parse_instrument(&item, ProductType::LinearPerpetual).unwrap();
+        assert_eq!(
+            instrument.quantity_step,
+            Decimal::from_str("0.001").unwrap()
+        );
+        assert_eq!(
+            instrument.minimum_quantity,
+            Decimal::from_str("0.001").unwrap()
+        );
+        assert_eq!(instrument.maximum_quantity, Some(Decimal::from(1500)));
+        assert_eq!(instrument.minimum_notional, Decimal::from(5));
+        assert_eq!(instrument.funding_interval_hours, Some(8));
+        assert_eq!(instrument.maximum_leverage, Some(Decimal::from(150)));
+    }
+
+    #[test]
+    fn a_spot_instrument_without_a_base_precision_is_rejected() {
+        let item: Value =
+            serde_json::from_str(&SPOT_INSTRUMENT.replace("basePrecision", "renamed")).unwrap();
+        assert!(parse_instrument(&item, ProductType::Spot).is_err());
+    }
 
     #[test]
     fn maps_terminal_and_partial_order_states() {
