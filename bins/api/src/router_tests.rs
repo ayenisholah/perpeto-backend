@@ -1,4 +1,5 @@
-//! Router-level authorization evidence for the read-only demo (DEC-0017).
+//! Router-level tests: read-only demo authorization (DEC-0017) and paper-entry
+//! freshness (DEC-0016).
 //!
 //! The mutating routes are read from `routes.rs` itself, so a route added
 //! later is covered without editing this file. Database-backed: each test
@@ -10,6 +11,10 @@ use std::sync::Arc;
 use axum::Router;
 use axum::body::{Body, to_bytes};
 use axum::http::{Method, Request, StatusCode, header};
+use funding_arb_auth_service::dto::{
+    CreateChallengeRequest, DeviceRegistration, ExchangeRequest, Provider,
+};
+use funding_arb_auth_service::tokens::{encode_base64url, sha256};
 use funding_arb_auth_service::{AuthConfig, AuthService, DevIdentityVerifier, Repo};
 use funding_arb_domain::TradingMode;
 use funding_arb_execution_service::{
@@ -85,6 +90,16 @@ fn concrete(path: &str) -> String {
 }
 
 async fn router(demo_enabled: bool) -> Option<Router> {
+    router_with(demo_enabled, false, chrono::Duration::seconds(90))
+        .await
+        .map(|(router, _)| router)
+}
+
+async fn router_with(
+    demo_enabled: bool,
+    open_registration: bool,
+    max_snapshot_age: chrono::Duration,
+) -> Option<(Router, AuthService)> {
     let Ok(database_url) = env::var("DATABASE_URL") else {
         eprintln!("skipping: DATABASE_URL is not set");
         return None;
@@ -104,7 +119,7 @@ async fn router(demo_enabled: bool) -> Option<Router> {
         bootstrap_token_hash: None,
         bootstrap_token_expires_at: None,
         mfa_encryption_key: None,
-        open_registration: false,
+        open_registration,
         passkey: None,
     };
     let service = AuthService::new(
@@ -119,26 +134,29 @@ async fn router(demo_enabled: bool) -> Option<Router> {
     } else {
         None
     };
-    Some(build_router(AppState {
-        mode: TradingMode::Paper,
+    Some((
+        build_router(AppState {
+            mode: TradingMode::Paper,
+            service: service.clone(),
+            passkeys: None,
+            scanner: ScannerRepo::new(pool.clone()),
+            execution: ExecutionService::default(),
+            max_snapshot_age,
+            positions: PositionsRepo::new(pool.clone()),
+            breakers: BreakersRepo::new(pool.clone()),
+            outbox: OutboxRepo::new(pool.clone()),
+            strategies,
+            monitoring: MonitoringRepo::new(pool.clone()),
+            venues: VenueAccountsRepo::new(pool.clone()),
+            connector_monitoring: ConnectorMonitoringRepo::new(pool.clone()),
+            connector_registry: None,
+            enrollment: None,
+            connector_execution: ConnectorExecutionCoordinator::new(pool.clone()),
+            reconciliation: ReconciliationService::new(pool),
+            demo,
+        }),
         service,
-        passkeys: None,
-        scanner: ScannerRepo::new(pool.clone()),
-        execution: ExecutionService::default(),
-        max_snapshot_age: chrono::Duration::seconds(90),
-        positions: PositionsRepo::new(pool.clone()),
-        breakers: BreakersRepo::new(pool.clone()),
-        outbox: OutboxRepo::new(pool.clone()),
-        strategies,
-        monitoring: MonitoringRepo::new(pool.clone()),
-        venues: VenueAccountsRepo::new(pool.clone()),
-        connector_monitoring: ConnectorMonitoringRepo::new(pool.clone()),
-        connector_registry: None,
-        enrollment: None,
-        connector_execution: ConnectorExecutionCoordinator::new(pool.clone()),
-        reconciliation: ReconciliationService::new(pool),
-        demo,
-    }))
+    ))
 }
 
 async fn call(
@@ -247,4 +265,74 @@ async fn the_demo_endpoint_is_absent_unless_enabled() {
     };
     let (status, _) = call(&router, Method::POST, "/api/v1/demo/session", None).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+/// Signs in a fresh open-registration user (OWNER, TRADER, APPROVER) through
+/// the development verifier and returns its access token.
+async fn owner_token(service: &AuthService) -> String {
+    let verifier = "verifier-000000000000000000000000000000000000000";
+    let challenge = service
+        .create_challenge(CreateChallengeRequest {
+            provider: Provider::Google,
+            redirect_uri: "signex://auth/callback".to_owned(),
+            code_challenge: encode_base64url(&sha256(verifier.as_bytes())),
+            purpose: "SIGN_IN".to_owned(),
+        })
+        .await
+        .expect("challenge");
+    let transition = service
+        .exchange(ExchangeRequest {
+            challenge_id: challenge.id,
+            authorization_code: "auth-code".to_owned(),
+            identity_token: format!("perpeto-dev:freshness-{}", uuid::Uuid::new_v4()),
+            code_verifier: Some(verifier.to_owned()),
+            apple_profile: None,
+            device: DeviceRegistration {
+                installation_id: uuid::Uuid::new_v4().to_string(),
+                platform: "IOS".to_owned(),
+                app_version: "test".to_owned(),
+                display_name: "Test".to_owned(),
+            },
+        })
+        .await
+        .expect("exchange");
+    transition.session.expect("session").access_token
+}
+
+/// DEC-0016: a paper open fills against the latest stored snapshot only while
+/// it is fresh; a stalled engine must not leave the API filling old books.
+#[tokio::test]
+async fn a_stale_market_snapshot_refuses_a_paper_entry() {
+    let Some((router, service)) = router_with(false, true, chrono::Duration::seconds(1)).await
+    else {
+        return;
+    };
+    let pool = PgPoolOptions::new()
+        .max_connections(1)
+        .connect(&env::var("DATABASE_URL").expect("database url"))
+        .await
+        .expect("connect");
+    sqlx::query(
+        "INSERT INTO scan_runs (id, scanned_at, model_version, market_snapshot, created_at) \
+         VALUES ($1, now(), 'freshness-test', $2, now() - interval '10 minutes')",
+    )
+    .bind(uuid::Uuid::new_v4())
+    .bind(r#"{"taken_at":"2026-11-24T00:00:00Z","legs":[],"books":[],"venues":[]}"#)
+    .execute(&pool)
+    .await
+    .expect("stale snapshot");
+    let token = owner_token(&service).await;
+    let request = Request::builder()
+        .method(Method::POST)
+        .uri("/api/v1/positions")
+        .header(header::AUTHORIZATION, format!("Bearer {token}"))
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(r#"{"route_id":"PERP_PERP:BINANCE>BYBIT:BTC"}"#))
+        .expect("request");
+    let response = router.oneshot(request).await.expect("response");
+    assert_eq!(response.status(), StatusCode::CONFLICT);
+    let body: Value =
+        serde_json::from_slice(&to_bytes(response.into_body(), 1 << 20).await.expect("body"))
+            .expect("problem");
+    assert_eq!(body["code"], "STALE_MARKET_DATA");
 }

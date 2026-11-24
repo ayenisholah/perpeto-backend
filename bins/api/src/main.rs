@@ -1,10 +1,10 @@
 mod demo;
-#[cfg(test)]
-mod demo_authorization_tests;
 mod freshness;
 mod handlers;
 mod middleware;
 mod problem;
+#[cfg(test)]
+mod router_tests;
 mod routes;
 mod state;
 
