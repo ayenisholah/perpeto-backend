@@ -138,6 +138,10 @@ All notable repository changes are recorded here using Keep a Changelog categori
 
 ### Fixed
 
+- OKX order books now fail closed on a sequence reset. OKX documents a maintenance reset as a `books` update whose `seqId` is smaller than its `prevSeqId`, after which sequencing restarts in a new range. The connector passed it through as an ordinary delta, so `BookState` treated it, and every later update, as a duplicate and kept serving a frozen book as current. It now returns `OKX_SEQUENCE_RESET` (`ReconciliationRequired`); the consumer must discard the book and resubscribe. The negative-sequence errors are renamed `OKX_SEQUENCE_NEGATIVE` and `OKX_PREVIOUS_SEQUENCE_NEGATIVE` to keep the two cases apart.
+  - Reconnect integrity for Bybit and OKX needs no REST re-seed: both venues document a full snapshot on every subscribe, and a reconnect resubscribes. Binance alone re-seeds over REST, because its diff stream has no snapshot. The OKX REST book carries no `seqId`, so re-seeding from it would have mixed sequence ranges.
+  - Tests replay the OKX documentation's own sequence example (snapshot, update, no-change keepalive, reset), a skipped update, and a Bybit reconnect recovered by the resubscribe snapshot. `VenueConnector::market_stream` now documents the recovery contract.
+
 - Paper entries no longer open on a degraded venue leg. The scanner ranks legs regardless of health, and degraded venues were only blocked indirectly through a per-tenant `DisableVenue` breaker set on the engine's next tick, so the API could open a degraded leg in between. `open_from` now refuses it with `LegDegraded`.
 
 - Binance USDⓈ-M perpetual instruments now parse against the live API. Futures publish their minimum notional as `MIN_NOTIONAL { notional }`, but the connector read the spot field `minNotional`, so every futures `exchangeInfo` load failed with `BINANCE_TEXT_MISSING`. The contract fixtures only covered spot. Unit tests now pin both shapes from live responses taken on 2026-11-22.

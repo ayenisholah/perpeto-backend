@@ -13,7 +13,7 @@ Most of the plumbing exists. The engine already builds each `MarketLeg` from `co
 3. **Engine wiring — implemented (`PERPETO_PAPER_SOURCE`, one snapshot per tick):** in PAPER, feed public legs into `scanner.scan_legs`. Fixture replay (`PERPETO_SIM_START`, `PERPETO_SIM_TICK_SECS`) becomes an explicit selection, `PERPETO_PAPER_SOURCE=fixtures`, and stays the default under test.
 4. **Paper fills against live depth — implemented (`ExecutionService::open_from`, `book_fill_price`; API opens from the stored snapshot with a freshness limit):** simulate each leg's fill by walking the live book with the existing `BookState::executable_price` (`crates/connectors/src/book.rs`), and apply configured fees. Funding accrues at real settlement times.
 5. **Freshness and failure — implemented (entries refuse degraded legs and stale snapshots; `/health` reports per-venue feed status, client 0.23.0):** stale or failed feeds mark the affected legs stale. They block paper entries and surface in `/health` and the opportunity freshness fields. There is no silent fallback to fixtures.
-6. **Reconnect integrity:** wire `book_snapshot` into the Bybit and OKX reconnect paths, as Binance already does.
+6. **Reconnect integrity — implemented:** Bybit and OKX push a full snapshot on every subscribe (per their v5 docs), so a reconnect re-seeds the book without REST. Binance re-seeds over REST because its diff stream has none. An OKX sequence reset (`seqId < prevSeqId`) fails closed with `OKX_SEQUENCE_RESET` instead of freezing the book.
 7. **Evidence:**
    - parser tests on recorded public payloads;
    - a stale-feed blocking test;
