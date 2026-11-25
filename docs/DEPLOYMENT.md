@@ -30,7 +30,7 @@ PAPER staging runs `api`, `engine`, `worker`, `postgres`, `redis` and Caddy. The
 
 ### Web platform (DEC-0021)
 
-`app.perpeto.xyz` (and `app.<elastic-ip>.sslip.io` before DNS) serves the Next.js web platform from `perpeto-web`. Caddy sends every request to the `web` container on port 3000 with HSTS, `nosniff` and framing headers. The web server calls the API at `http://api:8080` over the compose network; the browser never talks to the API.
+`app.perpeto.xyz` (`PERPETO_APP_HOST`) serves the Next.js web platform from `perpeto-web`. `app.<elastic-ip>.sslip.io` (`PERPETO_APP_ALIAS`) only redirects there: the web server accepts actions from its one configured origin, so pages under another name would render but refuse every button. Caddy sends every request to the `web` container on port 3000 with HSTS, `nosniff` and framing headers. The web server calls the API at `http://api:8080` over the compose network; the browser never talks to the API.
 
 - **Configuration:** `refresh.sh` renders `/opt/perpeto/web.env` with only the API URL, the public origin, the session-cookie key (`PERPETO_WEB_SESSION_KEY`, generated once into `perpeto/staging/KEYS`) and the public Google and Apple web client identifiers. The read-only demo is on through `PERPETO_DEMO_ENABLED=true`.
 - **Backend deploys:** `refresh.sh` keeps the web image last rolled out (`.current-web-image`), else `perpeto-web:main`, and starts the `web` profile only if that image can be pulled.

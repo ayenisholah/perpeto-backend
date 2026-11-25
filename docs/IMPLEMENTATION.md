@@ -4,7 +4,7 @@
 
 Deliver M2: live-data paper trading. Then deliver M3, the public demo, and M4, testnet execution (DEC-0015). M1 is closed. Every slice below must be closable by one maintainer without real capital.
 
-## M2 — Live-data paper trading (next)
+## M2 — Live-data paper trading (done 2026-11-25)
 
 Most of the plumbing exists. The engine already builds each `MarketLeg` from `connector.market_stream` and `connector.current_funding` (`bins/engine/src/main.rs`), but only for configured accounts in SANDBOX/SHADOW. PAPER still replays `crates/scanner-service/src/fixtures.rs` on simulated time.
 
@@ -20,13 +20,15 @@ Most of the plumbing exists. The engine already builds each `MarketLeg` from `co
    - a test proving PAPER constructs no credential read path;
    - a 24-hour staging run with no crash.
 
-## M3 — Public demo
+   **Done:** the parser, stale-feed and no-credential tests are in CI; the keyless probe passes for all three venues from staging (`docs/evidence/m2/PUBLIC_PROBE.md`); and the engine ran 24 hours on staging with no crash and every feed outage reported (`docs/evidence/m2/STAGING_SOAK.md`).
 
-1. Restore staging. The last successful deploy was `07cb3cc` on 2026-07-30, and the API returned 502 on 2026-11-22. Redeploy current `main` in live-data PAPER.
+## M3 — Public demo (done 2026-11-25)
+
+1. Restore staging. The last successful deploy was `07cb3cc` on 2026-07-30, and the API returned 502 on 2026-11-22. Redeploy current `main` in live-data PAPER. **Implemented:** AWS staging (DEC-0020) tracks `main`.
 2. Add the read-only demo viewer and a seeded demo tenant (DEC-0017), with an authorization test that calls every mutating endpoint as the viewer and expects rejection. **Implemented:** `PERPETO_DEMO_ENABLED=true` (PAPER only) seeds the principal and one enabled paper strategy; `POST /api/v1/demo/session` issues access-only sessions; `require_auth` refuses every non-GET from the demo principal.
 3. Add a one-command local start: a Compose profile for PostgreSQL, Redis, migrate, API and engine in live-data PAPER. **Implemented:** root `docker-compose.yml`, which also runs the web platform, with generated keys.
-4. Rewrite the README as a 5-minute tour, with links to the demo, an architecture diagram, local start and an evidence index.
-5. Publish the API client so the registry (`0.7.0`) matches the vendored `0.22.0`.
+4. Rewrite the README as a 5-minute tour, with links to the demo, an architecture diagram, local start and an evidence index. **Implemented.**
+5. Publish the API client so the registry (`0.7.0`) matches the vendored `0.22.0`. **Implemented:** `0.25.0` published through `PUBLISH_API.yml`; the mobile-update step now passes the package version rather than the release tag.
 
 The web platform is the Next.js application in `perpeto-web`, served at `app.perpeto.xyz` behind the staging host's Caddy (DEC-0021). The mobile repository tracks the read-only viewer UX. TestFlight is paused.
 

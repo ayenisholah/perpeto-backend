@@ -3,10 +3,10 @@
 ## Snapshot
 
 - **Roadmap:** re-baselined by DEC-0015 on 2026-11-22. Perpeto is a public reference implementation, and LIVE is permanently fail-closed.
-- **Milestone:** M1 done. M2, live-data paper trading, is code-complete on `main`; its probe and 24-hour staging evidence remain.
-- **CI:** Backend CI, container and staging deploy were green on `main` at `07cb3cc` (2026-07-30).
-- **Staging:** moved to AWS `eu-north-1` (DEC-0020) and live since 2026-11-23 at `https://13.48.32.219.sslip.io` (`/readyz` 200, Let's Encrypt TLS). `api.perpeto.xyz` still points at the retired VPS until its DNS record moves to `13.48.32.219`.
-- **Last full local verification:** 2026-07-29.
+- **Milestones:** M1, M2 and M3 are done (M2 and M3 closed 2026-11-25). M4, testnet execution, is next.
+- **Staging:** AWS `eu-north-1` (DEC-0020), tracking `main`. The API is at `https://api.perpeto.xyz`, and the live demo at `https://app.perpeto.xyz` (Next.js `perpeto-web`, DEC-0021).
+- **CI:** Backend CI, container and staging deploy are green on `main`.
+- **Last full local verification:** 2026-11-24: 200 tests passed, plus the fresh-clone `docker compose up`.
 
 ## Verification baseline
 
@@ -63,15 +63,14 @@ The first execution of this baseline exposed several defects, all now fixed:
 
 ## Open items by milestone
 
-- **M2:**
-  - Implemented and on `main` (#8–#11, merged 2026-11-23): the keyless `PublicMarketSource`, snapshot persistence, the engine's live-data PAPER path, fills against the stored book, freshness blocking and per-venue feed status in `/health` (client 0.23.0). Reconnect integrity is implemented for every venue.
-  - The public probe (`funding-arb-connector-evidence public`) has not been recorded.
-  - The 24-hour staging run has not started: staging returns 502, and the deploy job fails SSH authentication to the host (2026-11-23).
-- **M3:** staging is down (502); no demo viewer; no hosted web build; no one-command local start; the API client registry (`0.7.0`) lags the vendored `0.22.0`.
+- **M2 (done):** the evidence is in `docs/evidence/m2/`.
+- **M3 (done):** the evidence is in `docs/evidence/m3/PUBLIC_DEMO.md`. Deferred by choice:
+  - web Google/Apple sign-in, until the Google JavaScript origin and an Apple Services ID are configured;
+  - TestFlight, while EAS is paused.
 - **M4:** no testnet or demo credentials are enrolled and no execution evidence is committed.
 
 ## Next tasks
 
-1. M2: record the public probe for all three venues under `docs/evidence/m2/`.
-2. M2: restore the staging deploy key and host, redeploy `main` in live-data PAPER, and run the 24-hour soak.
-3. M2: close the milestone with the soak evidence.
+1. M4: enroll the operator's Bybit testnet, Binance testnet and OKX demo credentials through the SANDBOX coordinator, and record one open → funding → close cycle per venue.
+2. M4: force one partial-fill or timeout recovery per venue and commit the reconciliation report under `docs/evidence/m4/`.
+3. Configure web provider sign-in when wanted: the Google JavaScript origin `https://app.perpeto.xyz`, and an Apple Services ID in `PERPETO_APPLE_WEB_SERVICES_ID`.

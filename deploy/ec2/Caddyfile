@@ -7,11 +7,10 @@
 	reverse_proxy api:8080
 }
 
-# The Next.js web platform (DEC-0021): app.perpeto.xyz and
-# app.<elastic-ip>.sslip.io. Every request goes to the web server, whose
-# backend-for-frontend calls the API over the compose network; the browser
-# never holds an API token, so the API needs no CORS.
-{$PERPETO_APP_HOSTS} {
+# The Next.js web platform (DEC-0021) at PERPETO_APP_HOST. Every request goes
+# to the web server, whose backend-for-frontend calls the API over the compose
+# network; the browser never holds an API token, so the API needs no CORS.
+{$PERPETO_APP_HOST} {
 	encode zstd gzip
 	header {
 		Strict-Transport-Security "max-age=31536000"
@@ -21,4 +20,11 @@
 		-Server
 	}
 	reverse_proxy web:3000
+}
+
+# app.<elastic-ip>.sslip.io only redirects. The web server accepts actions from
+# its one configured origin, so serving pages under this name would leave every
+# button refused.
+{$PERPETO_APP_ALIAS} {
+	redir https://{$PERPETO_APP_HOST}{uri} permanent
 }

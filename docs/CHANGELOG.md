@@ -6,6 +6,12 @@ All notable repository changes are recorded here using Keep a Changelog categori
 
 ### Added
 
+- M2 and M3 are closed (2026-11-25).
+  - **M2 evidence:** `docs/evidence/m2/PUBLIC_PROBE.md` (all three venues pass the keyless probe from staging) and `docs/evidence/m2/STAGING_SOAK.md` (24 hours on staging, from CloudWatch).
+  - **M3 evidence:** `docs/evidence/m3/PUBLIC_DEMO.md` covers the live demo, read-only enforcement on staging, the router tests and the fresh-clone local start.
+  - **README:** an architecture diagram, an evidence index, and M2/M3 marked done.
+  - **Status docs:** `MILESTONE` (shared version 9), `IMPLEMENTATION`, `TRACEABILITY` and `PROGRESS` are updated; M4 is next.
+
 - M3: one-command local start. `docker compose up --build` from the repository root runs PostgreSQL, Redis, migrations, the API, the live-data PAPER engine and the `perpeto-web` platform.
   - **Keys:** a one-shot `keys` service generates this machine's access-token, MFA and web-session keys into a volume, so nothing secret is committed.
   - **Demo and sign-in:** the demo and the development sign-in are on, and the web platform answers at <http://localhost:3000>.
@@ -166,6 +172,9 @@ All notable repository changes are recorded here using Keep a Changelog categori
 - Provider identity is keyed by immutable subject rather than email; access is pending by default, refresh credentials are device-bound/rotating, and retained deletion evidence uses an audit pseudonym.
 
 ### Fixed
+
+- `app.<elastic-ip>.sslip.io` now permanently redirects to `https://app.perpeto.xyz` (`PERPETO_APP_HOST`, `PERPETO_APP_ALIAS`). It used to serve pages whose every action was refused, because the web server accepts actions from its one configured origin.
+- `PUBLISH_API.yml` passed the workspace release tag to the mobile update; it now passes the published package version.
 
 - PAPER staging no longer crash-loops the `reconciler`, `preflight` and `rewrap` workers. Each refuses to start outside SANDBOX or SHADOW, and under `restart: unless-stopped` they restarted about every 20 seconds. They now sit behind the `connectors` compose profile, and `deploy-staging.sh` removes their containers when that profile is off. `engine` and `worker` now wait for a healthy database and a completed migration, as `api` already did.
 - Bybit and OKX now parse their live public data; both failed validation on staging and were reported `UNAVAILABLE`, leaving PAPER to scan Binance only. Fixtures had been written to the wrong shape, so the tests passed while the live feeds failed.
