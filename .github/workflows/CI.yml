@@ -157,7 +157,7 @@ jobs:
           docker run --rm -v "$GITHUB_WORKSPACE/deploy/ec2/Caddyfile:/etc/caddy/Caddyfile:ro" \
             -e PERPETO_PUBLIC_HOSTS="api.perpeto.xyz" -e PERPETO_APP_HOST="app.perpeto.xyz" -e PERPETO_APP_ALIAS="app.127.0.0.1.sslip.io" \
             caddy:2.10.2-alpine caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
-          for script in deploy/ec2/refresh.sh deploy/ec2/update-web.sh scripts/deploy-staging.sh scripts/aws/deploy-host.sh scripts/aws/create-deploy-key.sh; do
+          for script in scripts/aws/put-sandbox-key.sh deploy/ec2/refresh.sh deploy/ec2/update-web.sh scripts/deploy-staging.sh scripts/aws/deploy-host.sh scripts/aws/create-deploy-key.sh; do
             bash -n "$GITHUB_WORKSPACE/$script"
           done
 

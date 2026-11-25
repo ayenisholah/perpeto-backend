@@ -6,6 +6,10 @@ All notable repository changes are recorded here using Keep a Changelog categori
 
 ### Added
 
+- M4 key intake (testnet and demo only).
+  - **Secrets:** the CDK `Perpeto-Staging` stack creates empty `perpeto/sandbox/{BYBIT,BINANCE_SPOT,BINANCE_PERP,OKX}` secrets, which the host may read, and `perpeto/sandbox/KEYS` for the sandbox AES master key, which the host also writes.
+  - **`scripts/aws/put-sandbox-key.sh`:** the operator stores each key from their own terminal. Values are read without echo and sent on stdin, never in argv, a file, the repository or a chat. Only the last four characters of the key are printed.
+
 - M2 and M3 are closed (2026-11-25).
   - **M2 evidence:** `docs/evidence/m2/PUBLIC_PROBE.md` (all three venues pass the keyless probe from staging) and `docs/evidence/m2/STAGING_SOAK.md` (24 hours on staging, from CloudWatch).
   - **M3 evidence:** `docs/evidence/m3/PUBLIC_DEMO.md` covers the live demo, read-only enforcement on staging, the router tests and the fresh-clone local start.
