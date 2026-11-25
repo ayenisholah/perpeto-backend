@@ -48,6 +48,14 @@ Perpeto validates inspectable permissions and requires a venue-specific checklis
 
 Mobile clients must avoid analytics, crash capture, screenshots and clipboard use on credential fields. The app clears the form on backgrounding, cancellation, timeout or completion. TLS protects transport, but TLS is not a substitute for Vault encryption and tenant authorization.
 
+### M4 operator path (testnet and demo only)
+
+For M4, the operator's own testnet and demo keys follow a narrower path with no API or mobile step:
+
+1. The operator runs `scripts/aws/put-sandbox-key.sh` in their own terminal. It writes each key into Secrets Manager (`perpeto/sandbox/<ACCOUNT>`, `eu-north-1`), reading it without echo and sending it on stdin.
+2. On the staging host, the sandbox job reads that secret and pipes it to `funding-arb-venue-admin import`. The key is encrypted with the separate sandbox AES master key (`perpeto/sandbox/KEYS`) and stored only as ciphertext in the separate `perpeto_sandbox` database.
+3. Only TESTNET and DEMO environments are accepted, and keys must carry trade permission without withdrawal permission. No key ever passes through a chat, an argument list, a log or the repository.
+
 ## Rotation, revocation and deletion
 
 Rotation enrolls a new exchange credential version, validates it, atomically switches eligible workloads, then retires the previous version. A rollback window may retain the old ciphertext in a disabled state, but it must never be silently reactivated.
