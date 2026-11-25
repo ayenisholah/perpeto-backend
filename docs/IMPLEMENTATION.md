@@ -39,7 +39,7 @@ The web platform is the Next.js application in `perpeto-web`, served at `app.per
 3. Per venue, force a timeout with an unknown outcome using `funding-arb-sandbox recover`, and show it is resolved by query before any retry.
 4. Commit the redacted evidence and reconciliation report from `funding-arb-sandbox report` under `docs/evidence/m4/`, following `CONNECTOR_EVIDENCE.md`.
 
-Code status: the runtime pieces (bounded requests, unknown-outcome mapping, query before retry, the operator tenant) and the driver (migration `0021_sandbox_cycles`, `SandboxDriver`, `funding-arb-sandbox`) are implemented and tested. The host runtime and key intake come next, then the runs.
+Code status: the runtime pieces (bounded requests, unknown-outcome mapping, query before retry, the operator tenant) and the driver (migration `0021_sandbox_cycles`, `SandboxDriver`, `funding-arb-sandbox`) are implemented and tested, as are the key intake (`put-sandbox-key.sh`) and the host runtime (`deploy/ec2/sandbox.sh`, `scripts/aws/sandbox.sh`). What remains is the runs and their evidence.
 
 ## Implemented hardening (kept, not a gate)
 
