@@ -939,6 +939,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "funding-arb-sandbox"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "funding-arb-connectors",
+ "funding-arb-domain",
+ "funding-arb-tenant-context",
+ "funding-arb-venue-service",
+ "rust_decimal",
+ "serde_json",
+ "sha2",
+ "sqlx",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
 name = "funding-arb-scanner-service"
 version = "0.1.0"
 dependencies = [

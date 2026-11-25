@@ -19,6 +19,7 @@ members = [
   "bins/worker",
   "bins/signer",
   "bins/migrate",
+  "bins/sandbox",
 ]
 
 [workspace.dependencies]
