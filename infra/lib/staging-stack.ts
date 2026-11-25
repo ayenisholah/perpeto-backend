@@ -17,7 +17,7 @@ import * as iam from "aws-cdk-lib/aws-iam";
 import * as logs from "aws-cdk-lib/aws-logs";
 import * as secretsmanager from "aws-cdk-lib/aws-secretsmanager";
 import type { Construct } from "constructs";
-import { config, DATABASE_SECRETS, KEYS_SECRET } from "./config";
+import { config, DATABASE_SECRETS, KEYS_SECRET, SANDBOX_PREFIX, SANDBOX_SECRETS } from "./config";
 
 /**
  * The PAPER staging host: one EC2 instance running the existing
@@ -58,6 +58,19 @@ export class StagingStack extends Stack {
       removalPolicy: RemovalPolicy.RETAIN,
     });
 
+    // M4 SANDBOX credentials (testnet and demo only). Filled by the operator
+    // from their own terminal; the host reads them to import accounts into the
+    // separate sandbox database, and writes only the sandbox KEYS secret.
+    const sandboxSecrets = SANDBOX_SECRETS.map(
+      (name) =>
+        new secretsmanager.Secret(this, `Sandbox${name}`, {
+          secretName: `${SANDBOX_PREFIX}/${name}`,
+          description: `Perpeto M4 sandbox ${name} (testnet/demo only).`,
+          secretStringValue: SecretValue.unsafePlainText("{}"),
+          removalPolicy: RemovalPolicy.RETAIN,
+        }),
+    );
+
     const logGroup = new logs.LogGroup(this, "Logs", {
       logGroupName: config.logGroup,
       retention: logs.RetentionDays.ONE_MONTH,
@@ -81,6 +94,8 @@ export class StagingStack extends Stack {
     for (const secret of databaseSecrets) secret.grantRead(role);
     keys.grantRead(role);
     keys.grantWrite(role);
+    for (const secret of sandboxSecrets) secret.grantRead(role);
+    sandboxSecrets[SANDBOX_SECRETS.indexOf("KEYS")].grantWrite(role);
 
     const eip = new ec2.CfnEIP(this, "Eip", { domain: "vpc", tags: [{ key: "Name", value: "perpeto-staging" }] });
 

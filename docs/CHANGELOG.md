@@ -31,6 +31,9 @@ All notable repository changes are recorded here using Keep a Changelog categori
   - **Operator tenant:** `venue-admin tenant-ensure NAME` creates or finds an active tenant, and `PERPETO_TENANT_ID` selects it for `venue-admin` and `connector-evidence` (the quarantine tenant stays the default). `import` refuses PRODUCTION keys unless `--allow-production`, and accepts Bybit DEMO.
   - **OKX demo:** the demo account reads public books from `wss://wspap.okx.com/ws/v5/public`, and no OKX WebSocket uses the retired port 8443 (OKX v5 docs, "Demo Trading Services").
   - **Tests:** `crates/venue-service/tests/coordinator_recovery.rs` covers duplicate submission, lost response then FILLED, lost order then `NOT_FOUND`, and PAPER/PRODUCTION refusal. `TRACEABILITY` now names them.
+- M4 key intake (testnet and demo only).
+  - **Secrets:** the CDK `Perpeto-Staging` stack creates empty `perpeto/sandbox/{BYBIT,BINANCE_SPOT,BINANCE_PERP,OKX}` secrets, which the host may read, and `perpeto/sandbox/KEYS` for the sandbox AES master key, which the host also writes.
+  - **`scripts/aws/put-sandbox-key.sh`:** the operator stores each key from their own terminal. Values are read without echo and sent on stdin, never in argv, a file, the repository or a chat. Only the last four characters of the key are printed.
 
 - M2 and M3 are closed (2026-11-25).
   - **M2 evidence:** `docs/evidence/m2/PUBLIC_PROBE.md` (all three venues pass the keyless probe from staging) and `docs/evidence/m2/STAGING_SOAK.md` (24 hours on staging, from CloudWatch).
