@@ -34,3 +34,13 @@ export const DATABASE_SECRETS = ["POSTGRES_PASSWORD", "MIGRATOR_PASSWORD", "APP_
  * deployment token whose SHA-256 goes in runtime.env).
  */
 export const KEYS_SECRET = "KEYS";
+
+/**
+ * M4 SANDBOX (testnet and demo) venue credentials, one secret per imported
+ * account. Created as `{}`; the operator fills them from their own terminal
+ * with scripts/aws/put-sandbox-key.sh, so a key never passes through a chat,
+ * an argv or the repository. `KEYS` holds the sandbox AES master key, written
+ * once by the host.
+ */
+export const SANDBOX_PREFIX = "perpeto/sandbox";
+export const SANDBOX_SECRETS = ["BYBIT", "BINANCE_SPOT", "BINANCE_PERP", "OKX", "KEYS"] as const;
