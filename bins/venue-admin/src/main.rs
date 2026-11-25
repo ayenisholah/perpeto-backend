@@ -19,7 +19,12 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .connect(&database_url)
         .await?;
     let accounts = VenueAccountsRepo::new(pool.clone());
-    let tenant = quarantine_tenant()?;
+    if arguments.first().map(String::as_str) == Some("tenant-ensure") {
+        let name = arguments.get(1).ok_or_else(usage)?;
+        println!("{}", tenant_ensure(&pool, name).await?);
+        return Ok(());
+    }
+    let tenant = selected_tenant()?;
 
     match arguments.first().map(String::as_str) {
         Some("import") => {
@@ -43,6 +48,14 @@ async fn import(
     store: &dyn SecretStore,
     arguments: &[String],
 ) -> Result<(), Box<dyn Error>> {
+    let allow_production = arguments
+        .iter()
+        .any(|argument| argument == "--allow-production");
+    let arguments = arguments
+        .iter()
+        .filter(|argument| *argument != "--allow-production")
+        .cloned()
+        .collect::<Vec<_>>();
     if arguments.len() != 4 {
         return Err(usage().into());
     }
@@ -53,6 +66,13 @@ async fn import(
     }
     let product = canonical_product(&arguments[2])?;
     let environment = canonical_environment(venue, &arguments[3])?;
+    if environment == "PRODUCTION" && !allow_production {
+        return Err(
+            "refusing a PRODUCTION key: Perpeto imports testnet and demo keys only \
+             (pass --allow-production to override for SHADOW read-only use)"
+                .into(),
+        );
+    }
     let credential = read_credential(venue)?;
     let account_id = Uuid::new_v4();
     let connection_id = Uuid::new_v4();
@@ -160,10 +180,45 @@ async fn inspect(
     Ok(())
 }
 
-fn quarantine_tenant() -> Result<TenantContext, uuid::Error> {
-    Uuid::parse_str("00000000-0000-0000-0000-000000000001")
-        .map(TenantId::new)
-        .map(TenantContext::new)
+/// The tenant commands act on: `PERPETO_TENANT_ID` when set (the M4 sandbox
+/// operator tenant), else the legacy quarantine tenant.
+fn selected_tenant() -> Result<TenantContext, Box<dyn Error>> {
+    let raw = env::var("PERPETO_TENANT_ID")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| QUARANTINE_TENANT.to_owned());
+    Ok(TenantContext::new(TenantId::new(
+        Uuid::parse_str(raw.trim()).map_err(|_| "PERPETO_TENANT_ID must be a UUID")?,
+    )))
+}
+
+const QUARANTINE_TENANT: &str = "00000000-0000-0000-0000-000000000001";
+
+/// Create, or find, an active operator tenant with this display name and print
+/// its id. Unlike the quarantine tenant it is active, so the reconciler and the
+/// sandbox driver act on its accounts.
+async fn tenant_ensure(pool: &sqlx::PgPool, name: &str) -> Result<Uuid, Box<dyn Error>> {
+    let name = name.trim();
+    if name.is_empty() || name.len() > 120 {
+        return Err("tenant name must be 1 to 120 characters".into());
+    }
+    if let Some(id) = sqlx::query_scalar::<_, Uuid>(
+        "SELECT id FROM tenants WHERE display_name = $1 AND state NOT IN ('SUSPENDED', 'DELETED')
+         ORDER BY id LIMIT 1",
+    )
+    .bind(name)
+    .fetch_optional(pool)
+    .await?
+    {
+        return Ok(id);
+    }
+    let id = Uuid::new_v4();
+    sqlx::query("INSERT INTO tenants (id, display_name) VALUES ($1, $2)")
+        .bind(id)
+        .bind(name)
+        .execute(pool)
+        .await?;
+    Ok(id)
 }
 
 fn read_credential(venue: &str) -> Result<CredentialBundle, Box<dyn Error>> {
@@ -198,7 +253,7 @@ fn canonical_environment(venue: &str, value: &str) -> Result<&'static str, Box<d
     match value.to_ascii_uppercase().as_str() {
         "PRODUCTION" => Ok("PRODUCTION"),
         "TESTNET" if venue != "OKX" => Ok("TESTNET"),
-        "DEMO" if venue == "OKX" => Ok("DEMO"),
+        "DEMO" if venue == "OKX" || venue == "BYBIT" => Ok("DEMO"),
         _ => Err("environment is incompatible with venue".into()),
     }
 }
@@ -209,5 +264,5 @@ fn mask_key(value: &str) -> String {
 }
 
 const fn usage() -> &'static str {
-    "usage: venue-admin import VENUE ALIAS PRODUCT ENVIRONMENT | rotate SECRET_REF ACCOUNT_ID VENUE PRODUCT | disable ACCOUNT_ID | inspect"
+    "usage: venue-admin tenant-ensure NAME | import VENUE ALIAS PRODUCT ENVIRONMENT [--allow-production] | rotate SECRET_REF ACCOUNT_ID VENUE PRODUCT | disable ACCOUNT_ID | inspect (PERPETO_TENANT_ID selects the tenant)"
 }

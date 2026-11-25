@@ -18,6 +18,16 @@ pub enum SubmissionState {
     Failed,
 }
 
+/// An order submission whose outcome is unknown and must be queried before
+/// anything else is sent for that client order id.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct UnresolvedIntent {
+    pub intent_id: Uuid,
+    pub venue: String,
+    pub venue_account_id: String,
+    pub client_order_id: String,
+}
+
 #[derive(Clone, Debug)]
 pub struct SubmissionResult {
     pub intent_id: Uuid,
@@ -139,7 +149,46 @@ impl ConnectorExecutionCoordinator {
         }
     }
 
+    /// Every intent still awaiting query-before-retry recovery.
+    pub async fn unresolved(
+        &self,
+        context: TenantContext,
+    ) -> Result<Vec<UnresolvedIntent>, CoordinatorError> {
+        let mut transaction = TenantTransaction::begin(&self.pool, context)
+            .await
+            .map_err(|_| CoordinatorError::Persistence)?;
+        let rows = sqlx::query_as::<_, (Uuid, String, String, String)>(
+            "SELECT id, venue, venue_account_id, client_order_id FROM connector_order_intents
+             WHERE tenant_id = $1 AND state = 'UNKNOWN_OUTCOME' ORDER BY created_at",
+        )
+        .bind(context.tenant_id().as_uuid())
+        .fetch_all(transaction.connection())
+        .await
+        .map_err(|_| CoordinatorError::Persistence)?;
+        transaction
+            .commit()
+            .await
+            .map_err(|_| CoordinatorError::Persistence)?;
+        Ok(rows
+            .into_iter()
+            .map(
+                |(intent_id, venue, venue_account_id, client_order_id)| UnresolvedIntent {
+                    intent_id,
+                    venue,
+                    venue_account_id,
+                    client_order_id,
+                },
+            )
+            .collect())
+    }
+
     /// Query-before-retry recovery for an ambiguous submission.
+    ///
+    /// The venue is asked for the order by client order id. If it exists, the
+    /// intent takes its venue state; if the venue has no such order, the intent
+    /// becomes `NOT_FOUND`. Either way it leaves `UNKNOWN_OUTCOME`, and until it
+    /// does, `submit_sandbox` answers `Duplicate` for that client order id
+    /// without contacting the venue.
     pub async fn reconcile_unknown(
         &self,
         context: TenantContext,
@@ -154,9 +203,15 @@ impl ConnectorExecutionCoordinator {
             )
             .await
             .map_err(CoordinatorError::Connector)?;
-        if let Some(venue_order) = &order {
-            self.record_reconciled(context, account, client_order_id, venue_order)
-                .await?;
+        match &order {
+            Some(venue_order) => {
+                self.record_reconciled(context, account, client_order_id, venue_order)
+                    .await?;
+            }
+            None => {
+                self.record_not_found(context, account, client_order_id)
+                    .await?
+            }
         }
         Ok(order)
     }
@@ -305,6 +360,47 @@ impl ConnectorExecutionCoordinator {
         .execute(transaction.connection())
         .await
         .map_err(|_| CoordinatorError::Persistence)?;
+        transaction
+            .commit()
+            .await
+            .map_err(|_| CoordinatorError::Persistence)
+    }
+
+    async fn record_not_found(
+        &self,
+        context: TenantContext,
+        account: &AccountId,
+        client_order_id: &str,
+    ) -> Result<(), CoordinatorError> {
+        let mut transaction = TenantTransaction::begin(&self.pool, context)
+            .await
+            .map_err(|_| CoordinatorError::Persistence)?;
+        let row = sqlx::query_scalar::<_, Uuid>(
+            "UPDATE connector_order_intents
+             SET state = 'NOT_FOUND', error_code = NULL, updated_at = now()
+             WHERE tenant_id = $1 AND venue_account_id = $2 AND client_order_id = $3
+               AND state = 'UNKNOWN_OUTCOME'
+             RETURNING id",
+        )
+        .bind(context.tenant_id().as_uuid())
+        .bind(&account.0)
+        .bind(client_order_id)
+        .fetch_optional(transaction.connection())
+        .await
+        .map_err(|_| CoordinatorError::Persistence)?;
+        if let Some(intent_id) = row {
+            sqlx::query(
+                "INSERT INTO connector_order_events
+                 (tenant_id, id, intent_id, status, received_at, payload)
+                 VALUES ($1, $2, $3, 'NOT_FOUND', now(), '{}')",
+            )
+            .bind(context.tenant_id().as_uuid())
+            .bind(Uuid::new_v4())
+            .bind(intent_id)
+            .execute(transaction.connection())
+            .await
+            .map_err(|_| CoordinatorError::Persistence)?;
+        }
         transaction
             .commit()
             .await

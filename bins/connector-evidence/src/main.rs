@@ -261,8 +261,14 @@ async fn run_credentialed_probe(
     Ok(())
 }
 
+/// `PERPETO_TENANT_ID` when set (the M4 sandbox operator tenant), else the
+/// legacy quarantine tenant that `venue-admin import` used to write to.
 fn quarantine_tenant() -> Result<TenantContext, uuid::Error> {
-    Uuid::parse_str("00000000-0000-0000-0000-000000000001")
+    let raw = env::var("PERPETO_TENANT_ID")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| "00000000-0000-0000-0000-000000000001".to_owned());
+    Uuid::parse_str(raw.trim())
         .map(TenantId::new)
         .map(TenantContext::new)
 }

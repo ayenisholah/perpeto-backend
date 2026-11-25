@@ -13,6 +13,7 @@ mod vault;
 
 pub use coordinator::{
     ConnectorExecutionCoordinator, CoordinatorError, SubmissionResult, SubmissionState,
+    UnresolvedIntent,
 };
 pub use dto::{
     CertificationError, CertificationState, ConnectionTestDto, ConnectorAccountingDto,

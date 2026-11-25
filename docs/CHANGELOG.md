@@ -6,6 +6,14 @@ All notable repository changes are recorded here using Keep a Changelog categori
 
 ### Added
 
+- M4: bounded connector requests and query-before-retry recovery for sandbox orders.
+  - **Timeouts:** every connector shares one HTTP client with a 5 s connect bound and a whole-request bound of 10 s (`PERPETO_CONNECTOR_TIMEOUT_MS`), so a stalled venue surfaces as an error instead of a hung task.
+  - **Unknown outcomes:** an order POST whose response is lost now maps to `UnknownOutcome` on all three venues, as does Binance `-1007` on a write (a read stays transient), per the Binance spot and USDⓈ-M error-code docs.
+  - **Fault injection:** `PERPETO_FAULT_SUBMIT_TIMEOUT_MS` shortens the timeout on order submissions only, to force a lost response for M4 recovery evidence. Production connections ignore it.
+  - **Recovery:** `ConnectorExecutionCoordinator::unresolved` lists `UNKNOWN_OUTCOME` intents, and `reconcile_unknown` now resolves an order the venue never saw to `NOT_FOUND`. The reconciler queries every unresolved intent before each pass; `reconciler once` runs a single pass and exits.
+  - **Operator tenant:** `venue-admin tenant-ensure NAME` creates or finds an active tenant, and `PERPETO_TENANT_ID` selects it for `venue-admin` and `connector-evidence` (the quarantine tenant stays the default). `import` refuses PRODUCTION keys unless `--allow-production`, and accepts Bybit DEMO.
+  - **OKX demo:** the demo account reads public books from `wss://wspap.okx.com/ws/v5/public`, and no OKX WebSocket uses the retired port 8443 (OKX v5 docs, "Demo Trading Services").
+  - **Tests:** `crates/venue-service/tests/coordinator_recovery.rs` covers duplicate submission, lost response then FILLED, lost order then `NOT_FOUND`, and PAPER/PRODUCTION refusal. `TRACEABILITY` now names them.
 - M4 key intake (testnet and demo only).
   - **Secrets:** the CDK `Perpeto-Staging` stack creates empty `perpeto/sandbox/{BYBIT,BINANCE_SPOT,BINANCE_PERP,OKX}` secrets, which the host may read, and `perpeto/sandbox/KEYS` for the sandbox AES master key, which the host also writes.
   - **`scripts/aws/put-sandbox-key.sh`:** the operator stores each key from their own terminal. Values are read without echo and sent on stdin, never in argv, a file, the repository or a chat. Only the last four characters of the key are printed.

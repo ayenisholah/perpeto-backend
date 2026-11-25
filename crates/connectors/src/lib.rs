@@ -5,6 +5,7 @@ mod book;
 mod bybit;
 mod credential;
 pub mod fixtures;
+pub mod http;
 mod model;
 mod okx;
 mod traits;
