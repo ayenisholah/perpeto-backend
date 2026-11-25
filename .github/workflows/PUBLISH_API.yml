@@ -43,6 +43,7 @@ jobs:
           VERSION="${VERSION#v}"
           npm pkg set "name=@${GITHUB_REPOSITORY_OWNER,,}/perpeto-api-client"
           npm version "$VERSION" --no-git-tag-version --allow-same-version
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
       - run: npm ci
       - run: npm test
       - run: npm run verify:package
@@ -54,6 +55,5 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.CROSS_REPO_TOKEN }}
         run: |
-          VERSION="${{ inputs.version || github.event.release.tag_name }}"
-          VERSION="${VERSION#v}"
+          # The package version resolved above, never the workspace release tag.
           gh workflow run API_UPDATE.yml --repo "${{ github.repository_owner }}/perpeto-mobile" --field "version=$VERSION"

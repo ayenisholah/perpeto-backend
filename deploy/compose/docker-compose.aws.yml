@@ -30,7 +30,8 @@ services:
     ports: ["80:80", "443:443"]
     environment:
       PERPETO_PUBLIC_HOSTS: ${PERPETO_PUBLIC_HOSTS:?PERPETO_PUBLIC_HOSTS is required}
-      PERPETO_APP_HOSTS: ${PERPETO_APP_HOSTS:?PERPETO_APP_HOSTS is required}
+      PERPETO_APP_HOST: ${PERPETO_APP_HOST:?PERPETO_APP_HOST is required}
+      PERPETO_APP_ALIAS: ${PERPETO_APP_ALIAS:?PERPETO_APP_ALIAS is required}
     volumes:
       - ../ec2/Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy-data:/data

@@ -2,7 +2,7 @@
 
 Perpeto is a public, self-hostable reference implementation of a market-neutral funding-rate arbitrage system. It ranks spot–perpetual and perpetual–perpetual routes across Binance, Bybit and OKX by conservative net return. It coordinates both legs through a durable state machine, bounds unmatched exposure, recovers deterministically from partial fills and ambiguous order outcomes, and reconciles to venue records.
 
-This repository holds the Rust control plane: venue connectors, execution and risk services, persistence, API contracts and Docker Compose deployment. The Expo client lives in [`perpeto-mobile`](https://github.com/ayenisholah/perpeto-mobile). The backend is the only component that evaluates opportunities, holds credentials, submits orders or reconciles accounting.
+This repository holds the Rust control plane: venue connectors, execution and risk services, persistence, API contracts and Docker Compose deployment. The web platform lives in [`perpeto-web`](https://github.com/ayenisholah/perpeto-web) and the iOS client in [`perpeto-mobile`](https://github.com/ayenisholah/perpeto-mobile). The backend is the only component that evaluates opportunities, holds credentials, submits orders or reconciles accounting.
 
 **Not a trading service.** Real-money LIVE trading is permanently fail-closed. Paper runs on public data, and execution runs only against the operator's own testnet and demo accounts. See [DEC-0015](docs/DECISION.md).
 
@@ -11,9 +11,9 @@ This repository holds the Rust control plane: venue connectors, execution and ri
 | Milestone | Status |
 |---|---|
 | M1 Foundations | **Done**: 136 tests, 11 database-backed suites under a non-`BYPASSRLS` role, CI green |
-| M2 Live-data paper trading | **Next**: PAPER on keyless public Binance/Bybit/OKX data |
-| M3 Public demo | Planned: hosted demo, read-only viewer, one-command local start |
-| M4 Testnet execution | Planned: per-venue open → funding → close and forced-recovery evidence |
+| M2 Live-data paper trading | **Done**: PAPER on keyless public Binance/Bybit/OKX data, 24 hours on staging ([evidence](docs/evidence/m2/STAGING_SOAK.md)) |
+| M3 Public demo | **Done**: [live demo](https://app.perpeto.xyz), read-only viewer, one-command local start ([evidence](docs/evidence/m3/PUBLIC_DEMO.md)) |
+| M4 Testnet execution | **Next**: per-venue open → funding → close and forced-recovery evidence |
 
 Already built and kept as hardening, not on the roadmap:
 - forced PostgreSQL RLS;
@@ -35,6 +35,29 @@ docker compose up --build
 ```
 
 Then open <http://localhost:3000>. "Open the live demo" shows the seeded tenant, and "Development sign-in" signs you in as a local Owner who can open and close paper positions. The API answers at <http://localhost:8080/readyz>. The first build compiles the Rust workspace, which takes several minutes. Nothing secret is committed: the stack generates its own keys on first run, and `docker compose down -v` forgets them with the database.
+
+**How it fits together:**
+
+```mermaid
+flowchart LR
+  browser[Browser] -->|HTTPS| caddy[Caddy]
+  ios[iOS app] -->|HTTPS + bearer| caddy
+  caddy -->|app.perpeto.xyz| web["perpeto-web<br/>Next.js BFF"]
+  caddy -->|api.perpeto.xyz| api[API]
+  web -->|bearer, compose network| api
+  api --> pg[(PostgreSQL)]
+  engine["Engine<br/>scan · risk · paper fills"] --> pg
+  engine -->|keyless public data| venues["Binance · Bybit · OKX"]
+```
+
+The browser holds only an encrypted session cookie; the web server keeps the tokens. The engine scans the venues and runs the strategies; the API serves reads and validated commands. LIVE is locked.
+
+**Evidence:**
+
+| Milestone | Evidence |
+|---|---|
+| M2 | [Public probe](docs/evidence/m2/PUBLIC_PROBE.md), [24-hour staging run](docs/evidence/m2/STAGING_SOAK.md), [workstation snapshot](docs/evidence/m2/PUBLIC_SNAPSHOT.md) |
+| M3 | [Live demo, read-only enforcement and local start](docs/evidence/m3/PUBLIC_DEMO.md) |
 
 **Read the code:**
 
@@ -95,6 +118,6 @@ Never commit exchange credentials, signer keys, TOTP material, database password
 
 ## Deployment
 
-Successful `main` builds publish immutable public GHCR images and deploy them in PAPER mode to one EC2 host in AWS `eu-north-1`, defined by the CDK app in `infra/` and reached through SSM rather than SSH (DEC-0020). That staging deployment becomes the public demo in M3. The workflow never enables live trading. See [DEPLOYMENT.md](docs/DEPLOYMENT.md).
+Successful `main` builds publish immutable public GHCR images and deploy them in PAPER mode to one EC2 host in AWS `eu-north-1`, defined by the CDK app in `infra/` and reached through SSM rather than SSH (DEC-0020). That staging deployment serves the public demo. The workflow never enables live trading. See [DEPLOYMENT.md](docs/DEPLOYMENT.md).
 
 No license has been granted yet. Until a license decision is recorded, all rights are reserved.

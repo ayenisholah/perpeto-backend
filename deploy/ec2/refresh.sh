@@ -66,7 +66,11 @@ key() { jq -r --arg name "$1" '.[$name]' <<<"$keys"; }
 # which works before the DNS record exists.
 app_domain="$(sed -n 's/^PERPETO_APP_DOMAIN=//p' "$dir/deploy/ec2/staging.env" | tail -n 1)"
 sslip_host="$(tr ',' '\n' <<<"$PERPETO_PUBLIC_HOSTS" | tr -d ' ' | grep 'sslip\.io$' | head -n 1)"
-app_hosts="${app_domain:-app.perpeto.xyz}${sslip_host:+, app.${sslip_host}}"
+app_host="${app_domain:-app.perpeto.xyz}"
+# The sslip alias only redirects to the real host: the web server accepts
+# actions from its one configured origin, so pages served under another
+# hostname would render but refuse every button.
+app_alias="app.${sslip_host:-invalid.sslip.io}"
 
 # The web image is published by perpeto-web. Keep the one update-web.sh last
 # deployed, else follow main; enable the web profile only when the image can
@@ -101,17 +105,17 @@ umask 077
   echo "AWS_REGION=${AWS_REGION}"
   echo "PERPETO_LOG_GROUP=${PERPETO_LOG_GROUP}"
   echo "PERPETO_PUBLIC_HOSTS=${PERPETO_PUBLIC_HOSTS}"
-  echo "PERPETO_APP_HOSTS=${app_hosts}"
+  echo "PERPETO_APP_HOST=${app_host}"
+  echo "PERPETO_APP_ALIAS=${app_alias}"
   echo "PERPETO_WEB_IMAGE=${web_image}"
 } > "$dir/runtime.env.tmp"
 mv "$dir/runtime.env.tmp" "$dir/runtime.env"
 
 # The web server's own environment: only what it needs, never database or API
 # signing keys. It reaches the API over the compose network.
-first_app_host="${app_hosts%%,*}"
 {
   echo "PERPETO_API_URL=http://api:8080"
-  echo "PERPETO_WEB_ORIGIN=https://${first_app_host}"
+  echo "PERPETO_WEB_ORIGIN=https://${app_host}"
   echo "PERPETO_WEB_SESSION_KEY=$(key PERPETO_WEB_SESSION_KEY)"
   # Read by the web server at request time, so one image serves any deployment.
   sed -n 's/^PERPETO_GOOGLE_WEB_CLIENT_ID=/PERPETO_GOOGLE_CLIENT_ID=/p' "$dir/deploy/ec2/staging.env"
