@@ -25,6 +25,7 @@ for file in \
   deploy/ec2/Caddyfile \
   deploy/ec2/staging.env \
   deploy/ec2/update-web.sh \
+  deploy/ec2/sandbox.sh \
   scripts/deploy-staging.sh \
   scripts/bootstrap-db-roles.sql; do
   curl -fsSL --retry 3 "$raw/$file" -o "$dir/$file.tmp"
@@ -129,5 +130,5 @@ PERPETO_IMAGE="$image" \
 PERPETO_COMPOSE_OVERRIDE=deploy/compose/docker-compose.aws.yml \
 PERPETO_PROVISION_DB_ROLES=1 \
   bash scripts/deploy-staging.sh
-chmod 700 deploy/ec2/update-web.sh
+chmod 700 deploy/ec2/update-web.sh deploy/ec2/sandbox.sh
 printf '%s\n' "$sha" > .current-sha

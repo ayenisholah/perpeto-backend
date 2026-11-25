@@ -123,6 +123,8 @@ funding-arb-sandbox report  BYBIT 2026-11-26T00:00:00Z docs/evidence/m4
   - first reconciles both accounts, then writes `<VENUE>.md` and `<VENUE>.json` covering the runs, orders, fills, fees, funding entries, account snapshots before and after, and reconciliation runs with discrepancies;
   - account ids are hashed, and no key material is read.
 
+On the staging host, the same commands run through `scripts/aws/sandbox.sh` (see `DEPLOYMENT.md`, "M4 SANDBOX runtime"), with keys entered by `scripts/aws/put-sandbox-key.sh`.
+
 Each venue's evidence is committed as `docs/evidence/m4/<VENUE>.md` and `.json`. Testnet books are thin, so the evidence proves coordination, not profitability. A venue whose testnet posts no funding entry has its observation recorded, and stays open for M4.
 
 ## Failure and rollback

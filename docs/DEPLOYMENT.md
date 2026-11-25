@@ -76,6 +76,29 @@ The M1 authentication runtime additionally requires the following in `runtime.en
 
 `PERPETO_OPEN_REGISTRATION` and its universal privilege waiver are transitional, development-only behaviour.
 
+### M4 SANDBOX runtime (testnet and demo only)
+
+The testnet runs share the staging host but not its data. On the host, `deploy/ec2/sandbox.sh` (put there by `refresh.sh`) keeps SANDBOX separate from PAPER:
+- **Database:** its own, `perpeto_sandbox`, in the same PostgreSQL, behind the same `perpeto_migrator` and `perpeto_app` roles.
+- **Keys:** its own AES master key and operator tenant id, both in `perpeto/sandbox/KEYS`.
+- **Containers:** one-shot containers of the deployed image, with no public port and with logs going to CloudWatch as `sandbox-<command>`. The PAPER services and the public demo are never restarted.
+
+The operator drives it from a terminal with AWS credentials, through SSM:
+
+```text
+scripts/aws/put-sandbox-key.sh BYBIT            # and BINANCE_SPOT, BINANCE_PERP, OKX (keys never leave your terminal)
+scripts/aws/sandbox.sh init                     # database, roles, migrations, sandbox key, operator tenant (idempotent)
+scripts/aws/sandbox.sh import                   # every filled key, as SPOT and LINEAR_PERPETUAL accounts
+scripts/aws/sandbox.sh evidence                 # credentialed reads + reconciliation, no writes
+scripts/aws/sandbox.sh cycle BYBIT ETH 150      # detached; holds through one funding settlement
+scripts/aws/sandbox.sh logs BYBIT
+scripts/aws/sandbox.sh recover BYBIT ETH        # optional third argument: the fault timeout in ms (default 40)
+scripts/aws/sandbox.sh report BYBIT 2026-11-26T00:00:00Z > docs/evidence/m4/BYBIT.md
+scripts/aws/sandbox.sh json BYBIT > docs/evidence/m4/BYBIT.json
+```
+
+**Re-importing:** `import` skips an account it has already imported (the markers are in `/opt/perpeto/sandbox`). To replace a key, disable the old account with `funding-arb-venue-admin disable`, remove its marker, and import again.
+
 ## Database roles
 
 Run `scripts/bootstrap-db-roles.sql` as the superuser once against a new database, before the first migration:

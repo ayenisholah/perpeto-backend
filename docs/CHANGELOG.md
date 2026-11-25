@@ -6,6 +6,15 @@ All notable repository changes are recorded here using Keep a Changelog categori
 
 ### Added
 
+- M4: the SANDBOX runtime on the staging host, separate from the PAPER demo.
+  - **`deploy/ec2/sandbox.sh`:** fetched by `refresh.sh` at each deploy. Its commands are `init`, `import`, `evidence`, `open`, `close`, `cycle`, `recover`, `reconcile`, `report`, `json`, `status` and `logs`.
+    - **Isolation:** a separate `perpeto_sandbox` database behind the existing roles, its own AES master key and operator tenant (in `perpeto/sandbox/KEYS`), and hardened one-shot containers of the deployed image with no public port, logging to CloudWatch.
+    - **Key handling:** a key goes from Secrets Manager to `venue-admin import` on stdin only. Each sandbox key is imported as SPOT and LINEAR_PERPETUAL, and re-runs skip accounts that are already imported.
+    - **Cycles:** `cycle` runs detached, because it holds through a funding settlement.
+  - **`scripts/aws/sandbox.sh`:** the operator's local wrapper. It sends one command through SSM, prints the output, and accepts only plain-token arguments.
+  - **CI:** `bash -n` covers both scripts.
+  - **Docs:** `DEPLOYMENT` gains "M4 SANDBOX runtime"; `CONNECTOR_EVIDENCE` and `IMPLEMENTATION` are updated.
+
 - M4: the sandbox driver, `funding-arb-sandbox`, for hedged testnet cycles and forced recovery.
   - **Migration `0021_sandbox_cycles`:** one row per CYCLE or RECOVERY run. It holds the venue, symbols, client order ids for both legs at open and close, filled and closed quantities, the funding time, account snapshots before and after, and the recovery outcome. The table has forced RLS, and a partial unique index allows one unfinished cycle per venue.
   - **`SandboxDriver`** (`crates/venue-service/src/sandbox.rs`): open, close and recover through `ConnectorExecutionCoordinator` only, refusing every mode but SANDBOX and any production connection.
