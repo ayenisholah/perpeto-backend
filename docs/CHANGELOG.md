@@ -6,6 +6,23 @@ All notable repository changes are recorded here using Keep a Changelog categori
 
 ### Added
 
+- M4: the sandbox driver, `funding-arb-sandbox`, for hedged testnet cycles and forced recovery.
+  - **Migration `0021_sandbox_cycles`:** one row per CYCLE or RECOVERY run. It holds the venue, symbols, client order ids for both legs at open and close, filled and closed quantities, the funding time, account snapshots before and after, and the recovery outcome. The table has forced RLS, and a partial unique index allows one unfinished cycle per venue.
+  - **`SandboxDriver`** (`crates/venue-service/src/sandbox.rs`): open, close and recover through `ConnectorExecutionCoordinator` only, refusing every mode but SANDBOX and any production connection.
+    - **Sizing:** the hedge is sized to the coarser of the two lot steps and every minimum quantity and notional, in base units, so OKX contract sizes are handled. Below the minimums, the driver names the notional needed.
+    - **One-legged open:** the filled leg is unwound and the cycle is marked `FAILED`.
+    - **Resumable close:** client order ids are stored before submission, so a rerun gets `Duplicate` and queries instead of sending again.
+    - **Working orders:** an order still working after the wait is cancelled.
+  - **`funding-arb-sandbox` CLI:**
+    - `open`, `close`, `cycle` (hold through funding + 2 min, resumable), `recover` and `report` (Markdown + JSON with hashed accounts, after a reconciliation pass);
+    - a per-venue advisory lock, so two drivers never trade one venue at once.
+  - **Image:** the runtime image now ships `funding-arb-venue-admin` and `funding-arb-sandbox`.
+  - **Build:** `bins/migrate/build.rs` rebuilds the migrator when a migration changes, so a stale binary can no longer report "up to date" without applying a new file.
+  - **Tests:**
+    - unit tests for sizing, rounding, client ids, mode refusal, and the report's exact per-asset accounting;
+    - `crates/venue-service/tests/sandbox_cycle.rs` (PostgreSQL + scripted two-leg venue): open → close flat, a second open refused, a one-legged open unwound, and the lost-response recovery with no venue retry;
+    - `forced_rls` now covers `sandbox_cycles`.
+
 - M4: bounded connector requests and query-before-retry recovery for sandbox orders.
   - **Timeouts:** every connector shares one HTTP client with a 5 s connect bound and a whole-request bound of 10 s (`PERPETO_CONNECTOR_TIMEOUT_MS`), so a stalled venue surfaces as an error instead of a hung task.
   - **Unknown outcomes:** an order POST whose response is lost now maps to `UnknownOutcome` on all three venues, as does Binance `-1007` on a write (a read stays transient), per the Binance spot and USDⓈ-M error-code docs.

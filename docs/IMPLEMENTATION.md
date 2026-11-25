@@ -34,10 +34,12 @@ The web platform is the Next.js application in `perpeto-web`, served at `app.per
 
 ## M4 — Testnet execution
 
-1. Enroll the operator's own Bybit testnet, Binance testnet and OKX demo credentials through `funding-arb-venue-admin import` or the passkey-gated `venue-credentials` API.
-2. Per venue, run one coordinated open → funding → close cycle in SANDBOX through `ConnectorExecutionCoordinator`.
-3. Per venue, force one partial fill or a timeout with an unknown outcome, and show it is reconciled before any retry.
-4. Commit the redacted evidence and reconciliation report under `docs/evidence/<venue>/`, following `CONNECTOR_EVIDENCE.md`.
+1. Enroll the operator's own Bybit testnet, Binance testnet and OKX demo credentials (spot and perpetual) in an active operator tenant (`venue-admin tenant-ensure`, `PERPETO_TENANT_ID`). Use `funding-arb-venue-admin import` or the passkey-gated `venue-credentials` API.
+2. Per venue, run one coordinated open → funding → close cycle in SANDBOX with `funding-arb-sandbox cycle`, through `ConnectorExecutionCoordinator`.
+3. Per venue, force a timeout with an unknown outcome using `funding-arb-sandbox recover`, and show it is resolved by query before any retry.
+4. Commit the redacted evidence and reconciliation report from `funding-arb-sandbox report` under `docs/evidence/m4/`, following `CONNECTOR_EVIDENCE.md`.
+
+Code status: the runtime pieces (bounded requests, unknown-outcome mapping, query before retry, the operator tenant) and the driver (migration `0021_sandbox_cycles`, `SandboxDriver`, `funding-arb-sandbox`) are implemented and tested. The host runtime and key intake come next, then the runs.
 
 ## Implemented hardening (kept, not a gate)
 

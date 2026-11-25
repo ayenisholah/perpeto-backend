@@ -13,7 +13,7 @@ use std::collections::HashMap;
 use sqlx::postgres::PgPoolOptions;
 use sqlx::{PgPool, Row};
 
-/// Every private tenant table made forced-RLS by migrations 0016 and 0017.
+/// Every private tenant table made forced-RLS by migrations 0016, 0017 and 0021.
 const PRIVATE_TABLES: &[&str] = &[
     "positions",
     "circuit_breakers",
@@ -39,6 +39,7 @@ const PRIVATE_TABLES: &[&str] = &[
     "passkey_credentials",
     "webauthn_challenges",
     "passkey_action_proofs",
+    "sandbox_cycles",
 ];
 
 async fn pool() -> Option<PgPool> {

@@ -30,6 +30,8 @@ COPY --from=builder /workspace/target/release/funding-arb-connector-evidence /us
 COPY --from=builder /workspace/target/release/funding-arb-worker /usr/local/bin/
 COPY --from=builder /workspace/target/release/funding-arb-signer /usr/local/bin/
 COPY --from=builder /workspace/target/release/funding-arb-migrate /usr/local/bin/
+COPY --from=builder /workspace/target/release/funding-arb-venue-admin /usr/local/bin/
+COPY --from=builder /workspace/target/release/funding-arb-sandbox /usr/local/bin/
 USER 10001:10001
 ENV PERPETO_MODE=PAPER
 ENTRYPOINT ["funding-arb-api"]

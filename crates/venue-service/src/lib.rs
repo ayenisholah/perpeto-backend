@@ -8,6 +8,7 @@ mod public_market;
 mod reconcile;
 mod registry;
 mod repo;
+mod sandbox;
 mod secret;
 mod vault;
 
@@ -36,6 +37,10 @@ pub use registry::{
 };
 pub use repo::ConnectorMonitoringRepo;
 pub use repo::VenueAccountsRepo;
+pub use sandbox::{
+    HedgePlan, RecoveryOutcome, SandboxCycle, SandboxDriver, SandboxError, SandboxLeg,
+    SandboxVenue, ceil_to, find_instrument, floor_to, minimum_quantity, size_hedge, top_of_book,
+};
 pub use secret::{
     CredentialBundle, EncryptedPostgresSecretStore, SecretContext, SecretMetadata, SecretStore,
     SecretStoreError,

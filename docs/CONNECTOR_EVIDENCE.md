@@ -59,7 +59,8 @@ It needs no credentials or database. It prints each venue's feed status (`HEALTH
 
 > Operator testnet flow. The passkey-authorized `venue-credentials` API is the
 > implemented alternative. Either one is acceptable for testnet and demo keys.
-> Never import a production key.
+> Never import a production key: `import` refuses one unless `--allow-production`
+> is passed for SHADOW read-only use.
 
 Run migrations, set `DATABASE_URL` and a base64-encoded 32-byte
 `PERPETO_SECRET_MASTER_KEY`, then pipe one credential JSON document through stdin:
@@ -91,17 +92,38 @@ order.
 
 ## M4 execution evidence
 
-Sandbox execution uses the durable preview/submit endpoint with testnet or demo
-funds only. For each venue, record:
+M4 runs through `funding-arb-sandbox`, which submits every order through the durable `ConnectorExecutionCoordinator`. That means each order is persisted before it is sent, never sent twice for one client order id, and refused outside SANDBOX or against a production endpoint. Testnet and demo funds only.
 
-1. One complete coordinated open → funding → close cycle on a BTC or ETH route.
-2. One forced recovery, either a partial fill on one leg or a timeout with an
-   unknown outcome, resolved by reconciliation before any retry.
-3. The reconciliation report: orders, fills, fees and funding against venue
-   records, with no unresolved discrepancy.
+**Setup:**
+- Create the operator tenant with `funding-arb-venue-admin tenant-ensure "M4 operator"` and export its id as `PERPETO_TENANT_ID`.
+- Import each venue's key **twice**, once as `SPOT` and once as `LINEAR_PERPETUAL`. Binance uses its two separate testnet keys (spot testnet and USDⓈ-M futures testnet); Bybit and OKX reuse one key.
+- The driver needs exactly one enrolled connection per venue and product.
+- Run `funding-arb-connector-evidence credentialed` and get a pass for every account before any write.
 
-Commit each record under `docs/evidence/<venue>/` with account values redacted.
-Testnet books are thin, so the evidence proves coordination, not profitability.
+**The commands**, all with `PERPETO_MODE=SANDBOX`:
+
+```text
+funding-arb-sandbox cycle   BYBIT ETH 150          # open, hold through one funding settlement + 2 min, close
+funding-arb-sandbox recover BYBIT ETH              # forced unknown outcome, resolved by query before retry
+funding-arb-sandbox report  BYBIT 2026-11-26T00:00:00Z docs/evidence/m4
+```
+
+- **`cycle`:**
+  - opens a hedge: a spot BUY and a perpetual SELL of the same base quantity, sized to the notional and both lot steps, at marketable IOC limits 1% through the touch;
+  - holds until the next funding time plus two minutes, then closes: perpetual BUY `reduce_only`, and spot SELL of what the account holds, up to the opened quantity.
+  - If one leg misses at open, the filled leg is unwound and the cycle is `FAILED`.
+  - Rerunning `cycle` or `close` resumes an unfinished cycle with its stored client order ids, so nothing is sent twice.
+  - `open` and `close` are also available on their own.
+- **`recover`:**
+  - submits one minimum-size perpetual SELL resting 2% above the ask, with `PERPETO_FAULT_SUBMIT_TIMEOUT_MS` set low enough that the response is lost after the order leaves the host;
+  - retries the same client order id, which must come back `Duplicate` without reaching the venue;
+  - queries the venue, cancels the resting order and flattens anything that filled.
+  - If the first submission was acknowledged anyway, the driver says so; lower the fault timeout and run again.
+- **`report`:**
+  - first reconciles both accounts, then writes `<VENUE>.md` and `<VENUE>.json` covering the runs, orders, fills, fees, funding entries, account snapshots before and after, and reconciliation runs with discrepancies;
+  - account ids are hashed, and no key material is read.
+
+Each venue's evidence is committed as `docs/evidence/m4/<VENUE>.md` and `.json`. Testnet books are thin, so the evidence proves coordination, not profitability. A venue whose testnet posts no funding entry has its observation recorded, and stays open for M4.
 
 ## Failure and rollback
 
