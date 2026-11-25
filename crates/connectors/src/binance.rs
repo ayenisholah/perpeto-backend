@@ -36,7 +36,7 @@ impl BinanceConnector {
     pub fn new(environment: VenueEnvironment, credentials: Option<ConnectorCredentials>) -> Self {
         Self {
             environment,
-            client: reqwest::Client::new(),
+            client: crate::http::client(),
             credentials: credentials.map(Arc::new),
         }
     }
@@ -58,7 +58,8 @@ impl BinanceConnector {
         path: &str,
         query: &[(&str, String)],
     ) -> ConnectorResult<Value> {
-        self.send(product, Method::GET, path, query, false).await
+        self.send(product, Method::GET, path, query, false, None)
+            .await
     }
 
     async fn signed(
@@ -68,7 +69,7 @@ impl BinanceConnector {
         path: &str,
         query: &[(&str, String)],
     ) -> ConnectorResult<Value> {
-        self.send(product, method, path, query, true).await
+        self.send(product, method, path, query, true, None).await
     }
 
     async fn send(
@@ -78,6 +79,7 @@ impl BinanceConnector {
         path: &str,
         query: &[(&str, String)],
         authenticated: bool,
+        timeout: Option<std::time::Duration>,
     ) -> ConnectorResult<Value> {
         let mut parameters = query.to_vec();
         let credentials = if authenticated {
@@ -102,6 +104,9 @@ impl BinanceConnector {
         }
         let url = format!("{}{path}?{encoded}", self.base_url(product));
         let mut request = self.client.request(method.clone(), url);
+        if let Some(timeout) = timeout {
+            request = request.timeout(timeout);
+        }
         if let Some(credentials) = credentials {
             request = request.header("X-MBX-APIKEY", &credentials.api_key);
         }
@@ -122,10 +127,19 @@ impl BinanceConnector {
             .and_then(|value| value.to_str().ok())
             .and_then(|value| value.parse::<u64>().ok())
             .map(|seconds| seconds.saturating_mul(1_000));
-        let value = response
-            .json::<Value>()
-            .await
-            .map_err(|_| invalid("INVALID_JSON"))?;
+        // A POST whose response cannot be read may still have been executed.
+        let value = response.json::<Value>().await.map_err(|_| {
+            if method == Method::POST {
+                ConnectorError {
+                    kind: ConnectorErrorKind::UnknownOutcome,
+                    code: "BINANCE_RESPONSE_LOST".into(),
+                    message: "Binance response was not received".into(),
+                    retry_after_ms: None,
+                }
+            } else {
+                invalid("INVALID_JSON")
+            }
+        })?;
         if matches!(status.as_u16(), 418 | 429) {
             return Err(ConnectorError {
                 kind: ConnectorErrorKind::RateLimited,
@@ -154,7 +168,7 @@ impl BinanceConnector {
         {
             let code = value.get("code").and_then(Value::as_i64).unwrap_or(-1);
             return Err(ConnectorError {
-                kind: ConnectorErrorKind::InvalidResponse,
+                kind: error_kind(code, &method),
                 code: format!("BINANCE_{code}"),
                 message: value
                     .get("msg")
@@ -747,7 +761,14 @@ impl VenueConnector for BinanceConnector {
             ProductType::LinearPerpetual => "/fapi/v1/order",
         };
         let response = self
-            .signed(order.intent.instrument.product, Method::POST, path, &fields)
+            .send(
+                order.intent.instrument.product,
+                Method::POST,
+                path,
+                &fields,
+                true,
+                crate::http::submit_fault_timeout(self.environment),
+            )
             .await?;
         Ok(OrderAck {
             venue_order_id: response.get("orderId").map(value_to_string).transpose()?,
@@ -1286,6 +1307,19 @@ fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
+/// Binance documents `-1007 TIMEOUT` as "Timeout waiting for response from
+/// backend server. Send status unknown; execution status unknown." for both
+/// spot (binance-spot-api-docs `errors.md`) and USDⓈ-M futures (the
+/// derivatives error-code page). On a write it is therefore an unknown
+/// outcome that must be reconciled before any retry; on a read it is transient.
+fn error_kind(code: i64, method: &Method) -> ConnectorErrorKind {
+    match code {
+        -1007 if *method != Method::GET => ConnectorErrorKind::UnknownOutcome,
+        -1007 => ConnectorErrorKind::Transient,
+        _ => ConnectorErrorKind::InvalidResponse,
+    }
+}
+
 fn invalid(code: &str) -> ConnectorError {
     ConnectorError {
         kind: ConnectorErrorKind::InvalidResponse,
@@ -1374,14 +1408,23 @@ mod tests {
     }
 
     #[test]
-    fn unknown_timeout_code_requires_reconciliation() {
-        let error = ConnectorError {
-            kind: ConnectorErrorKind::UnknownOutcome,
-            code: "BINANCE_-1007".into(),
-            message: "status unknown".into(),
-            retry_after_ms: None,
-        };
-        assert_eq!(error.kind, ConnectorErrorKind::UnknownOutcome);
+    fn the_documented_timeout_code_makes_a_write_an_unknown_outcome() {
+        assert_eq!(
+            error_kind(-1007, &Method::POST),
+            ConnectorErrorKind::UnknownOutcome
+        );
+        assert_eq!(
+            error_kind(-1007, &Method::DELETE),
+            ConnectorErrorKind::UnknownOutcome
+        );
+        assert_eq!(
+            error_kind(-1007, &Method::GET),
+            ConnectorErrorKind::Transient
+        );
+        assert_eq!(
+            error_kind(-2010, &Method::POST),
+            ConnectorErrorKind::InvalidResponse
+        );
     }
 
     #[test]

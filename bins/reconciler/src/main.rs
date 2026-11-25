@@ -4,7 +4,8 @@ use chrono::Utc;
 use funding_arb_domain::TradingMode;
 use funding_arb_tenant_context::{TenantContext, TenantId, assert_safe_runtime_role};
 use funding_arb_venue_service::{
-    ConnectorRegistry, ReconciliationService, ReconciliationState, VenueAccountsRepo,
+    ConnectorExecutionCoordinator, ConnectorRegistry, ReconciliationService, ReconciliationState,
+    VenueAccountsRepo,
 };
 use sqlx::postgres::PgPoolOptions;
 
@@ -57,7 +58,11 @@ async fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
+    // `reconciler once` runs a single pass and exits, for operator jobs such as
+    // the M4 sandbox runs; with no argument it loops on the interval.
+    let once = env::args().nth(1).as_deref() == Some("once");
     let service = ReconciliationService::new(pool.clone());
+    let coordinator = ConnectorExecutionCoordinator::new(pool.clone());
     let accounts = VenueAccountsRepo::new(pool.clone());
     println!("Perpeto connector reconciler started in {mode} mode");
     loop {
@@ -76,6 +81,50 @@ async fn main() -> ExitCode {
                     continue;
                 }
             };
+            // Query before retry: resolve every ambiguous submission against
+            // the venue before the account is reconciled. Until resolved, the
+            // coordinator refuses to resend that client order id.
+            match coordinator.unresolved(tenant).await {
+                Ok(unresolved) => {
+                    for intent in unresolved {
+                        let Some(owner) = configured
+                            .iter()
+                            .find(|candidate| candidate.account.id == intent.venue_account_id)
+                        else {
+                            eprintln!(
+                                "unknown outcome {} has no configured account",
+                                intent.intent_id
+                            );
+                            continue;
+                        };
+                        let account_id =
+                            funding_arb_connectors::AccountId(intent.venue_account_id.clone());
+                        match coordinator
+                            .reconcile_unknown(
+                                tenant,
+                                owner.connector.as_ref(),
+                                &account_id,
+                                &intent.client_order_id,
+                            )
+                            .await
+                        {
+                            Ok(Some(order)) => println!(
+                                "resolved unknown outcome {} ({}): venue status {:?}",
+                                intent.intent_id, intent.client_order_id, order.status,
+                            ),
+                            Ok(None) => println!(
+                                "resolved unknown outcome {} ({}): not found at the venue",
+                                intent.intent_id, intent.client_order_id,
+                            ),
+                            Err(error) => eprintln!(
+                                "unknown outcome {} still unresolved: {error}",
+                                intent.intent_id
+                            ),
+                        }
+                    }
+                }
+                Err(error) => eprintln!("failed to list unknown outcomes: {error}"),
+            }
             let mut seen = HashSet::new();
             for configured in configured {
                 if !seen.insert(configured.account.id.clone()) {
@@ -111,6 +160,9 @@ async fn main() -> ExitCode {
                     ),
                 }
             }
+        }
+        if once {
+            return ExitCode::SUCCESS;
         }
         tokio::time::sleep(Duration::from_secs(interval)).await;
     }

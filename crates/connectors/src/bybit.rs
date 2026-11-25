@@ -37,7 +37,7 @@ impl BybitConnector {
     pub fn new(environment: VenueEnvironment, credentials: Option<ConnectorCredentials>) -> Self {
         Self {
             environment,
-            client: reqwest::Client::new(),
+            client: crate::http::client(),
             credentials: credentials.map(Arc::new),
             instruments: Arc::new(RwLock::new(Vec::new())),
         }
@@ -53,17 +53,25 @@ impl BybitConnector {
 
     async fn public_get(&self, path: &str, query: &[(&str, String)]) -> ConnectorResult<Value> {
         let query = serde_urlencoded::to_string(query).map_err(|_| invalid("QUERY_ENCODING"))?;
-        self.send(Method::GET, path, &query, "", false).await
+        self.send(Method::GET, path, &query, "", false, None).await
     }
 
     async fn private_get(&self, path: &str, query: &[(&str, String)]) -> ConnectorResult<Value> {
         let query = serde_urlencoded::to_string(query).map_err(|_| invalid("QUERY_ENCODING"))?;
-        self.send(Method::GET, path, &query, "", true).await
+        self.send(Method::GET, path, &query, "", true, None).await
     }
 
     async fn private_post(&self, path: &str, body: &Value) -> ConnectorResult<Value> {
         let body = serde_json::to_string(body).map_err(|_| invalid("BODY_ENCODING"))?;
-        self.send(Method::POST, path, "", &body, true).await
+        self.send(Method::POST, path, "", &body, true, None).await
+    }
+
+    /// An order submission: carries the M4 fault timeout when one is set.
+    async fn order_post(&self, path: &str, body: &Value) -> ConnectorResult<Value> {
+        let body = serde_json::to_string(body).map_err(|_| invalid("BODY_ENCODING"))?;
+        let timeout = crate::http::submit_fault_timeout(self.environment);
+        self.send(Method::POST, path, "", &body, true, timeout)
+            .await
     }
 
     async fn send(
@@ -73,6 +81,7 @@ impl BybitConnector {
         query: &str,
         body: &str,
         authenticated: bool,
+        timeout: Option<std::time::Duration>,
     ) -> ConnectorResult<Value> {
         let url = if query.is_empty() {
             format!("{}{path}", self.base_url())
@@ -80,6 +89,9 @@ impl BybitConnector {
             format!("{}{path}?{query}", self.base_url())
         };
         let mut request = self.client.request(method.clone(), url);
+        if let Some(timeout) = timeout {
+            request = request.timeout(timeout);
+        }
         if !body.is_empty() {
             request = request
                 .header(reqwest::header::CONTENT_TYPE, "application/json")
@@ -123,10 +135,19 @@ impl BybitConnector {
             .and_then(|value| value.to_str().ok())
             .and_then(|value| value.parse::<u64>().ok())
             .map(|seconds| seconds.saturating_mul(1_000));
-        let value = response
-            .json::<Value>()
-            .await
-            .map_err(|_| invalid("INVALID_JSON"))?;
+        // A POST whose response cannot be read may still have been executed.
+        let value = response.json::<Value>().await.map_err(|_| {
+            if method == Method::POST {
+                ConnectorError {
+                    kind: ConnectorErrorKind::UnknownOutcome,
+                    code: "BYBIT_RESPONSE_LOST".into(),
+                    message: "Bybit response was not received".into(),
+                    retry_after_ms: None,
+                }
+            } else {
+                invalid("INVALID_JSON")
+            }
+        })?;
         if status.as_u16() == 429 {
             return Err(ConnectorError {
                 kind: ConnectorErrorKind::RateLimited,
@@ -681,9 +702,7 @@ impl VenueConnector for BybitConnector {
                 retry_after_ms: None,
             });
         }
-        let response = self
-            .private_post("/v5/order/create", &order.payload)
-            .await?;
+        let response = self.order_post("/v5/order/create", &order.payload).await?;
         Ok(OrderAck {
             venue_order_id: response["result"]
                 .get("orderId")

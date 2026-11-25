@@ -50,22 +50,30 @@ impl OkxConnector {
         Self {
             environment,
             base_url: Arc::from(base_url.trim_end_matches('/')),
-            client: reqwest::Client::new(),
+            client: crate::http::client(),
             credentials: credentials.map(Arc::new),
             instruments: Arc::new(RwLock::new(Vec::new())),
         }
     }
 
     async fn public_get(&self, path: &str, query: &[(&str, String)]) -> ConnectorResult<Value> {
-        self.send(Method::GET, path, query, None, false).await
+        self.send(Method::GET, path, query, None, false, None).await
     }
 
     async fn private_get(&self, path: &str, query: &[(&str, String)]) -> ConnectorResult<Value> {
-        self.send(Method::GET, path, query, None, true).await
+        self.send(Method::GET, path, query, None, true, None).await
     }
 
     async fn private_post(&self, path: &str, body: &Value) -> ConnectorResult<Value> {
-        self.send(Method::POST, path, &[], Some(body), true).await
+        self.send(Method::POST, path, &[], Some(body), true, None)
+            .await
+    }
+
+    /// An order submission: carries the M4 fault timeout when one is set.
+    async fn order_post(&self, path: &str, body: &Value) -> ConnectorResult<Value> {
+        let timeout = crate::http::submit_fault_timeout(self.environment);
+        self.send(Method::POST, path, &[], Some(body), true, timeout)
+            .await
     }
 
     async fn send(
@@ -75,6 +83,7 @@ impl OkxConnector {
         query: &[(&str, String)],
         body: Option<&Value>,
         authenticated: bool,
+        timeout: Option<std::time::Duration>,
     ) -> ConnectorResult<Value> {
         let query = serde_urlencoded::to_string(query).map_err(|_| invalid("QUERY_ENCODING"))?;
         let request_path = if query.is_empty() {
@@ -89,6 +98,9 @@ impl OkxConnector {
             .map_err(|_| invalid("BODY_ENCODING"))?
             .unwrap_or_default();
         let mut request = self.client.request(method.clone(), url);
+        if let Some(timeout) = timeout {
+            request = request.timeout(timeout);
+        }
         if !encoded_body.is_empty() {
             request = request
                 .header(reqwest::header::CONTENT_TYPE, "application/json")
@@ -134,10 +146,19 @@ impl OkxConnector {
             retry_after_ms: None,
         })?;
         let status = response.status();
-        let value = response
-            .json::<Value>()
-            .await
-            .map_err(|_| invalid("INVALID_JSON"))?;
+        // A POST whose response cannot be read may still have been executed.
+        let value = response.json::<Value>().await.map_err(|_| {
+            if method == Method::POST {
+                ConnectorError {
+                    kind: ConnectorErrorKind::UnknownOutcome,
+                    code: "OKX_RESPONSE_LOST".into(),
+                    message: "OKX response was not received".into(),
+                    retry_after_ms: None,
+                }
+            } else {
+                invalid("INVALID_JSON")
+            }
+        })?;
         if status.as_u16() == 429 {
             return Err(ConnectorError {
                 kind: ConnectorErrorKind::RateLimited,
@@ -376,7 +397,7 @@ impl VenueConnector for OkxConnector {
         let stream_subscriptions = Arc::new(subscriptions);
         let frames = connect_json(JsonWsConfig {
             name: "OKX",
-            url: "wss://ws.okx.com:8443/ws/v5/public".into(),
+            url: okx_public_ws_url(self.environment).into(),
             initial_messages: vec![json!({"op": "subscribe", "args": args})],
             heartbeat: Some("ping".into()),
             inactivity_timeout: Duration::from_secs(20),
@@ -724,7 +745,7 @@ impl VenueConnector for OkxConnector {
             return Err(unsupported("PRODUCTION_WRITE_FORBIDDEN"));
         }
         let response = self
-            .private_post("/api/v5/trade/order", &order.payload)
+            .order_post("/api/v5/trade/order", &order.payload)
             .await?;
         let item = data(&response)?
             .first()
@@ -865,11 +886,24 @@ fn parse_market_frame(
     }
 }
 
+// OKX API v5 docs, "Overview > Production Trading Services" and "Demo
+// Trading Services": production WebSockets are `wss://ws.okx.com/ws/v5/*` and
+// demo trading uses `wss://wspap.okx.com/ws/v5/*`. Demo books, orders and fills
+// live on the demo endpoints, so a demo account must read both from them.
+// The docs list no port: the overview notice retires port 8443 in favour of 443.
+fn okx_public_ws_url(environment: VenueEnvironment) -> &'static str {
+    if environment == VenueEnvironment::Demo {
+        "wss://wspap.okx.com/ws/v5/public"
+    } else {
+        "wss://ws.okx.com/ws/v5/public"
+    }
+}
+
 fn okx_private_ws_url(environment: VenueEnvironment) -> &'static str {
     if environment == VenueEnvironment::Demo {
-        "wss://wspap.okx.com:8443/ws/v5/private"
+        "wss://wspap.okx.com/ws/v5/private"
     } else {
-        "wss://ws.okx.com:8443/ws/v5/private"
+        "wss://ws.okx.com/ws/v5/private"
     }
 }
 
@@ -1168,6 +1202,26 @@ fn unsupported(code: &str) -> ConnectorError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn demo_accounts_use_the_documented_demo_websockets() {
+        assert_eq!(
+            okx_public_ws_url(VenueEnvironment::Demo),
+            "wss://wspap.okx.com/ws/v5/public"
+        );
+        assert_eq!(
+            okx_private_ws_url(VenueEnvironment::Demo),
+            "wss://wspap.okx.com/ws/v5/private"
+        );
+        assert_eq!(
+            okx_public_ws_url(VenueEnvironment::Production),
+            "wss://ws.okx.com/ws/v5/public"
+        );
+        assert_eq!(
+            okx_private_ws_url(VenueEnvironment::Production),
+            "wss://ws.okx.com/ws/v5/private"
+        );
+    }
     use crate::{BookApply, BookState, BookStatus};
 
     #[test]
